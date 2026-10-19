@@ -60,10 +60,9 @@ fn balance_closers(raw: &str) -> Option<String> {
             '"' => in_str = true,
             '[' => stack.push(']'),
             '{' => stack.push('}'),
+            ']' | '}' if stack.last() != Some(&c) => return None,
             ']' | '}' => {
-                if stack.pop() != Some(c) {
-                    return None;
-                }
+                stack.pop();
             }
             _ => {}
         }
