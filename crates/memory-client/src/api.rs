@@ -32,7 +32,9 @@ pub struct Api {
 impl Api {
     pub fn new(cfg: Config, timeout: Duration) -> Result<Self, String> {
         if let Some(missing) = cfg.missing().first() {
-            return Err(format!("not configured: {missing} is empty (run `amem login`)"));
+            return Err(format!(
+                "not configured: {missing} is empty (run `amem login`)"
+            ));
         }
         let http = reqwest::blocking::Client::builder()
             .timeout(timeout)

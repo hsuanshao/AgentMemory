@@ -46,14 +46,19 @@ pub fn authorize_memory_scope(
     facts: &ScopeFacts<'_>,
     action: MemoryAction,
 ) -> DomainResult<MemoryScope> {
-    let team_id = non_empty(&req.team_id).ok_or_else(|| DomainError::invalid("team_id is required"))?;
+    let team_id =
+        non_empty(&req.team_id).ok_or_else(|| DomainError::invalid("team_id is required"))?;
     let agent_id =
         non_empty(&req.agent_id).ok_or_else(|| DomainError::invalid("agent_id is required"))?;
     let user_id = non_empty(&req.user_id).unwrap_or(facts.caller_user_id);
 
     match facts.agent {
         Some(agent) if agent.agent_id == agent_id && agent.team_id == team_id => {}
-        _ => return Err(DomainError::permission_denied("agent does not belong to the team")),
+        _ => {
+            return Err(DomainError::permission_denied(
+                "agent does not belong to the team",
+            ))
+        }
     }
     if !facts.is_system_admin {
         let member = facts
@@ -174,7 +179,11 @@ mod tests {
         let a = agent("team-2");
         let mut f = facts(None, Some(&a));
         f.is_system_admin = true;
-        assert!(denied(authorize_memory_scope(&req(None), &f, MemoryAction::Read)));
+        assert!(denied(authorize_memory_scope(
+            &req(None),
+            &f,
+            MemoryAction::Read
+        )));
         assert!(denied(authorize_memory_scope(
             &req(None),
             &facts(None, None),

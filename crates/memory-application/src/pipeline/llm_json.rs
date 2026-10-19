@@ -30,7 +30,10 @@ pub fn parse_llm_json<T: DeserializeOwned>(raw: &str, open: char) -> DomainResul
         balance_closers(&text[start..])
             .and_then(|fixed| serde_json::from_str(&fixed).ok())
             .ok_or_else(|| {
-                DomainError::unprocessable("llm_output_invalid", format!("invalid JSON from LLM: {e}"))
+                DomainError::unprocessable(
+                    "llm_output_invalid",
+                    format!("invalid JSON from LLM: {e}"),
+                )
             })
     })
 }
@@ -109,7 +112,9 @@ mod tests {
 
     #[test]
     fn does_not_repair_a_cut_string() {
-        assert!(parse_llm_json::<Vec<serde_json::Value>>("[{\"a\":[1]},{\"b\":\"cut", '[').is_err());
+        assert!(
+            parse_llm_json::<Vec<serde_json::Value>>("[{\"a\":[1]},{\"b\":\"cut", '[').is_err()
+        );
     }
 
     #[test]

@@ -21,7 +21,10 @@ impl MetaService {
         let team_id = requested.team_id.as_deref().unwrap_or_default();
         let membership = match team_id {
             "" => None,
-            id => self.active_membership(instance, id, &caller.user_id).await?,
+            id => {
+                self.active_membership(instance, id, &caller.user_id)
+                    .await?
+            }
         };
         let agent = match requested.agent_id.as_deref().unwrap_or_default() {
             "" => None,

@@ -10,7 +10,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::authz;
-use crate::context::{Ctx, USER_KEY, SERVICE_ID};
+use crate::context::{Ctx, SERVICE_ID, USER_KEY};
 use crate::envelope::ApiError;
 use crate::handlers::{memory, meta, ops, skill};
 use crate::state::SharedState;

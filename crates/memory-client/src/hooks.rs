@@ -11,7 +11,9 @@ use crate::api::{recall_context, Api};
 use crate::capture::capture;
 use crate::config::{data_dir, write_private, Config};
 use crate::queue::Queue;
-use crate::transcript::{antigravity, antigravity_last_request, claude_code, codex, complete_lines, Msg};
+use crate::transcript::{
+    antigravity, antigravity_last_request, claude_code, codex, complete_lines, Msg,
+};
 
 /// Claude Code caps injected context at 10,000 characters.
 const MAX_CONTEXT_CHARS: usize = 9_500;
@@ -24,7 +26,11 @@ pub fn log(message: &str) {
         let _ = std::fs::remove_file(&path);
     }
     let _ = std::fs::create_dir_all(data_dir());
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         use std::io::Write;
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -54,7 +60,13 @@ fn clip(text: &str, max: usize) -> String {
 fn safe_name(session: &str) -> String {
     session
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -66,7 +78,10 @@ struct Cursor {
 
 impl Cursor {
     fn open(host: &str, session: &str) -> Self {
-        let path = data_dir().join("state").join(host).join(format!("{}.json", safe_name(session)));
+        let path = data_dir()
+            .join("state")
+            .join(host)
+            .join(format!("{}.json", safe_name(session)));
         let state = std::fs::read(&path)
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
@@ -82,7 +97,9 @@ impl Cursor {
 }
 
 fn read_transcript(path: &str) -> Option<String> {
-    (!path.is_empty()).then(|| std::fs::read_to_string(Path::new(path)).ok()).flatten()
+    (!path.is_empty())
+        .then(|| std::fs::read_to_string(Path::new(path)).ok())
+        .flatten()
 }
 
 fn deliver(host: &str, session: &str, msgs: Vec<Msg>) {
@@ -93,7 +110,10 @@ fn deliver(host: &str, session: &str, msgs: Vec<Msg>) {
         Ok(api) => {
             let r = capture(&api, &Queue::new(&data_dir()), session, msgs);
             if let Some(e) = r.error {
-                log(&format!("{host} capture: sent {} queued {}: {e}", r.sent, r.queued));
+                log(&format!(
+                    "{host} capture: sent {} queued {}: {e}",
+                    r.sent, r.queued
+                ));
             }
         }
         Err(e) => log(&format!("{host} capture skipped: {e}")),
@@ -145,9 +165,17 @@ pub fn claude_code_stop() {
     }
     let mut msgs = claude_code(&lines[from..]);
 
-    if let Some(tail) = cursor.state["tail"].as_str().map(str::trim).filter(|t| !t.is_empty()) {
+    if let Some(tail) = cursor.state["tail"]
+        .as_str()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
         if let Some(first) = msgs.iter().position(|m| m.role == "assistant") {
-            let rest = msgs[first].content.trim().strip_prefix(tail).map(|r| r.trim().to_owned());
+            let rest = msgs[first]
+                .content
+                .trim()
+                .strip_prefix(tail)
+                .map(|r| r.trim().to_owned());
             match rest {
                 Some(r) if r.is_empty() => {
                     msgs.remove(first);
@@ -158,10 +186,23 @@ pub fn claude_code_stop() {
         }
     }
     let mut tail = Value::Null;
-    if let Some(last) = input["last_assistant_message"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-        let present = msgs.iter().rev().find(|m| m.role == "assistant").is_some_and(|m| m.content.trim().ends_with(last));
+    if let Some(last) = input["last_assistant_message"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let present = msgs
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .is_some_and(|m| m.content.trim().ends_with(last));
         if !present {
-            msgs.push(Msg { role: "assistant", content: last.to_owned(), tool_name: None, tool_call_id: None });
+            msgs.push(Msg {
+                role: "assistant",
+                content: last.to_owned(),
+                tool_name: None,
+                tool_call_id: None,
+            });
             tail = json!(last);
         }
     }
@@ -185,7 +226,10 @@ pub fn antigravity_pre_invocation() {
     };
     let query = antigravity_last_request(&complete_lines(&text)).unwrap_or_default();
     if let Some(context) = recall_or_log("antigravity", &query) {
-        println!("{}", json!({"injectSteps": [{"ephemeralMessage": context}]}));
+        println!(
+            "{}",
+            json!({"injectSteps": [{"ephemeralMessage": context}]})
+        );
     }
 }
 
@@ -208,7 +252,10 @@ pub fn antigravity_stop() {
 // ── Codex ───────────────────────────────────────────────────────────────
 
 fn codex_events_dir(session: &str) -> PathBuf {
-    data_dir().join("state").join("codex").join(safe_name(session))
+    data_dir()
+        .join("state")
+        .join("codex")
+        .join(safe_name(session))
 }
 
 /// Keeps one hook payload for the turn's Stop. One file per event, named by
@@ -246,12 +293,21 @@ pub fn codex_stop() {
     let session = input["session_id"].as_str().unwrap_or("unknown");
     let dir = codex_events_dir(session);
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "json")).collect())
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().is_some_and(|x| x == "json"))
+                .collect()
+        })
         .unwrap_or_default();
     files.sort();
     let mut events: Vec<Value> = files
         .iter()
-        .filter_map(|f| std::fs::read(f).ok().and_then(|b| serde_json::from_slice(&b).ok()))
+        .filter_map(|f| {
+            std::fs::read(f)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+        })
         .collect();
     events.push(input.clone());
     deliver("codex", session, codex(&events));

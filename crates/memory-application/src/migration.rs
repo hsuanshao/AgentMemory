@@ -57,11 +57,20 @@ impl LegacyScopeMigration {
         rows: Arc<dyn ScopeMigrationStore>,
         state: Arc<dyn PipelineStateRepository>,
     ) -> Self {
-        Self { meta, profiles, rows, state }
+        Self {
+            meta,
+            profiles,
+            rows,
+            state,
+        }
     }
 
     /// The target must be a scope the data plane would authorize.
-    async fn validate(&self, instance: &InstanceId, input: &MigrateDefaultInput) -> DomainResult<MemoryScope> {
+    async fn validate(
+        &self,
+        instance: &InstanceId,
+        input: &MigrateDefaultInput,
+    ) -> DomainResult<MemoryScope> {
         let to = MemoryScope {
             team_id: SegmentId::parse("team_id", &input.team_id)?,
             agent_id: SegmentId::parse("agent_id", &input.agent_id)?,
@@ -88,8 +97,17 @@ impl LegacyScopeMigration {
         Ok(to)
     }
 
-    async fn ensure_fresh_target(&self, instance: &InstanceId, to: &MemoryScope) -> DomainResult<()> {
-        if self.profiles.count(instance, Some(&ProfileScope::from(to)), "").await? > 0 {
+    async fn ensure_fresh_target(
+        &self,
+        instance: &InstanceId,
+        to: &MemoryScope,
+    ) -> DomainResult<()> {
+        if self
+            .profiles
+            .count(instance, Some(&ProfileScope::from(to)), "")
+            .await?
+            > 0
+        {
             return Err(DomainError::conflict(
                 "target_has_profile",
                 "the target agent already has L2/L3 files; migrate into a fresh agent",
@@ -102,7 +120,9 @@ impl LegacyScopeMigration {
     /// target, so any well-formed scope will do.
     pub async fn pending(&self, instance: &InstanceId) -> DomainResult<MovedRows> {
         let probe = MemoryScope::from_optional(None, None, None, None)?;
-        self.rows.reassign_default(instance, &probe, &probe, true).await
+        self.rows
+            .reassign_default(instance, &probe, &probe, true)
+            .await
     }
 
     pub async fn migrate_default(
@@ -118,14 +138,21 @@ impl LegacyScopeMigration {
             None,
         )?;
         let from_profile = ProfileScope::from(&from);
-        let pending = self.rows.reassign_default(instance, &from, &to, true).await?;
+        let pending = self
+            .rows
+            .reassign_default(instance, &from, &to, true)
+            .await?;
 
         let sessions: Vec<_> = self
             .state
             .list_sessions(instance, STATE_SCAN_LIMIT)
             .await?
             .into_iter()
-            .filter(|s| s.scope.team_id == from.team_id && s.scope.agent_id == from.agent_id && s.scope.user_id == from.user_id)
+            .filter(|s| {
+                s.scope.team_id == from.team_id
+                    && s.scope.agent_id == from.agent_id
+                    && s.scope.user_id == from.user_id
+            })
             .collect();
         let profiles: Vec<_> = self
             .state
@@ -137,12 +164,24 @@ impl LegacyScopeMigration {
         // Nothing left to move (e.g. a re-run): succeed without touching the
         // target, so the upgrade can be repeated safely.
         if pending == MovedRows::default() && sessions.is_empty() && profiles.is_empty() {
-            return Ok(MigrationReport { dry_run: input.dry_run, to, moved: pending, session_states: 0, profile_states: 0 });
+            return Ok(MigrationReport {
+                dry_run: input.dry_run,
+                to,
+                moved: pending,
+                session_states: 0,
+                profile_states: 0,
+            });
         }
         // The target agent must have no L2/L3 yet: scenes are versioned
         // files, and merging two sets of them is not something to do silently.
         self.ensure_fresh_target(instance, &to).await?;
-        let moved = if input.dry_run { pending } else { self.rows.reassign_default(instance, &from, &to, false).await? };
+        let moved = if input.dry_run {
+            pending
+        } else {
+            self.rows
+                .reassign_default(instance, &from, &to, false)
+                .await?
+        };
         let report = MigrationReport {
             dry_run: input.dry_run,
             to: to.clone(),
@@ -156,7 +195,10 @@ impl LegacyScopeMigration {
         // Cursors are storage sequence numbers, which the move keeps, so
         // the copied state resumes exactly where the old one stopped.
         for mut session in sessions {
-            session.scope = MemoryScope { task_id: session.scope.task_id.clone(), ..to.clone() };
+            session.scope = MemoryScope {
+                task_id: session.scope.task_id.clone(),
+                ..to.clone()
+            };
             self.state.put_session(&session).await?;
         }
         for mut profile in profiles {

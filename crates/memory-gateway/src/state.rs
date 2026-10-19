@@ -11,12 +11,12 @@ use memory_application::memory::service::MemoryService;
 use memory_application::memory::session::SessionService;
 use memory_application::meta::MetaService;
 use memory_application::migration::LegacyScopeMigration;
-use memory_application::upgrade::LegacyUpgrade;
 use memory_application::pipeline::generation_logs::GenerationLogService;
 use memory_application::pipeline::memory_prompts::MemoryPromptService;
 use memory_application::pipeline::service::PipelineService;
 use memory_application::skill::extraction::SkillExtractionService;
 use memory_application::skill::service::SkillService;
+use memory_application::upgrade::LegacyUpgrade;
 
 #[derive(Debug, Clone)]
 pub struct GatewaySettings {

@@ -8,12 +8,11 @@ use memory_application::admin::{
     ChatMemoryService, InstanceLifecycle, KnowledgeService, StatsService,
 };
 use memory_application::memory::recall::{RecallService, RecallSettings};
-use memory_application::migration::LegacyScopeMigration;
-use memory_application::upgrade::LegacyUpgrade;
 use memory_application::memory::search::AtomSearcher;
 use memory_application::memory::service::{ConversationObserver, MemoryService};
 use memory_application::memory::session::SessionService;
 use memory_application::meta::{ChatMemoryCleaner, MetaService, MetaSettings};
+use memory_application::migration::LegacyScopeMigration;
 use memory_application::pipeline::generation_logs::GenerationLogService;
 use memory_application::pipeline::l1::L1Extractor;
 use memory_application::pipeline::l2::SceneExtractor;
@@ -25,6 +24,7 @@ use memory_application::ports::meta::KnowledgeRepository;
 use memory_application::ports::system::{Clock, EmbeddingProvider, IdGenerator, LlmClient};
 use memory_application::skill::extraction::{ExtractionSettings, SkillExtractionService};
 use memory_application::skill::service::{SkillService, SkillSettings};
+use memory_application::upgrade::LegacyUpgrade;
 use memory_domain::pipeline::PipelineSettings;
 use memory_domain::retrieval::SearchMode;
 use memory_gateway::{AppState, GatewaySettings, HealthFacts, Services};
@@ -260,7 +260,10 @@ pub async fn build(config: &Config) -> Result<App> {
         Arc::clone(&storage.scope_migration),
         Arc::clone(&coordination.state),
     ));
-    let upgrade = Arc::new(LegacyUpgrade::new(Arc::clone(&meta), Arc::clone(&migration)));
+    let upgrade = Arc::new(LegacyUpgrade::new(
+        Arc::clone(&meta),
+        Arc::clone(&migration),
+    ));
     let services = Services {
         recall: Arc::new(RecallService::new(
             Arc::clone(&searcher),

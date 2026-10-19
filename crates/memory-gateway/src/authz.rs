@@ -64,7 +64,12 @@ fn requested(ctx: &Ctx, body: &Value) -> RequestedScope {
     }
 }
 
-pub async fn require_user(State(s): State<SharedState>, ctx: Ctx, req: Request, next: Next) -> Response {
+pub async fn require_user(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    req: Request,
+    next: Next,
+) -> Response {
     match authorize(&s, &ctx, req).await {
         Ok(req) => next.run(req).await,
         Err(e) => e.into_response(),
@@ -95,13 +100,21 @@ async fn authorize(s: &SharedState, ctx: &Ctx, req: Request) -> Result<Request, 
             .map_err(|_| ApiError::bad_request(&ctx.request_id, "Invalid JSON body"))?
     };
     let Some(object) = json.as_object_mut() else {
-        return Err(ApiError::bad_request(&ctx.request_id, "body must be a JSON object"));
+        return Err(ApiError::bad_request(
+            &ctx.request_id,
+            "body must be a JSON object",
+        ));
     };
 
     let scope = s
         .services
         .meta
-        .authorize_memory(&instance, &user_key, &requested(ctx, &Value::Object(object.clone())), action_for(&path))
+        .authorize_memory(
+            &instance,
+            &user_key,
+            &requested(ctx, &Value::Object(object.clone())),
+            action_for(&path),
+        )
         .await
         .map_err(|e| ctx.err(e))?;
 
@@ -116,8 +129,9 @@ async fn authorize(s: &SharedState, ctx: &Ctx, req: Request) -> Result<Request, 
         match value {
             Some(v) => {
                 object.insert((*field).to_owned(), Value::String(v.to_owned()));
-                let v = HeaderValue::from_str(v)
-                    .map_err(|_| ApiError::bad_request(&ctx.request_id, format!("invalid {field}")))?;
+                let v = HeaderValue::from_str(v).map_err(|_| {
+                    ApiError::bad_request(&ctx.request_id, format!("invalid {field}"))
+                })?;
                 parts.headers.insert(name, v);
             }
             None => {
@@ -128,7 +142,9 @@ async fn authorize(s: &SharedState, ctx: &Ctx, req: Request) -> Result<Request, 
     }
 
     let bytes = serde_json::to_vec(&json).expect("JSON value serializes");
-    parts.headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    parts
+        .headers
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
     Ok(Request::from_parts(parts, Body::from(bytes)))
 }
 
@@ -143,6 +159,9 @@ mod tests {
         assert_eq!(action_for("/v3/atomic/search"), MemoryAction::Read);
         assert_eq!(action_for("/v3/conversation/add"), MemoryAction::Write);
         assert_eq!(action_for("/v3/scenario/rm"), MemoryAction::Write);
-        assert_eq!(action_for("/v3/skill/conversation/force-archive"), MemoryAction::Write);
+        assert_eq!(
+            action_for("/v3/skill/conversation/force-archive"),
+            MemoryAction::Write
+        );
     }
 }

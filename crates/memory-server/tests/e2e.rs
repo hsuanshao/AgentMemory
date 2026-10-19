@@ -84,7 +84,11 @@ impl Client {
     /// that team, then makes the member the default caller.
     async fn bootstrap(&mut self) {
         let admin = self
-            .call_as("/v3/internal/meta/user/init-admin", "", json!({"username": "admin"}))
+            .call_as(
+                "/v3/internal/meta/user/init-admin",
+                "",
+                json!({"username": "admin"}),
+            )
             .await["data"]
             .clone();
         self.admin_key = admin["user_key"].as_str().unwrap().to_owned();
@@ -98,7 +102,11 @@ impl Client {
     /// Creates a user, adds it to the bootstrap team, returns (id, key).
     async fn create_member(&self, username: &str) -> (String, String) {
         let user = self
-            .call_as("/v3/meta/user/create", &self.admin_key, json!({"username": username}))
+            .call_as(
+                "/v3/meta/user/create",
+                &self.admin_key,
+                json!({"username": username}),
+            )
             .await["data"]
             .clone();
         let user_id = user["user_id"].as_str().unwrap().to_owned();
@@ -110,7 +118,10 @@ impl Client {
             )
             .await;
         assert_eq!(added["code"], 0, "{added}");
-        (user_id, user["default_user_key"].as_str().unwrap().to_owned())
+        (
+            user_id,
+            user["default_user_key"].as_str().unwrap().to_owned(),
+        )
     }
 
     /// Polls `stats/overview` until `pred` holds.
@@ -281,7 +292,9 @@ async fn assert_conversation_is_distilled(client: &Client) {
         "low-priority memory must be dropped: {stats}"
     );
 
-    let scenes = client.call("/v3/scenario/ls", client.scoped(json!({}))).await;
+    let scenes = client
+        .call("/v3/scenario/ls", client.scoped(json!({})))
+        .await;
     assert_eq!(scenes["data"]["entries"][0]["path"], "Release-Planning.md");
     assert_eq!(scenes["data"]["entries"][0]["heat"], 1);
 
@@ -352,7 +365,9 @@ async fn assert_tool_calls_become_a_skill(client: &Client) {
     assert_eq!(result["data"]["archived"]["reason"], "tool_calls");
 
     client.wait_for(|s| s["skills"] == 1).await;
-    let listing = client.call("/v3/skill/listing", client.scoped(json!({}))).await;
+    let listing = client
+        .call("/v3/skill/listing", client.scoped(json!({})))
+        .await;
     assert!(
         listing["data"]["listing"]
             .as_str()
@@ -402,7 +417,11 @@ async fn other_users_cannot_read_or_change_foreign_data() {
     let (_data, client) = start().await;
     let (admin_key, team, agent) = (&client.admin_key, &client.team_id, &client.agent_id);
     let outsider = client
-        .call_as("/v3/meta/user/create", admin_key, json!({"username": "mallory"}))
+        .call_as(
+            "/v3/meta/user/create",
+            admin_key,
+            json!({"username": "mallory"}),
+        )
         .await["data"]
         .clone();
     let mallory_key = outsider["default_user_key"].as_str().unwrap();
@@ -456,7 +475,11 @@ async fn other_users_cannot_read_or_change_foreign_data() {
         .await;
     assert_eq!(foreign_read["code"], 403, "{foreign_read}");
     let memory_read = client
-        .call_as("/v3/recall", mallory_key, json!({"team_id": team, "agent_id": agent, "query": "x"}))
+        .call_as(
+            "/v3/recall",
+            mallory_key,
+            json!({"team_id": team, "agent_id": agent, "query": "x"}),
+        )
         .await;
     assert_eq!(memory_read["code"], 403, "{memory_read}");
 }
@@ -487,12 +510,26 @@ async fn the_data_plane_is_authorized_by_user_key_alone() {
         .json()
         .await
         .unwrap();
-    assert_eq!(recall["code"], 0, "user_id defaults to the caller: {recall}");
+    assert_eq!(
+        recall["code"], 0,
+        "user_id defaults to the caller: {recall}"
+    );
 
-    let no_team = client.call("/v3/recall", json!({"agent_id": client.agent_id, "query": "x"})).await;
-    assert_eq!(no_team["code"], 400, "there is no default team bucket: {no_team}");
+    let no_team = client
+        .call(
+            "/v3/recall",
+            json!({"agent_id": client.agent_id, "query": "x"}),
+        )
+        .await;
+    assert_eq!(
+        no_team["code"], 400,
+        "there is no default team bucket: {no_team}"
+    );
     let unknown_agent = client
-        .call("/v3/recall", json!({"team_id": client.team_id, "agent_id": "nope", "query": "x"}))
+        .call(
+            "/v3/recall",
+            json!({"team_id": client.team_id, "agent_id": "nope", "query": "x"}),
+        )
         .await;
     assert_eq!(unknown_agent["code"], 403, "{unknown_agent}");
     for gone in ["/recall", "/capture"] {
@@ -590,14 +627,19 @@ async fn a_system_admin_manages_teams_it_does_not_belong_to() {
             json!({"team_id": team, "agent_id": agent["data"]["agent_id"], "query": "x"}),
         )
         .await;
-    assert_eq!(recall["code"], 0, "the owner is a member of the new team: {recall}");
+    assert_eq!(
+        recall["code"], 0,
+        "the owner is a member of the new team: {recall}"
+    );
 }
 
 /// The `amem` client against a live server: redaction, both capture
 /// requests and the offline queue.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_amem_client_redacts_queues_and_delivers() {
-    use memory_client::{api::Api, capture::capture, config::Config, queue::Queue, transcript::Msg};
+    use memory_client::{
+        api::Api, capture::capture, config::Config, queue::Queue, transcript::Msg,
+    };
 
     let (_data, client) = start().await;
     let queue_dir = tempfile::tempdir().unwrap();
@@ -608,15 +650,38 @@ async fn the_amem_client_redacts_queues_and_delivers() {
         team_id: client.team_id.clone(),
         agent_id: client.agent_id.clone(),
     };
-    let msg = |role: &'static str, content: &str| Msg { role, content: content.into(), tool_name: Some("shell".into()), tool_call_id: Some("c1".into()) };
+    let msg = |role: &'static str, content: &str| Msg {
+        role,
+        content: content.into(),
+        tool_name: Some("shell".into()),
+        tool_call_id: Some("c1".into()),
+    };
     let turn = vec![
-        Msg { tool_name: None, tool_call_id: None, ..msg("user", "We release v2 next Monday. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz") },
+        Msg {
+            tool_name: None,
+            tool_call_id: None,
+            ..msg(
+                "user",
+                "We release v2 next Monday. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz",
+            )
+        },
         msg("tool_call", r#"{"command":"ls"}"#),
         msg("tool_result", "README.md"),
-        Msg { tool_name: None, tool_call_id: None, ..msg("assistant", "Noted.") },
+        Msg {
+            tool_name: None,
+            tool_call_id: None,
+            ..msg("assistant", "Noted.")
+        },
     ];
 
-    let (queue_path, live, dead) = (queue_dir.path().to_owned(), cfg.clone(), Config { server_url: "http://127.0.0.1:9".into(), ..cfg });
+    let (queue_path, live, dead) = (
+        queue_dir.path().to_owned(),
+        cfg.clone(),
+        Config {
+            server_url: "http://127.0.0.1:9".into(),
+            ..cfg
+        },
+    );
     let (offline, flushed, online) = tokio::task::spawn_blocking(move || {
         let queue = Queue::new(&queue_path);
         let down = Api::new(dead, Duration::from_secs(2)).unwrap();
@@ -628,11 +693,20 @@ async fn the_amem_client_redacts_queues_and_delivers() {
     })
     .await
     .unwrap();
-    assert_eq!((offline.sent, offline.queued), (0, 2), "server down → both requests queued");
+    assert_eq!(
+        (offline.sent, offline.queued),
+        (0, 2),
+        "server down → both requests queued"
+    );
     assert_eq!((flushed.sent, flushed.remaining), (2, 0), "{flushed:?}");
     assert_eq!((online.sent, online.queued), (2, 0), "{:?}", online.error);
 
-    let stored = client.call("/v3/conversation/query", client.scoped(json!({"limit": 10}))).await;
+    let stored = client
+        .call(
+            "/v3/conversation/query",
+            client.scoped(json!({"limit": 10})),
+        )
+        .await;
     let contents: Vec<&str> = stored["data"]["messages"]
         .as_array()
         .unwrap()
@@ -640,8 +714,13 @@ async fn the_amem_client_redacts_queues_and_delivers() {
         .map(|m| m["content"].as_str().unwrap())
         .collect();
     assert_eq!(contents.len(), 4, "two turns × user + assistant: {stored}");
-    assert!(contents.iter().all(|c| !c.contains("sk-ant-")), "secrets are redacted: {contents:?}");
-    assert!(contents.iter().any(|c| c.contains("[REDACTED:anthropic-key]")));
+    assert!(
+        contents.iter().all(|c| !c.contains("sk-ant-")),
+        "secrets are redacted: {contents:?}"
+    );
+    assert!(contents
+        .iter()
+        .any(|c| c.contains("[REDACTED:anthropic-key]")));
 }
 
 /// Upgrade path: data written to the legacy `default` buckets (before
@@ -668,7 +747,13 @@ async fn legacy_default_data_migrates_on_postgres() {
     })
     .await;
     assert_legacy_migration(&client).await;
-    client.call_as("/v3/instance/destroy", "", json!({"instance_id": client.instance})).await;
+    client
+        .call_as(
+            "/v3/instance/destroy",
+            "",
+            json!({"instance_id": client.instance}),
+        )
+        .await;
 }
 
 /// Writes a turn to the legacy `default/default/default` bucket, as a
@@ -679,26 +764,52 @@ async fn seed_legacy(client: &Client, session: &str, text: &str) {
 
 /// Same, for a pre-0.1.1 client that named its agent and/or user but left
 /// the team empty, so the rows sit outside `default/default/default`.
-async fn seed_legacy_as(client: &Client, agent: Option<&str>, user: Option<&str>, session: &str, text: &str) {
+async fn seed_legacy_as(
+    client: &Client,
+    agent: Option<&str>,
+    user: Option<&str>,
+    session: &str,
+    text: &str,
+) {
     use memory_application::memory::service::NewMessage;
     use memory_domain::memory::Role;
     use memory_domain::scope::{MemoryScope, SegmentId};
 
     let instance = SegmentId::parse("instance", &client.instance).unwrap();
     let legacy = MemoryScope::from_optional(None, agent, user, None).unwrap();
-    let message = |role, content: &str| NewMessage { role, content: content.into(), timestamp: None, recorded_at: None };
+    let message = |role, content: &str| NewMessage {
+        role,
+        content: content.into(),
+        timestamp: None,
+        recorded_at: None,
+    };
     client
         .state
         .services
         .memory
-        .add_conversation(&instance, &legacy, session, vec![message(Role::User, text), message(Role::Assistant, "Noted.")])
+        .add_conversation(
+            &instance,
+            &legacy,
+            session,
+            vec![
+                message(Role::User, text),
+                message(Role::Assistant, "Noted."),
+            ],
+        )
         .await
         .unwrap();
 }
 
 async fn assert_legacy_migration(client: &Client) {
-    seed_legacy(client, "legacy", "We release v2 next Monday; I always run integration tests first.").await;
-    client.wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1 && s["l3"] == 1).await;
+    seed_legacy(
+        client,
+        "legacy",
+        "We release v2 next Monday; I always run integration tests first.",
+    )
+    .await;
+    client
+        .wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1 && s["l3"] == 1)
+        .await;
 
     let agent = client
         .call_as(
@@ -720,7 +831,10 @@ async fn assert_legacy_migration(client: &Client) {
     let dry = migrate(true).await;
     assert_eq!(dry["data"]["moved"]["conversations"], 2, "{dry}");
     assert_eq!(dry["data"]["moved"]["atoms"], 2);
-    assert!(dry["data"]["moved"]["profile_files"].as_u64().unwrap() >= 2, "scene + persona: {dry}");
+    assert!(
+        dry["data"]["moved"]["profile_files"].as_u64().unwrap() >= 2,
+        "scene + persona: {dry}"
+    );
     let scoped = |body: Value| {
         let mut b = body;
         b["team_id"] = json!(client.team_id);
@@ -728,27 +842,48 @@ async fn assert_legacy_migration(client: &Client) {
         b
     };
     let before = client.call("/v3/atomic/query", scoped(json!({}))).await;
-    assert_eq!(before["data"]["total"], 0, "a dry run changes nothing: {before}");
+    assert_eq!(
+        before["data"]["total"], 0,
+        "a dry run changes nothing: {before}"
+    );
 
     let done = migrate(false).await;
     assert_eq!(done["data"]["moved"], dry["data"]["moved"], "{done}");
     assert_eq!(done["data"]["session_states"], 1);
     assert_eq!(done["data"]["profile_states"], 1);
 
-    let recall = client.call("/v3/recall", scoped(json!({"query": "when is the v2 release?"}))).await;
+    let recall = client
+        .call(
+            "/v3/recall",
+            scoped(json!({"query": "when is the v2 release?"})),
+        )
+        .await;
     assert!(
-        recall["data"]["memories"].as_array().unwrap().iter().any(|m| m["content"].as_str().unwrap().contains("next Monday")),
+        recall["data"]["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["content"].as_str().unwrap().contains("next Monday")),
         "{recall}"
     );
     let persona = client.call("/v3/core/read", scoped(json!({}))).await;
-    assert!(persona["data"]["content"].as_str().unwrap().contains("User Narrative Profile"), "{persona}");
+    assert!(
+        persona["data"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("User Narrative Profile"),
+        "{persona}"
+    );
 
     let again = migrate(false).await;
     assert_eq!(again["code"], 0, "nothing left to move is a no-op: {again}");
     assert_eq!(again["data"]["moved"]["conversations"], 0);
     seed_legacy(client, "late", "One more legacy turn.").await;
     let conflict = migrate(false).await;
-    assert_eq!(conflict["code"], 409, "the target now has L2/L3: {conflict}");
+    assert_eq!(
+        conflict["code"], 409,
+        "the target now has L2/L3: {conflict}"
+    );
     let stranger = client
         .call_as(
             "/v3/internal/migrate/default-scope",
@@ -764,8 +899,17 @@ async fn assert_legacy_migration(client: &Client) {
 #[tokio::test(flavor = "multi_thread")]
 async fn named_legacy_scope_migrates_with_from_fields() {
     let (_data, client) = start().await;
-    seed_legacy_as(&client, Some("hermes"), Some("alice"), "named", "We release v2 next Monday.").await;
-    client.wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1 && s["l3"] == 1).await;
+    seed_legacy_as(
+        &client,
+        Some("hermes"),
+        Some("alice"),
+        "named",
+        "We release v2 next Monday.",
+    )
+    .await;
+    client
+        .wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1 && s["l3"] == 1)
+        .await;
 
     let agent = client
         .call_as(
@@ -779,12 +923,17 @@ async fn named_legacy_scope_migrates_with_from_fields() {
         .to_owned();
     let migrate = |from: Value, dry_run: bool| {
         let mut body = json!({"team_id": client.team_id, "agent_id": agent, "user_id": client.user_id, "dry_run": dry_run});
-        body.as_object_mut().unwrap().extend(from.as_object().unwrap().clone());
+        body.as_object_mut()
+            .unwrap()
+            .extend(from.as_object().unwrap().clone());
         client.call_as("/v3/internal/migrate/default-scope", "", body)
     };
 
     let default_only = migrate(json!({}), true).await;
-    assert_eq!(default_only["data"]["moved"]["conversations"], 0, "{default_only}");
+    assert_eq!(
+        default_only["data"]["moved"]["conversations"], 0,
+        "{default_only}"
+    );
     let from = json!({"from_agent_id": "hermes", "from_user_id": "alice"});
     let dry = migrate(from.clone(), true).await;
     assert_eq!(dry["data"]["moved"]["conversations"], 2, "{dry}");
@@ -795,7 +944,10 @@ async fn named_legacy_scope_migrates_with_from_fields() {
     assert_eq!(done["data"]["session_states"], 1);
     assert_eq!(done["data"]["profile_states"], 1);
     let moved = client
-        .call("/v3/atomic/query", json!({"team_id": client.team_id, "agent_id": agent}))
+        .call(
+            "/v3/atomic/query",
+            json!({"team_id": client.team_id, "agent_id": agent}),
+        )
         .await;
     assert_eq!(moved["data"]["total"], 2, "{moved}");
 }
@@ -807,19 +959,32 @@ async fn named_legacy_scope_migrates_with_from_fields() {
 async fn upgrade_rehomes_legacy_data_with_the_instance_key_only() {
     let (_data, client) = start().await;
     seed_legacy(&client, "legacy", "Our staging database is called KESTREL.").await;
-    client.wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1 && s["l3"] == 1).await;
+    client
+        .wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1 && s["l3"] == 1)
+        .await;
     let upgrade = |body: Value| client.call_as("/v3/internal/upgrade", "", body);
 
     let plan = upgrade(json!({"agent_name": "hermes", "dry_run": true})).await;
     assert_eq!(plan["code"], 0, "{plan}");
-    assert_eq!(plan["data"]["team_id"], json!(client.team_id), "bootstrap team found by name: {plan}");
-    assert_eq!(plan["data"]["agent_id"], Value::Null, "agent not created by a dry run");
+    assert_eq!(
+        plan["data"]["team_id"],
+        json!(client.team_id),
+        "bootstrap team found by name: {plan}"
+    );
+    assert_eq!(
+        plan["data"]["agent_id"],
+        Value::Null,
+        "agent not created by a dry run"
+    );
     assert_eq!(plan["data"]["moved"]["conversations"], 2);
 
     let done = upgrade(json!({"agent_name": "hermes", "issue_key": true})).await;
     assert_eq!(done["code"], 0, "{done}");
     let data = &done["data"];
-    assert_eq!((data["team_created"].clone(), data["agent_created"].clone()), (json!(false), json!(true)));
+    assert_eq!(
+        (data["team_created"].clone(), data["agent_created"].clone()),
+        (json!(false), json!(true))
+    );
     assert_eq!(data["moved"], plan["data"]["moved"]);
     assert_eq!(data["username"], "admin");
     let key = data["user_key"].as_str().expect("a fresh key").to_owned();
@@ -829,8 +994,16 @@ async fn upgrade_rehomes_legacy_data_with_the_instance_key_only() {
         .call_as("/v3/recall", &key, json!({"team_id": client.team_id, "agent_id": agent, "query": "when is the v2 release?"}))
         .await;
     // The fake LLM distills fixed atoms; what matters is that they moved.
-    assert!(recall["data"]["memories"].to_string().contains("next Monday"), "{recall}");
-    assert!(recall["data"]["append_system_context"].as_str().unwrap().contains("User Narrative Profile"));
+    assert!(
+        recall["data"]["memories"]
+            .to_string()
+            .contains("next Monday"),
+        "{recall}"
+    );
+    assert!(recall["data"]["append_system_context"]
+        .as_str()
+        .unwrap()
+        .contains("User Narrative Profile"));
 
     let again = upgrade(json!({"agent_name": "hermes"})).await;
     assert_eq!(again["code"], 0, "{again}");

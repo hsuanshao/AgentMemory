@@ -836,8 +836,16 @@ impl ScopeMigrationStore for PostgresMemoryStore {
         dry_run: bool,
     ) -> DomainResult<MovedRows> {
         let s = self.db.schema(instance).await?;
-        let (team, agent, user) = (to.team_id.as_str(), to.agent_id.as_str(), to.user_id.as_str());
-        let (ft, fa, fu) = (from.team_id.as_str(), from.agent_id.as_str(), from.user_id.as_str());
+        let (team, agent, user) = (
+            to.team_id.as_str(),
+            to.agent_id.as_str(),
+            to.user_id.as_str(),
+        );
+        let (ft, fa, fu) = (
+            from.team_id.as_str(),
+            from.agent_id.as_str(),
+            from.user_id.as_str(),
+        );
         let mut tx = self.db.begin().await?;
         let mut run = async |sql: String, binds: &[&str]| -> DomainResult<usize> {
             let mut q = sqlx::query(&sql);
@@ -853,7 +861,9 @@ impl ScopeMigrationStore for PostgresMemoryStore {
         )
         .await?;
         let atoms = run(
-            format!("UPDATE {s}.atoms SET team_id = $1, agent_id = $2, user_id = $3 WHERE {triple}"),
+            format!(
+                "UPDATE {s}.atoms SET team_id = $1, agent_id = $2, user_id = $3 WHERE {triple}"
+            ),
             &[team, agent, user, ft, fa, fu],
         )
         .await?;
@@ -880,6 +890,11 @@ impl ScopeMigrationStore for PostgresMemoryStore {
         } else {
             tx.commit().await.map_err(pg_err)?;
         }
-        Ok(MovedRows { conversations, atoms, profile_files, skill_versions })
+        Ok(MovedRows {
+            conversations,
+            atoms,
+            profile_files,
+            skill_versions,
+        })
     }
 }

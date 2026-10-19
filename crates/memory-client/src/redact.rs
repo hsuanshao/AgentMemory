@@ -13,16 +13,28 @@ const RULES: &[(&str, &str)] = &[
         "private-key",
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\z)",
     ),
-    ("url-credentials", r"(?P<keep>[a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)[^\s@/]+@"),
-    ("jwt", r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    (
+        "url-credentials",
+        r"(?P<keep>[a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)[^\s@/]+@",
+    ),
+    (
+        "jwt",
+        r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+    ),
     ("anthropic-key", r"\bsk-ant-[A-Za-z0-9_-]{20,}"),
     ("memory-user-key", r"\bsk-mem-[A-Za-z0-9_-]{16,}"),
     ("openai-key", r"\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}"),
-    ("github-token", r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})"),
+    (
+        "github-token",
+        r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})",
+    ),
     ("slack-token", r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),
     ("aws-access-key", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
     ("google-api-key", r"\bAIza[0-9A-Za-z_-]{35}"),
-    ("bearer-token", r"(?i)(?P<keep>\bbearer\s+)[A-Za-z0-9._~+/=-]{16,}"),
+    (
+        "bearer-token",
+        r"(?i)(?P<keep>\bbearer\s+)[A-Za-z0-9._~+/=-]{16,}",
+    ),
     (
         "secret-assignment",
         r#"(?i)(?P<keep>\b[A-Z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Z0-9_.-]*["']?\s*[:=]\s*["']?)[^\s"',;]{6,}"#,
@@ -74,7 +86,10 @@ mod tests {
         ];
         for (input, kind) in cases {
             let out = redact(input);
-            assert!(out.contains(&format!("[REDACTED:{kind}]")), "{input} → {out}");
+            assert!(
+                out.contains(&format!("[REDACTED:{kind}]")),
+                "{input} → {out}"
+            );
         }
     }
 

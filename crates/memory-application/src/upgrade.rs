@@ -67,10 +67,18 @@ impl LegacyUpgrade {
         Self { meta, migration }
     }
 
-    pub async fn run(&self, instance: &InstanceId, input: UpgradeInput) -> DomainResult<UpgradeReport> {
-        let (admin, username) = self.admin(instance, input.admin_username.as_deref()).await?;
+    pub async fn run(
+        &self,
+        instance: &InstanceId,
+        input: UpgradeInput,
+    ) -> DomainResult<UpgradeReport> {
+        let (admin, username) = self
+            .admin(instance, input.admin_username.as_deref())
+            .await?;
         let team_name = input.team_name.unwrap_or_else(|| "default-team".into());
-        let agent_name = input.agent_name.unwrap_or_else(|| format!("default-agent-{username}"));
+        let agent_name = input
+            .agent_name
+            .unwrap_or_else(|| format!("default-agent-{username}"));
         let mut report = UpgradeReport {
             dry_run: input.dry_run,
             user_id: admin.user_id.clone(),
@@ -87,7 +95,9 @@ impl LegacyUpgrade {
             user_key: None,
         };
         if let Some(team_id) = &report.team_id {
-            report.agent_id = self.find_agent(instance, team_id, &report.agent_name).await?;
+            report.agent_id = self
+                .find_agent(instance, team_id, &report.agent_name)
+                .await?;
         }
         if input.dry_run && (report.team_id.is_none() || report.agent_id.is_none()) {
             // Nothing exists to validate against yet: just count.
@@ -100,24 +110,38 @@ impl LegacyUpgrade {
             None => {
                 report.team_created = true;
                 self.meta
-                    .create_team(instance, &admin, CreateTeamInput {
-                        name: report.team_name.clone(),
-                        owner_user_id: admin.user_id.clone(),
-                        description: Some("Created by the 0.1.1 upgrade".into()),
-                        metadata_json: None,
-                    })
+                    .create_team(
+                        instance,
+                        &admin,
+                        CreateTeamInput {
+                            name: report.team_name.clone(),
+                            owner_user_id: admin.user_id.clone(),
+                            description: Some("Created by the 0.1.1 upgrade".into()),
+                            metadata_json: None,
+                        },
+                    )
                     .await?
                     .team_id
             }
         };
         // A team found by name may predate the admin's membership.
-        if !input.dry_run && self.meta.get_member(instance, &admin, &team_id, &admin.user_id).await.is_err() {
+        if !input.dry_run
+            && self
+                .meta
+                .get_member(instance, &admin, &team_id, &admin.user_id)
+                .await
+                .is_err()
+        {
             self.meta
-                .add_member(instance, &admin, AddMemberInput {
-                    team_id: team_id.clone(),
-                    user_id: admin.user_id.clone(),
-                    role: Some("admin".into()),
-                })
+                .add_member(
+                    instance,
+                    &admin,
+                    AddMemberInput {
+                        team_id: team_id.clone(),
+                        user_id: admin.user_id.clone(),
+                        role: Some("admin".into()),
+                    },
+                )
                 .await?;
         }
         let agent_id = match report.agent_id.clone() {
@@ -125,15 +149,21 @@ impl LegacyUpgrade {
             None => {
                 report.agent_created = true;
                 self.meta
-                    .create_agent(instance, &admin, CreateAgentInput {
-                        team_id: team_id.clone(),
-                        owner_user_id: admin.user_id.clone(),
-                        name: report.agent_name.clone(),
-                        description: Some("Holds the memories migrated from the default bucket".into()),
-                        prompt: Some(String::new()),
-                        visibility: Some("team".into()),
-                        metadata_json: None,
-                    })
+                    .create_agent(
+                        instance,
+                        &admin,
+                        CreateAgentInput {
+                            team_id: team_id.clone(),
+                            owner_user_id: admin.user_id.clone(),
+                            name: report.agent_name.clone(),
+                            description: Some(
+                                "Holds the memories migrated from the default bucket".into(),
+                            ),
+                            prompt: Some(String::new()),
+                            visibility: Some("team".into()),
+                            metadata_json: None,
+                        },
+                    )
                     .await?
                     .agent_id
             }
@@ -143,15 +173,18 @@ impl LegacyUpgrade {
 
         let migrated: MigrationReport = self
             .migration
-            .migrate_default(instance, MigrateDefaultInput {
-                team_id,
-                agent_id,
-                user_id: admin.user_id.clone(),
-                from_team_id: None,
-                from_agent_id: None,
-                from_user_id: None,
-                dry_run: input.dry_run,
-            })
+            .migrate_default(
+                instance,
+                MigrateDefaultInput {
+                    team_id,
+                    agent_id,
+                    user_id: admin.user_id.clone(),
+                    from_team_id: None,
+                    from_agent_id: None,
+                    from_user_id: None,
+                    dry_run: input.dry_run,
+                },
+            )
             .await?;
         report.moved = migrated.moved;
         report.session_states = migrated.session_states;
@@ -160,53 +193,98 @@ impl LegacyUpgrade {
         if input.issue_key && !input.dry_run {
             let key = self
                 .meta
-                .create_key(instance, &admin, CreateKeyInput {
-                    user_id: None,
-                    name: Some("upgrade".into()),
-                    expires_at: None,
-                })
+                .create_key(
+                    instance,
+                    &admin,
+                    CreateKeyInput {
+                        user_id: None,
+                        name: Some("upgrade".into()),
+                        expires_at: None,
+                    },
+                )
                 .await?;
             report.user_key = key.key_value;
         }
         Ok(report)
     }
 
-    async fn admin(&self, instance: &InstanceId, username: Option<&str>) -> DomainResult<(Caller, String)> {
+    async fn admin(
+        &self,
+        instance: &InstanceId,
+        username: Option<&str>,
+    ) -> DomainResult<(Caller, String)> {
         let filter = UserFilter {
             user_type: Some(UserType::SystemAdmin),
             status: Some(UserStatus::Active),
             ..Default::default()
         };
-        let page = Pagination { limit: Some(100), offset: None };
-        let mut admins = self.meta.list_users_internal(instance, filter, page).await?.items;
+        let page = Pagination {
+            limit: Some(100),
+            offset: None,
+        };
+        let mut admins = self
+            .meta
+            .list_users_internal(instance, filter, page)
+            .await?
+            .items;
         admins.retain(|u| username.is_none_or(|n| u.username == n));
         admins.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         let admin = admins.into_iter().next().ok_or_else(|| match username {
             Some(n) => DomainError::not_found("system admin", n),
             None => DomainError::invalid("no active system admin; run init-admin first"),
         })?;
-        Ok((Caller { user_id: admin.user_id, is_system_admin: true }, admin.username))
+        Ok((
+            Caller {
+                user_id: admin.user_id,
+                is_system_admin: true,
+            },
+            admin.username,
+        ))
     }
 
     /// Store name filters are substring matches; the upgrade wants exact.
     async fn find_team(&self, instance: &InstanceId, name: &str) -> DomainResult<Option<String>> {
-        let page = Pagination { limit: Some(100), offset: None };
-        let teams = self.meta.list_teams(instance, None, Some(name), page).await?.items;
-        Ok(teams.into_iter().find(|t| t.name == name).map(|t| t.team_id))
-    }
-
-    async fn find_agent(&self, instance: &InstanceId, team_id: &str, name: &str) -> DomainResult<Option<String>> {
-        let agents = self
+        let page = Pagination {
+            limit: Some(100),
+            offset: None,
+        };
+        let teams = self
             .meta
-            .list_agents(instance, ListAgentsInput {
-                team_id: Some(team_id.to_owned()),
-                owner_user_id: None,
-                status: None,
-                name: Some(name.to_owned()),
-                pagination: Pagination { limit: Some(100), offset: None },
-            })
+            .list_teams(instance, None, Some(name), page)
             .await?
             .items;
-        Ok(agents.into_iter().find(|a| a.name == name).map(|a| a.agent_id))
+        Ok(teams
+            .into_iter()
+            .find(|t| t.name == name)
+            .map(|t| t.team_id))
+    }
+
+    async fn find_agent(
+        &self,
+        instance: &InstanceId,
+        team_id: &str,
+        name: &str,
+    ) -> DomainResult<Option<String>> {
+        let agents = self
+            .meta
+            .list_agents(
+                instance,
+                ListAgentsInput {
+                    team_id: Some(team_id.to_owned()),
+                    owner_user_id: None,
+                    status: None,
+                    name: Some(name.to_owned()),
+                    pagination: Pagination {
+                        limit: Some(100),
+                        offset: None,
+                    },
+                },
+            )
+            .await?
+            .items;
+        Ok(agents
+            .into_iter()
+            .find(|a| a.name == name)
+            .map(|a| a.agent_id))
     }
 }

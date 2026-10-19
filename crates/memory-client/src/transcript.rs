@@ -19,11 +19,21 @@ pub struct Msg {
 
 impl Msg {
     fn text(role: &'static str, content: String) -> Self {
-        Self { role, content, tool_name: None, tool_call_id: None }
+        Self {
+            role,
+            content,
+            tool_name: None,
+            tool_call_id: None,
+        }
     }
 
     fn tool(role: &'static str, content: String, name: Option<String>, id: Option<String>) -> Self {
-        Self { role, content, tool_name: name, tool_call_id: id }
+        Self {
+            role,
+            content,
+            tool_name: name,
+            tool_call_id: id,
+        }
     }
 
     pub fn is_text(&self) -> bool {
@@ -94,7 +104,9 @@ pub fn complete_lines(text: &str) -> Vec<&str> {
 pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
     let mut out = Vec::new();
     for line in lines {
-        let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         let flag = |k: &str| entry.get(k).and_then(Value::as_bool) == Some(true);
         if flag("isSidechain") || flag("isMeta") || flag("isCompactSummary") {
             continue;
@@ -102,11 +114,19 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
         let kind = str_of(&entry, "type").unwrap_or_default();
         let content = entry.get("message").and_then(|m| m.get("content"));
         match (kind, content) {
-            ("user", Some(Value::String(s))) => push(&mut out, Msg::text("user", strip_reminders(s))),
+            ("user", Some(Value::String(s))) => {
+                push(&mut out, Msg::text("user", strip_reminders(s)))
+            }
             ("user", Some(Value::Array(blocks))) => {
                 for b in blocks {
                     match str_of(b, "type") {
-                        Some("text") => push(&mut out, Msg::text("user", strip_reminders(str_of(b, "text").unwrap_or_default()))),
+                        Some("text") => push(
+                            &mut out,
+                            Msg::text(
+                                "user",
+                                strip_reminders(str_of(b, "text").unwrap_or_default()),
+                            ),
+                        ),
                         Some("tool_result") => push(
                             &mut out,
                             Msg::tool(
@@ -123,7 +143,13 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
             ("assistant", Some(Value::Array(blocks))) => {
                 for b in blocks {
                     match str_of(b, "type") {
-                        Some("text") => push(&mut out, Msg::text("assistant", str_of(b, "text").unwrap_or_default().to_owned())),
+                        Some("text") => push(
+                            &mut out,
+                            Msg::text(
+                                "assistant",
+                                str_of(b, "text").unwrap_or_default().to_owned(),
+                            ),
+                        ),
                         Some("tool_use") => push(
                             &mut out,
                             Msg::tool(
@@ -147,7 +173,10 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
 
 /// The text inside `<USER_REQUEST>`, or the whole input when absent.
 fn user_request(content: &str) -> String {
-    match (content.find("<USER_REQUEST>"), content.find("</USER_REQUEST>")) {
+    match (
+        content.find("<USER_REQUEST>"),
+        content.find("</USER_REQUEST>"),
+    ) {
         (Some(s), Some(e)) if e > s => content[s + "<USER_REQUEST>".len()..e].trim().to_owned(),
         _ => content.trim().to_owned(),
     }
@@ -160,18 +189,31 @@ pub fn antigravity(lines: &[&str], after_step: Option<i64>) -> (Vec<Msg>, Option
     // Results carry no call id; they answer the preceding calls in order.
     let mut open_calls: std::collections::VecDeque<String> = Default::default();
     for line in lines {
-        let Ok(step) = serde_json::from_str::<Value>(line) else { continue };
-        let Some(index) = step.get("step_index").and_then(Value::as_i64) else { continue };
+        let Ok(step) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(index) = step.get("step_index").and_then(Value::as_i64) else {
+            continue;
+        };
         if after_step.is_some_and(|a| index <= a) {
             continue;
         }
         last = Some(last.map_or(index, |l| l.max(index)));
         let content = str_of(&step, "content").unwrap_or_default();
-        match (str_of(&step, "type").unwrap_or_default(), str_of(&step, "source").unwrap_or_default()) {
+        match (
+            str_of(&step, "type").unwrap_or_default(),
+            str_of(&step, "source").unwrap_or_default(),
+        ) {
             ("USER_INPUT", _) => push(&mut out, Msg::text("user", user_request(content))),
             ("PLANNER_RESPONSE", _) => {
                 push(&mut out, Msg::text("assistant", content.to_owned()));
-                for (i, call) in step.get("tool_calls").and_then(Value::as_array).into_iter().flatten().enumerate() {
+                for (i, call) in step
+                    .get("tool_calls")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                {
                     let id = format!("step{index}-{i}");
                     open_calls.push_back(id.clone());
                     push(
@@ -187,8 +229,18 @@ pub fn antigravity(lines: &[&str], after_step: Option<i64>) -> (Vec<Msg>, Option
             }
             (_, "SYSTEM") | ("CONVERSATION_HISTORY", _) => {}
             (kind, _) if !content.is_empty() => {
-                let id = open_calls.pop_front().unwrap_or_else(|| format!("step{index}"));
-                push(&mut out, Msg::tool("tool_result", content.to_owned(), Some(kind.to_lowercase()), Some(id)));
+                let id = open_calls
+                    .pop_front()
+                    .unwrap_or_else(|| format!("step{index}"));
+                push(
+                    &mut out,
+                    Msg::tool(
+                        "tool_result",
+                        content.to_owned(),
+                        Some(kind.to_lowercase()),
+                        Some(id),
+                    ),
+                );
             }
             _ => {}
         }
@@ -200,7 +252,8 @@ pub fn antigravity(lines: &[&str], after_step: Option<i64>) -> (Vec<Msg>, Option
 pub fn antigravity_last_request(lines: &[&str]) -> Option<String> {
     lines.iter().rev().find_map(|line| {
         let step = serde_json::from_str::<Value>(line).ok()?;
-        (str_of(&step, "type")? == "USER_INPUT").then(|| user_request(str_of(&step, "content").unwrap_or_default()))
+        (str_of(&step, "type")? == "USER_INPUT")
+            .then(|| user_request(str_of(&step, "content").unwrap_or_default()))
     })
 }
 
@@ -214,13 +267,25 @@ pub fn openai(messages: &[Value]) -> Vec<Msg> {
             "user" => push(&mut out, Msg::text("user", content)),
             "assistant" => {
                 push(&mut out, Msg::text("assistant", content));
-                for call in m.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+                for call in m
+                    .get("tool_calls")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
                     let function = call.get("function").unwrap_or(&Value::Null);
                     push(
                         &mut out,
                         Msg::tool(
                             "tool_call",
-                            str_of(function, "arguments").map(str::to_owned).unwrap_or_else(|| function.get("arguments").map(Value::to_string).unwrap_or_default()),
+                            str_of(function, "arguments")
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| {
+                                    function
+                                        .get("arguments")
+                                        .map(Value::to_string)
+                                        .unwrap_or_default()
+                                }),
                             str_of(function, "name").map(str::to_owned),
                             str_of(call, "id").map(str::to_owned),
                         ),
@@ -229,7 +294,12 @@ pub fn openai(messages: &[Value]) -> Vec<Msg> {
             }
             "tool" => push(
                 &mut out,
-                Msg::tool("tool_result", content, str_of(m, "name").map(str::to_owned), str_of(m, "tool_call_id").map(str::to_owned)),
+                Msg::tool(
+                    "tool_result",
+                    content,
+                    str_of(m, "name").map(str::to_owned),
+                    str_of(m, "tool_call_id").map(str::to_owned),
+                ),
             ),
             _ => {}
         }
@@ -243,18 +313,54 @@ pub fn openai(messages: &[Value]) -> Vec<Msg> {
 /// hook payloads recorded during it: `UserPromptSubmit` (prompt),
 /// `PostToolUse` (tool call and result) and `Stop` (final reply), in order.
 pub fn codex(events: &[Value]) -> Vec<Msg> {
-    let as_text = |v: &Value| v.as_str().map_or_else(|| if v.is_null() { String::new() } else { v.to_string() }, str::to_owned);
+    let as_text = |v: &Value| {
+        v.as_str().map_or_else(
+            || {
+                if v.is_null() {
+                    String::new()
+                } else {
+                    v.to_string()
+                }
+            },
+            str::to_owned,
+        )
+    };
     let mut out = Vec::new();
     for e in events {
         match str_of(e, "hook_event_name").unwrap_or_default() {
-            "UserPromptSubmit" => push(&mut out, Msg::text("user", strip_reminders(str_of(e, "prompt").unwrap_or_default()))),
+            "UserPromptSubmit" => push(
+                &mut out,
+                Msg::text(
+                    "user",
+                    strip_reminders(str_of(e, "prompt").unwrap_or_default()),
+                ),
+            ),
             "PostToolUse" => {
                 let name = str_of(e, "tool_name").map(str::to_owned);
                 let id = str_of(e, "tool_use_id").map(str::to_owned);
-                push(&mut out, Msg::tool("tool_call", as_text(&e["tool_input"]), name.clone(), id.clone()));
-                push(&mut out, Msg::tool("tool_result", as_text(&e["tool_response"]), name, id));
+                push(
+                    &mut out,
+                    Msg::tool(
+                        "tool_call",
+                        as_text(&e["tool_input"]),
+                        name.clone(),
+                        id.clone(),
+                    ),
+                );
+                push(
+                    &mut out,
+                    Msg::tool("tool_result", as_text(&e["tool_response"]), name, id),
+                );
             }
-            "Stop" => push(&mut out, Msg::text("assistant", str_of(e, "last_assistant_message").unwrap_or_default().to_owned())),
+            "Stop" => push(
+                &mut out,
+                Msg::text(
+                    "assistant",
+                    str_of(e, "last_assistant_message")
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+            ),
             _ => {}
         }
     }
@@ -281,7 +387,10 @@ mod tests {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let msgs = claude_code(&refs);
         let roles: Vec<_> = msgs.iter().map(|m| m.role).collect();
-        assert_eq!(roles, ["user", "assistant", "tool_call", "tool_result", "assistant"]);
+        assert_eq!(
+            roles,
+            ["user", "assistant", "tool_call", "tool_result", "assistant"]
+        );
         assert_eq!(msgs[0].content, "fix the build");
         assert_eq!(msgs[2].tool_name.as_deref(), Some("Bash"));
         assert_eq!(msgs[2].content, r#"{"command":"cargo build"}"#);
@@ -304,7 +413,10 @@ mod tests {
         assert_eq!(roles, ["user", "tool_call", "tool_result", "assistant"]);
         assert_eq!(msgs[0].content, "翻成繁中");
         assert_eq!(msgs[2].tool_name.as_deref(), Some("run_command"));
-        assert_eq!(msgs[2].tool_call_id, msgs[1].tool_call_id, "results pair with their call");
+        assert_eq!(
+            msgs[2].tool_call_id, msgs[1].tool_call_id,
+            "results pair with their call"
+        );
         assert_eq!(last, Some(4));
         let (again, _) = antigravity(&refs, Some(4));
         assert!(again.is_empty(), "the cursor skips captured steps");
@@ -337,7 +449,13 @@ mod tests {
         let roles: Vec<_> = msgs.iter().map(|m| m.role).collect();
         assert_eq!(roles, ["user", "tool_call", "tool_result", "assistant"]);
         assert_eq!(msgs[1].content, r#"{"command":"echo hi"}"#);
-        assert_eq!((msgs[1].tool_call_id.as_deref(), msgs[2].tool_call_id.as_deref()), (Some("exec-1"), Some("exec-1")));
+        assert_eq!(
+            (
+                msgs[1].tool_call_id.as_deref(),
+                msgs[2].tool_call_id.as_deref()
+            ),
+            (Some("exec-1"), Some("exec-1"))
+        );
         assert_eq!(msgs[2].content, "hi\n");
         assert_eq!(msgs[3].content, "It printed hi.");
     }

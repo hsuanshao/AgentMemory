@@ -42,7 +42,14 @@ fn call_tool(params: &Value) -> Value {
     match result {
         Ok(data) => {
             let context = recall_context(&data);
-            text_result(if context.is_empty() { "No relevant memories.".into() } else { context }, false)
+            text_result(
+                if context.is_empty() {
+                    "No relevant memories.".into()
+                } else {
+                    context
+                },
+                false,
+            )
         }
         Err(e) => text_result(e, true),
     }
@@ -79,7 +86,9 @@ pub fn serve() {
         }
         let reply = match serde_json::from_str::<Value>(&line) {
             Ok(request) => handle(&request),
-            Err(_) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "parse error"}})),
+            Err(_) => Some(
+                json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "parse error"}}),
+            ),
         };
         if let Some(reply) = reply {
             let _ = writeln!(stdout, "{reply}");

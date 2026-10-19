@@ -185,7 +185,12 @@ pub async fn dispatch(
                 false => Some(subject_user(&s, &ctx, i, &body, &who).await?),
             };
             json!(meta
-                .list_teams(i, user.as_deref(), str_of(&body, "name"), pagination(&ctx, &body)?)
+                .list_teams(
+                    i,
+                    user.as_deref(),
+                    str_of(&body, "name"),
+                    pagination(&ctx, &body)?
+                )
                 .await
                 .map_err(e)?)
         }

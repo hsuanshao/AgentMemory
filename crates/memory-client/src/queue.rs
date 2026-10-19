@@ -37,12 +37,16 @@ pub struct FlushReport {
 }
 
 fn now_ms() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis())
 }
 
 impl Queue {
     pub fn new(data_dir: &Path) -> Self {
-        Self { dir: data_dir.join("queue") }
+        Self {
+            dir: data_dir.join("queue"),
+        }
     }
 
     fn failed_dir(&self) -> PathBuf {
@@ -64,7 +68,11 @@ impl Queue {
 
     pub fn push(&self, path: &str, body: &Value) -> Result<(), String> {
         static SEQ: AtomicU32 = AtomicU32::new(0);
-        let job = Job { path: path.to_owned(), body: body.clone(), created_at_ms: now_ms() };
+        let job = Job {
+            path: path.to_owned(),
+            body: body.clone(),
+            created_at_ms: now_ms(),
+        };
         let name = format!(
             "{:020}-{}-{:04}.json",
             job.created_at_ms,
@@ -92,7 +100,9 @@ impl Queue {
         };
         let pending = self.pending();
         for (i, file) in pending.iter().enumerate() {
-            let job: Option<Job> = std::fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok());
+            let job: Option<Job> = std::fs::read(file)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok());
             let Some(job) = job else {
                 self.park(file);
                 report.failed += 1;
@@ -137,7 +147,11 @@ impl FlushLock {
         std::fs::create_dir_all(dir).ok()?;
         let path = dir.join(".flush.lock");
         for _ in 0..2 {
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
                 Ok(_) => return Some(Self(path)),
                 Err(_) => {
                     let stale = std::fs::metadata(&path)

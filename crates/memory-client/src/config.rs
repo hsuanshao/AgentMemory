@@ -22,7 +22,13 @@ fn default_service_id() -> String {
     "default".into()
 }
 
-const FIELDS: [&str; 5] = ["server_url", "service_id", "user_key", "team_id", "agent_id"];
+const FIELDS: [&str; 5] = [
+    "server_url",
+    "service_id",
+    "user_key",
+    "team_id",
+    "agent_id",
+];
 
 impl Config {
     /// File (if any) plus environment overrides.
@@ -164,6 +170,9 @@ mod tests {
     fn reports_missing_fields() {
         let c = Config::merge(None, |_| None);
         assert_eq!(c.service_id, "default");
-        assert_eq!(c.missing(), ["server_url", "user_key", "team_id", "agent_id"]);
+        assert_eq!(
+            c.missing(),
+            ["server_url", "user_key", "team_id", "agent_id"]
+        );
     }
 }

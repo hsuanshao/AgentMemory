@@ -27,12 +27,19 @@ Settings can be overridden with AMEM_SERVER_URL, AMEM_USER_KEY, AMEM_TEAM_ID,
 AMEM_AGENT_ID, AMEM_SERVICE_ID; AMEM_CONFIG and AMEM_DATA_DIR move the files.";
 
 fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn mask(key: &str) -> String {
     let visible: String = key.chars().take(10).collect();
-    if key.is_empty() { "(unset)".into() } else { format!("{visible}…") }
+    if key.is_empty() {
+        "(unset)".into()
+    } else {
+        format!("{visible}…")
+    }
 }
 
 fn login(args: &[String]) -> Result<(), String> {
@@ -41,11 +48,22 @@ fn login(args: &[String]) -> Result<(), String> {
     let mut user_key = pick("--user-key", &existing.user_key);
     if user_key == "-" {
         user_key.clear();
-        std::io::stdin().read_line(&mut user_key).map_err(|e| e.to_string())?;
+        std::io::stdin()
+            .read_line(&mut user_key)
+            .map_err(|e| e.to_string())?;
     }
     let cfg = Config {
-        server_url: pick("--server-url", &existing.server_url).trim_end_matches('/').to_owned(),
-        service_id: pick("--service-id", if existing.service_id.is_empty() { "default" } else { &existing.service_id }),
+        server_url: pick("--server-url", &existing.server_url)
+            .trim_end_matches('/')
+            .to_owned(),
+        service_id: pick(
+            "--service-id",
+            if existing.service_id.is_empty() {
+                "default"
+            } else {
+                &existing.service_id
+            },
+        ),
         user_key: user_key.trim().to_owned(),
         team_id: pick("--team-id", &existing.team_id),
         agent_id: pick("--agent-id", &existing.agent_id),
@@ -61,7 +79,12 @@ fn login(args: &[String]) -> Result<(), String> {
     }
     let path = config_path();
     cfg.save(&path)?;
-    println!("saved {} (team {}, agent {})", path.display(), cfg.team_id, cfg.agent_id);
+    println!(
+        "saved {} (team {}, agent {})",
+        path.display(),
+        cfg.team_id,
+        cfg.agent_id
+    );
     Ok(())
 }
 
@@ -74,7 +97,11 @@ fn status() -> Result<(), String> {
     println!("team_id:    {}", cfg.team_id);
     println!("agent_id:   {}", cfg.agent_id);
     let queue = Queue::new(&data_dir());
-    println!("queued:     {} (in {})", queue.pending().len(), data_dir().join("queue").display());
+    println!(
+        "queued:     {} (in {})",
+        queue.pending().len(),
+        data_dir().join("queue").display()
+    );
     if !cfg.missing().is_empty() {
         return Err(format!("not configured: {}", cfg.missing().join(", ")));
     }
@@ -83,9 +110,15 @@ fn status() -> Result<(), String> {
 
 fn recall(args: &[String]) -> Result<(), String> {
     let json = args.iter().any(|a| a == "--json");
-    let query: Vec<&str> = args.iter().filter(|a| *a != "--json").map(String::as_str).collect();
+    let query: Vec<&str> = args
+        .iter()
+        .filter(|a| *a != "--json")
+        .map(String::as_str)
+        .collect();
     let api = Api::new(Config::load()?, Duration::from_secs(15))?;
-    let data = api.recall(&query.join(" "), None).map_err(|e| e.to_string())?;
+    let data = api
+        .recall(&query.join(" "), None)
+        .map_err(|e| e.to_string())?;
     if json {
         println!("{data}");
     } else {
@@ -98,7 +131,9 @@ fn capture_cmd(args: &[String]) -> Result<(), String> {
     let session = flag(args, "--session").ok_or("missing --session")?;
     let format = flag(args, "--format").unwrap_or_else(|| "openai".into());
     let mut raw = String::new();
-    std::io::stdin().read_to_string(&mut raw).map_err(|e| e.to_string())?;
+    std::io::stdin()
+        .read_to_string(&mut raw)
+        .map_err(|e| e.to_string())?;
     let msgs = match format.as_str() {
         "openai" => {
             let list: Vec<Value> = serde_json::from_str(&raw).map_err(|e| format!("stdin: {e}"))?;
@@ -121,7 +156,10 @@ fn capture_cmd(args: &[String]) -> Result<(), String> {
 fn flush() -> Result<(), String> {
     let api = Api::new(Config::load()?, Duration::from_secs(15))?;
     let r = Queue::new(&data_dir()).flush(&api);
-    println!("sent {}, failed {}, remaining {}", r.sent, r.failed, r.remaining);
+    println!(
+        "sent {}, failed {}, remaining {}",
+        r.sent, r.failed, r.remaining
+    );
     r.blocked.map_or(Ok(()), Err)
 }
 
@@ -138,10 +176,17 @@ fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("hook") => {
-            match (rest.first().map(String::as_str), rest.get(1).map(String::as_str)) {
-                (Some("claude-code"), Some("user-prompt-submit")) => hooks::claude_code_user_prompt_submit(),
+            match (
+                rest.first().map(String::as_str),
+                rest.get(1).map(String::as_str),
+            ) {
+                (Some("claude-code"), Some("user-prompt-submit")) => {
+                    hooks::claude_code_user_prompt_submit()
+                }
                 (Some("claude-code"), Some("stop")) => hooks::claude_code_stop(),
-                (Some("antigravity"), Some("pre-invocation")) => hooks::antigravity_pre_invocation(),
+                (Some("antigravity"), Some("pre-invocation")) => {
+                    hooks::antigravity_pre_invocation()
+                }
                 (Some("antigravity"), Some("stop")) => hooks::antigravity_stop(),
                 (Some("codex"), Some("user-prompt-submit")) => hooks::codex_user_prompt_submit(),
                 (Some("codex"), Some("post-tool-use")) => hooks::codex_post_tool_use(),

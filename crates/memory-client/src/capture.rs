@@ -18,7 +18,11 @@ pub const MAX_TEXT_CHARS: usize = 32_000;
 fn truncate(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
         None => text.to_owned(),
-        Some((cut, _)) => format!("{}\n…[truncated {} chars]", &text[..cut], text[cut..].chars().count()),
+        Some((cut, _)) => format!(
+            "{}\n…[truncated {} chars]",
+            &text[..cut],
+            text[cut..].chars().count()
+        ),
     }
 }
 
@@ -30,7 +34,11 @@ pub fn prepare(msgs: Vec<Msg>) -> Vec<Msg> {
     msgs.into_iter()
         .enumerate()
         .map(|(i, mut m)| {
-            let max = if m.is_text() { MAX_TEXT_CHARS } else { MAX_TOOL_CHARS };
+            let max = if m.is_text() {
+                MAX_TEXT_CHARS
+            } else {
+                MAX_TOOL_CHARS
+            };
             m.content = truncate(&redact(&m.content), max);
             if !m.is_text() && m.tool_call_id.as_deref().is_none_or(str::is_empty) {
                 m.tool_call_id = Some(format!("auto-{i}"));
@@ -49,10 +57,16 @@ pub fn requests(session_id: &str, msgs: &[Msg]) -> Vec<(&'static str, Value)> {
         .collect();
     let mut out = Vec::new();
     if !text.is_empty() {
-        out.push(("conversation/add", json!({"session_id": session_id, "messages": text})));
+        out.push((
+            "conversation/add",
+            json!({"session_id": session_id, "messages": text}),
+        ));
     }
     if msgs.iter().any(|m| !m.is_text()) {
-        out.push(("skill/conversation/add", json!({"session_id": session_id, "messages": msgs})));
+        out.push((
+            "skill/conversation/add",
+            json!({"session_id": session_id, "messages": msgs}),
+        ));
     }
     out
 }
@@ -101,17 +115,26 @@ mod tests {
     use super::*;
 
     fn msg(role: &'static str, content: &str) -> Msg {
-        Msg { role, content: content.into(), tool_name: None, tool_call_id: None }
+        Msg {
+            role,
+            content: content.into(),
+            tool_name: None,
+            tool_call_id: None,
+        }
     }
 
     #[test]
     fn redacts_then_truncates() {
         let long = format!("token=abcdefgh123 {}", "x".repeat(MAX_TOOL_CHARS + 10));
         let out = prepare(vec![msg("tool_result", &long)]);
-        assert!(out[0].content.starts_with("token=[REDACTED:secret-assignment] "));
+        assert!(out[0]
+            .content
+            .starts_with("token=[REDACTED:secret-assignment] "));
         let redacted_len = "token=[REDACTED:secret-assignment] ".len() + MAX_TOOL_CHARS + 10;
         let dropped = redacted_len - MAX_TOOL_CHARS;
-        assert!(out[0].content.ends_with(&format!("[truncated {dropped} chars]")));
+        assert!(out[0]
+            .content
+            .ends_with(&format!("[truncated {dropped} chars]")));
     }
 
     #[test]
@@ -120,8 +143,19 @@ mod tests {
         assert_eq!(text_only.len(), 1);
         assert_eq!(text_only[0].0, "conversation/add");
 
-        let with_tools = requests("s", &[msg("user", "ls"), msg("tool_call", "{}"), msg("tool_result", "a"), msg("assistant", "done")]);
-        assert_eq!(with_tools.iter().map(|r| r.0).collect::<Vec<_>>(), ["conversation/add", "skill/conversation/add"]);
+        let with_tools = requests(
+            "s",
+            &[
+                msg("user", "ls"),
+                msg("tool_call", "{}"),
+                msg("tool_result", "a"),
+                msg("assistant", "done"),
+            ],
+        );
+        assert_eq!(
+            with_tools.iter().map(|r| r.0).collect::<Vec<_>>(),
+            ["conversation/add", "skill/conversation/add"]
+        );
         assert_eq!(with_tools[0].1["messages"].as_array().unwrap().len(), 2);
         assert_eq!(with_tools[1].1["messages"].as_array().unwrap().len(), 4);
     }
