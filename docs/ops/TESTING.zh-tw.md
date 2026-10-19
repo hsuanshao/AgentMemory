@@ -62,6 +62,18 @@ npm run build
 
 需要 Node 22 以上（`panel/package.json` 的 `engines`）。`npm ci` 也會拒絕和 `package.json` 不同步的 `package-lock.json`。
 
+### 樣式相關的修改：比對截圖
+
+型別檢查和單元測試看不到 CSS。只要修改可能改變 Panel 的外觀（Tailwind、PostCSS、Vite、共用元件），就要比對新舊兩個 build：
+
+1. build 基準分支，把 `panel/web/dist` 另存一份；再 build 修改後的版本。
+2. 啟動一個 memory-core 並寫入資料（API 呼叫見 [§5](#5-整套-stack-煙霧測試)），再對它啟動兩個 Panel server，各服務一個 build：`PORT=… CORE_URL=… CORE_API_KEY=… UI_DIST_DIR=<dist 的絕對路徑> node server/dist/index.js`。`UI_DIST_DIR` 必須是絕對路徑，因為 `npm start -w server` 會從 `panel/server` 解析它。
+3. 用 Playwright 在兩邊登入，對每個路由（`#/dashboard`、`#/memory`、`#/logs`、`#/skills`、`#/meta`，以及登入頁）在亮色和暗色模式（`colorScheme`）下截圖，再用 `pixelmatch` 逐對比對。
+4. 即時數值（dashboard 的時間、uptime）一定會不同。其他差異請先比對兩個 build 上該元素的 `getComputedStyle`，再判斷是否真的有變：樣式完全相同時，文字點陣化也可能讓像素不同。
+5. 也要檢查截圖看不到的：按鈕的 `cursor`、`::placeholder` 顏色、focus 外框。
+
+如果 Playwright 無法為這台主機下載瀏覽器（它會拒絕不認得的發行版），可以用 `executablePath` 指定現有的 Chromium 或 headless shell。
+
 ## 4. Shell 腳本
 
 ```bash

@@ -62,6 +62,18 @@ npm run build
 
 Node 22 or newer (`engines` in `panel/package.json`). `npm ci` also refuses a `package-lock.json` that is out of sync with the `package.json` files.
 
+### Styling changes: compare screenshots
+
+Type checks and unit tests don't see CSS. When a change can alter how the Panel looks (Tailwind, PostCSS, Vite, shared components), compare the old and new builds:
+
+1. Build the base branch and copy `panel/web/dist` aside; then build the change.
+2. Start one memory-core with seeded data (see [§5](#5-full-stack-smoke-test) for the API calls), then two Panel servers on it, one per build: `PORT=… CORE_URL=… CORE_API_KEY=… UI_DIST_DIR=<absolute path to a dist> node server/dist/index.js`. `UI_DIST_DIR` must be absolute: `npm start -w server` resolves it from `panel/server`.
+3. With Playwright, log in on both, screenshot every route (`#/dashboard`, `#/memory`, `#/logs`, `#/skills`, `#/meta`, plus the login page) in light and dark mode (`colorScheme`), and diff each pair with `pixelmatch`.
+4. Live values (dashboard clock, uptime) always differ. For anything else, compare `getComputedStyle` of the element on both builds before deciding it's a real change: text rasterisation can move pixels with identical styles.
+5. Also check what screenshots can't show: `cursor` on buttons, `::placeholder` colour, focus rings.
+
+If Playwright can't download a browser for the host (it refuses unknown distributions), pass an existing Chromium or headless shell as `executablePath`.
+
 ## 4. Shell scripts
 
 ```bash
