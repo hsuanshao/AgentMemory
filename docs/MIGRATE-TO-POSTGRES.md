@@ -77,6 +77,8 @@ MIGRATE_TARGET=postgres-url AGENT_MEMORY_POSTGRES_URL=postgres://memory:…@db.i
   ./migrate-to-postgres.sh --non-interactive
 ```
 
+`MIGRATE_SKIP_BACKUP=1` skips the archive of `/data` (`.env` is still saved); use it only when you back the volume up some other way.
+
 Running it again after a successful move is harmless: it sees `AGENT_MEMORY_STORAGE_BACKEND=postgres` and stops. If it failed halfway, re-run it: instances already copied are recognised and skipped.
 
 ## B. Manual: the same steps by hand
@@ -104,7 +106,7 @@ docker compose build memory-core
 docker compose run --rm -T memory-core migrate-storage --dry-run
 ```
 
-`compose run` starts the `postgres` service first when its profile is on. The output lists each instance with its row counts, for example:
+The copy runs in a one-off memory-core container: the same image, the same `/data` volume and the same settings as the service, so the data directory and the embedding dimension match what memory-core will use. `compose run` starts the `postgres` service first when its profile is on. The output lists each instance with its row counts, for example:
 
 ```text
 instance default: would be copied
@@ -173,4 +175,9 @@ docker compose run --rm --no-deps -T --entrypoint sh memory-core -c 'rm -rf /dat
 
 ## Next: several replicas
 
-PostgreSQL makes the data shareable; running more than one memory-core also needs shared coordination (pipeline timers, the job queue and locks). That is Redis: set `AGENT_MEMORY_COORDINATION_BACKEND=redis` and `AGENT_MEMORY_REDIS_URL` (or add the `redis` profile), as described under [Storage and Coordination Backends](../README.md#storage-and-coordination-backends) in the README. Do that as a separate step after this migration. Pipeline progress kept by the `local` backend (in `/data/system.db`) is not carried over to Redis: a session that receives new turns after that switch starts from the beginning, so its earlier turns may be distilled into memories a second time. Switching while sessions are idle (for example, over a weekend) keeps that small.
+PostgreSQL makes the database shareable. Running more than one memory-core needs two more things:
+
+- **A shared `/data` volume.** Skill resources and raw session objects are files under `/data/instances/<id>/` on every backend, so all replicas must mount the same storage (for example NFS or another network volume). See [ARCHITECTURE.md §8](ARCHITECTURE.md#8-backends-and-deployment-topologies).
+- **Shared coordination** (pipeline timers, the job queue and locks).
+
+Coordination is Redis: set `AGENT_MEMORY_COORDINATION_BACKEND=redis` and `AGENT_MEMORY_REDIS_URL` (or add the `redis` profile), as described under [Storage and Coordination Backends](../README.md#storage-and-coordination-backends) in the README. Do that as a separate step after this migration. Pipeline progress kept by the `local` backend (in `/data/system.db`) is not carried over to Redis: a session that receives new turns after that switch starts from the beginning, so its earlier turns may be distilled into memories a second time. Switching while sessions are idle (for example, over a weekend) keeps that small.

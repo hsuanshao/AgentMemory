@@ -77,6 +77,8 @@ MIGRATE_TARGET=postgres-url AGENT_MEMORY_POSTGRES_URL=postgres://memory:…@db.i
   ./migrate-to-postgres.sh --non-interactive
 ```
 
+`MIGRATE_SKIP_BACKUP=1` 會跳過 `/data` 的打包（`.env` 仍會備份）；只有在你用其他方式備份了這個 volume 時才使用。
+
 搬移成功後再執行一次不會有影響：它看到 `AGENT_MEMORY_STORAGE_BACKEND=postgres` 就會直接結束。如果中途失敗，重跑即可，已經搬完的 instance 會被認出並跳過。
 
 ## B. 手動：逐步執行相同步驟
@@ -104,7 +106,7 @@ docker compose build memory-core
 docker compose run --rm -T memory-core migrate-storage --dry-run
 ```
 
-開啟 `postgres` profile 時，`compose run` 會先啟動 `postgres` 服務。輸出會列出每個 instance 和各表的筆數，例如：
+搬移在一次性的 memory-core 容器裡執行：和正式服務同一個映像、同一個 `/data` volume、同一份設定，所以資料目錄和 embedding 維度都會和 memory-core 實際使用的一致。開啟 `postgres` profile 時，`compose run` 會先啟動 `postgres` 服務。輸出會列出每個 instance 和各表的筆數，例如：
 
 ```text
 instance default: would be copied
@@ -173,4 +175,9 @@ docker compose run --rm --no-deps -T --entrypoint sh memory-core -c 'rm -rf /dat
 
 ## 下一步：多個副本
 
-PostgreSQL 讓資料可以共用；要跑多個 memory-core，還需要共用的協調後端（管線計時、工作佇列和鎖），也就是 Redis：設定 `AGENT_MEMORY_COORDINATION_BACKEND=redis` 和 `AGENT_MEMORY_REDIS_URL`（或加上 `redis` profile），詳見 README 的[儲存與協調後端](../README.zh-tw.md#儲存與協調後端)。請在這次遷移之後另外進行。`local` 後端保存的管線進度（在 `/data/system.db`）不會帶到 Redis：切換之後，有新對話進來的 session 會從頭開始處理，所以它較早的對話可能會再被蒸餾成記憶一次。挑 session 都閒置的時候切換（例如週末），可以把影響降到最低。
+PostgreSQL 讓資料庫可以共用。要跑多個 memory-core，還需要另外兩樣：
+
+- **共用的 `/data` volume。** 不論用哪種後端，skill 資源和原始 session 物件都是 `/data/instances/<id>/` 底下的檔案，所以所有副本都必須掛載同一份儲存（例如 NFS 或其他網路 volume）。詳見 [ARCHITECTURE.zh-tw.md §8](ARCHITECTURE.zh-tw.md#8-後端與部署拓撲)。
+- **共用的協調後端**（管線計時、工作佇列和鎖）。
+
+協調後端用 Redis：設定 `AGENT_MEMORY_COORDINATION_BACKEND=redis` 和 `AGENT_MEMORY_REDIS_URL`（或加上 `redis` profile），詳見 README 的[儲存與協調後端](../README.zh-tw.md#儲存與協調後端)。請在這次遷移之後另外進行。`local` 後端保存的管線進度（在 `/data/system.db`）不會帶到 Redis：切換之後，有新對話進來的 session 會從頭開始處理，所以它較早的對話可能會再被蒸餾成記憶一次。挑 session 都閒置的時候切換（例如週末），可以把影響降到最低。

@@ -331,7 +331,7 @@ flowchart TB
 
 - Docker Compose services: `memory-core`, `memory-panel`, plus `redis` and `postgres` under profiles of the same name. Volumes: `memory-core-data`, `redis-data`, `postgres-data`, `claude-config`, `antigravity-config`, `codex-config` (CLI logins), and the `PROJECT_DIR` bind mount at `/workspace` for CLI LLM providers.
 - Images are tagged `memory-core:${MEMORY_IMAGE_TAG}` and `memory-panel:${MEMORY_IMAGE_TAG}` (default `local`). Give each deployment on one host its own tag; otherwise building one overwrites the other's image.
-- Multi-node needs `storage.backend = postgres`, `coordination.backend = redis`, and a shared `<data>` volume.
+- Multi-node needs `storage.backend = postgres`, `coordination.backend = redis`, and a shared `<data>` volume. An existing SQLite install moves over with `migrate-to-postgres.sh` ([MIGRATE-TO-POSTGRES.md](MIGRATE-TO-POSTGRES.md)).
 - Put TLS in front of port 8420 when clients connect over a network; see REMOTE-CLIENTS.md §2.
 
 ## 9. Upgrade and removal
