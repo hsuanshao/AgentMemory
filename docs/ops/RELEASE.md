@@ -50,7 +50,7 @@ To find what to change: `git grep -n '<old version>' -- ':!Cargo.lock' ':!*.md'`
    git push origin vX.Y.Z
    ```
 
-8. **Publish the GitHub release** for the tag with the release notes (next section).
+8. **Publish the GitHub release.** The tag starts `release.yml` ([section 5](#releases)), which builds everything and creates a draft release; add the release notes (next section) and publish it.
 
 ## 4. Release notes
 
@@ -81,13 +81,26 @@ Run the consistency check locally before a release; with a version argument it a
 
 When `rust-version` in `Cargo.toml` changes, change the toolchain of the msrv job with it.
 
-### Releases (planned)
+### Releases
 
-**`release.yml`**, on a pushed `v*.*.*` tag:
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml) runs when a `vX.Y.Z` tag is pushed (step 7 of the checklist):
 
-1. Check that the tag equals the Cargo workspace version, then run the CI jobs.
-2. Build `amem` for Linux x86_64/arm64 (musl) and macOS arm64/x86_64, with a `SHA256SUMS` file, so client machines no longer need a Rust toolchain.
-3. Build multi-arch (amd64/arm64) images and push them to the GitHub Container Registry as `agentmemory-core` and `agentmemory-panel`, tagged with the version, `MAJOR.MINOR` and `latest`.
-4. Create a **draft** GitHub release with those files, for the maintainer to add the notes and publish.
+| Job | Does |
+| --- | --- |
+| version | `check-consistency.sh X.Y.Z`: the tag matches every file in [section 2](#2-where-the-version-lives) |
+| ci | All of `ci.yml` |
+| amem | Builds `amem` for `linux-x86_64`, `linux-arm64` (static, musl), `macos-arm64` and `macos-x86_64` as `amem-X.Y.Z-<platform>.tar.gz` |
+| image | Builds `agentmemory-core` (with the bundled LLM CLIs) and `agentmemory-panel` for amd64 and arm64, each on a native runner, and pushes them by digest |
+| manifest | Joins both architectures on `ghcr.io/<owner>/agentmemory-core` and `-panel` as `X.Y.Z`, `X.Y` and `latest` |
+| release | A **draft** GitHub release with the archives and `SHA256SUMS` |
 
-Follow-ups that come with it: Compose and the install scripts pull the published images first (keeping `build:` for local changes), and REMOTE-CLIENTS documents downloading `amem`.
+Afterwards:
+
+1. Open the draft release, write the notes (section 4), and choose whether it is a pre-release. Then publish it.
+2. The first time only: GHCR makes new packages private. Open each package (`agentmemory-core`, `agentmemory-panel`) under the repository's Packages, then Package settings → Change visibility → Public.
+
+If a job fails, fix it on `main` and run the workflow again for the tag. A re-run replaces the release files and keeps the notes. A wrong tag: delete the draft release and the tag (`git push origin :refs/tags/vX.Y.Z`), then tag again.
+
+To try the whole build without publishing, start it by hand: Actions → Release → Run workflow. It builds every binary and image, but pushes nothing and creates no release; the archives stay as workflow artifacts.
+
+Not done yet: Compose and the install scripts still build the images locally rather than pulling them from GHCR, and REMOTE-CLIENTS still installs `amem` with `cargo install`.

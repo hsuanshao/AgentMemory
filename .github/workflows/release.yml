@@ -1,0 +1,222 @@
+# Builds a release from a pushed vX.Y.Z tag: amem binaries, multi-arch images
+# on GHCR and a draft GitHub release for the maintainer to finish.
+# docs/ops/RELEASE.md §5 describes the steps around it.
+#
+# Run it by hand (Actions → Release → Run workflow) to build everything
+# without publishing: nothing is pushed and no release is created.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        name: Tag matches every version in the repository
+        run: |
+          if [[ $PUBLISH == true ]]; then
+            version=${GITHUB_REF_NAME#v}
+            .github/scripts/check-consistency.sh "$version"
+          else
+            .github/scripts/check-consistency.sh
+            version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  amem:
+    needs: [version, ci]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { name: linux-arm64, target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { name: macos-arm64, target: aarch64-apple-darwin, os: macos-latest }
+          - { name: macos-x86_64, target: x86_64-apple-darwin, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    env:
+      ARCHIVE: amem-${{ needs.version.outputs.version }}-${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # Static Linux binaries; ring compiles C, so it needs a musl C compiler.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+      - run: cargo build --release --locked -p memory-client --target ${{ matrix.target }}
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+      - name: Package
+        run: |
+          mkdir -p "dist/$ARCHIVE"
+          cp "target/${{ matrix.target }}/release/amem" "dist/$ARCHIVE/"
+          tar -C dist -czf "dist/$ARCHIVE.tar.gz" "$ARCHIVE"
+      - name: Runs on this machine
+        if: matrix.target != 'x86_64-apple-darwin' || runner.arch == 'X64'
+        run: '"dist/$ARCHIVE/amem" --version'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: amem-${{ matrix.name }}
+          path: dist/${{ env.ARCHIVE }}.tar.gz
+          if-no-files-found: error
+
+  # Each architecture builds on its own runner (no emulation), pushed by
+  # digest; the merge job below joins them under the version tags.
+  image:
+    needs: [version, ci]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [core, panel]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - { image: core, context: ., file: docker/core.Dockerfile }
+          - { image: panel, context: panel, file: panel/Dockerfile }
+          - { platform: linux/amd64, os: ubuntu-latest, arch: amd64 }
+          - { platform: linux/arm64, os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agentmemory-${{ matrix.image }}" >>"$GITHUB_OUTPUT"
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.image }}
+      - uses: docker/setup-buildx-action@v4
+      - if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=${{ env.PUBLISH }}
+          cache-from: type=gha,scope=release-${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.image }}-${{ matrix.arch }}
+      - name: Record the digest
+        if: env.PUBLISH == 'true'
+        run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - if: env.PUBLISH == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+
+  manifest:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, image]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [core, panel]
+    runs-on: ubuntu-latest
+    steps:
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agentmemory-${{ matrix.image }}" >>"$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        with:
+          path: digests
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+      # vX.Y.Z → X.Y.Z, X.Y and latest.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Join the architectures under the version tags
+        working-directory: digests
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          VERSION: ${{ needs.version.outputs.version }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, amem, manifest]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: amem-*
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz | tee SHA256SUMS
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          cat >notes.md <<EOF
+          _Release notes to be written._
+
+          **Images**
+
+          \`\`\`
+          docker pull ghcr.io/$owner/agentmemory-core:$VERSION
+          docker pull ghcr.io/$owner/agentmemory-panel:$VERSION
+          \`\`\`
+
+          **amem** for Linux (static, x86_64/arm64) and macOS (arm64/x86_64) is attached; check it against \`SHA256SUMS\`.
+          EOF
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # A re-run: refresh the files, keep whatever notes were written.
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
+              --title "Agent Memory $GITHUB_REF_NAME" --notes-file notes.md
+          fi

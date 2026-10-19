@@ -50,7 +50,7 @@
    git push origin vX.Y.Z
    ```
 
-8. 為這個 tag **發布 GitHub release**，附上 release note（見下一節）。
+8. **發布 GitHub release。** tag 會啟動 `release.yml`（[第 5 節](#發版)），建置所有檔案並建立 draft release；補上 release note（見下一節）後發布。
 
 ## 4. Release note
 
@@ -81,13 +81,26 @@
 
 `Cargo.toml` 的 `rust-version` 改變時，msrv job 的工具鏈也要跟著改。
 
-### 發版（規劃中）
+### 發版
 
-**`release.yml`**：推送 `v*.*.*` tag 時執行：
+推送 `vX.Y.Z` tag 時（檢查清單第 7 步）會執行 [`.github/workflows/release.yml`](../../.github/workflows/release.yml)：
 
-1. 確認 tag 等於 Cargo workspace 的版本，再跑一次 CI。
-2. 建置 Linux x86_64/arm64（musl）和 macOS arm64/x86_64 的 `amem` 執行檔，附上 `SHA256SUMS`，讓 client 機器不再需要 Rust 工具鏈。
-3. 建置多架構（amd64/arm64）映像並推到 GitHub Container Registry，名稱為 `agentmemory-core` 和 `agentmemory-panel`，標上版本號、`MAJOR.MINOR` 和 `latest`。
-4. 用這些檔案建立 **draft** GitHub release，由維護者補上 release note 後發布。
+| Job | 做什麼 |
+| --- | --- |
+| version | `check-consistency.sh X.Y.Z`：確認 tag 和[第 2 節](#2-版本號出現在哪些檔案)每個檔案的版本相同 |
+| ci | 跑完整的 `ci.yml` |
+| amem | 建置 `linux-x86_64`、`linux-arm64`（靜態連結，musl）、`macos-arm64`、`macos-x86_64` 的 `amem`，打包成 `amem-X.Y.Z-<platform>.tar.gz` |
+| image | 在各架構的原生 runner 上建置 `agentmemory-core`（含內建的 LLM CLI）和 `agentmemory-panel` 的 amd64、arm64 映像，以 digest 推送 |
+| manifest | 把兩個架構合併到 `ghcr.io/<owner>/agentmemory-core` 和 `-panel`，標上 `X.Y.Z`、`X.Y` 和 `latest` |
+| release | 建立 **draft** GitHub release，附上壓縮檔和 `SHA256SUMS` |
 
-連帶的後續工作：Compose 和安裝腳本改成優先拉取已發布的映像（保留 `build:` 給本機修改用），並在 REMOTE-CLIENTS 補上下載 `amem` 的方式。
+之後：
+
+1. 打開 draft release，寫 release note（第 4 節），決定是否標成 pre-release，然後發布。
+2. 只有第一次需要：GHCR 新建的 package 預設是私有的。到 repo 的 Packages 打開每個 package（`agentmemory-core`、`agentmemory-panel`），Package settings → Change visibility → Public。
+
+某個 job 失敗時，先在 `main` 修好，再對這個 tag 重跑 workflow。重跑會替換 release 的檔案，但保留已寫好的 release note。tag 打錯了：刪掉 draft release 和 tag（`git push origin :refs/tags/vX.Y.Z`），再重新打 tag。
+
+想試跑整個建置流程但不發布，可以手動啟動：Actions → Release → Run workflow。它會建置所有執行檔和映像，但什麼都不推送、也不建立 release；壓縮檔會留在 workflow 的 artifacts。
+
+尚未完成：Compose 和安裝腳本仍然在本機建置映像，還沒改成從 GHCR 拉取；REMOTE-CLIENTS 仍然用 `cargo install` 安裝 `amem`。
