@@ -1,0 +1,136 @@
+# Checks every pull request and push to main. release.yml runs the same jobs
+# before it builds anything. What each job covers: docs/ops/TESTING.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # SQLite tests always run; the Postgres and Redis ones run because their
+  # URLs are set (they are skipped without them).
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis:8.4.0
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      AGENT_MEMORY_TEST_POSTGRES_URL: postgres://postgres:test@127.0.0.1:5432/postgres
+      AGENT_MEMORY_TEST_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Keep in step with rust-version in Cargo.toml.
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets --locked
+
+  panel:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: panel/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The same shellcheck release as docs/ops/TESTING.md §4.
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 -x \
+            install.sh upgrade.sh uninstall.sh migrate-to-postgres.sh .github/scripts/*.sh
+      - name: Hermes plugin compiles
+        run: python3 -m py_compile clients/hermes/agentmemory/__init__.py
+
+  consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: .github/scripts/check-consistency.sh
+
+  # Builds both images without pushing. The core image skips the bundled LLM
+  # CLIs: they are downloaded at build time and only slow this down.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: memory-core
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/core.Dockerfile
+          build-args: |
+            INSTALL_CLAUDE=false
+            INSTALL_ANTIGRAVITY=false
+            INSTALL_CODEX=false
+          cache-from: type=gha,scope=core
+          cache-to: type=gha,mode=max,scope=core
+      - name: memory-panel
+        uses: docker/build-push-action@v7
+        with:
+          context: panel
+          cache-from: type=gha,scope=panel
+          cache-to: type=gha,mode=max,scope=panel

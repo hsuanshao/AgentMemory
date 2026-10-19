@@ -8,7 +8,7 @@
 - [2. 版本號出現在哪些檔案](#2-版本號出現在哪些檔案)
 - [3. 發版檢查清單](#3-發版檢查清單)
 - [4. Release note](#4-release-note)
-- [5. 自動化（規劃中）](#5-自動化規劃中)
+- [5. 自動化](#5-自動化)
 
 ## 1. 版本號
 
@@ -40,7 +40,7 @@
 2. **更新**[第 2 節](#2-版本號出現在哪些檔案)列出的每個檔案。
 3. **跑完** [TESTING.zh-tw.md](TESTING.zh-tw.md) 的每一層測試：格式、clippy、含 Postgres 和 Redis 的完整測試、Panel、shellcheck。如果這次發版改了 `install.sh`、`upgrade.sh`、`migrate-to-postgres.sh` 或 Compose 檔，也要跑整套 stack 煙霧測試。
 4. **檢查可能受影響的文件**：README（兩種語言）、需要維運者動手時的 UPGRADE 指南、端點有變動時的 API.md。所有給使用者看的文件都有英文和繁體中文版，兩邊都要改。
-5. 推送之前**掃描金鑰和私人資訊**：`git grep -nE 'sk-(ant|proj|mem)-[A-Za-z0-9_-]{16}|ghp_[A-Za-z0-9]{20}|BEGIN [A-Z ]*PRIVATE KEY'` 應該找不到任何東西，搜尋內部主機名稱或家目錄路徑也一樣。
+5. 推送之前**掃描金鑰和私人資訊**：`.github/scripts/check-consistency.sh X.Y.Z` 會一次做完步驟 2 和 5 的檢查。手動的話，`git grep -nE 'sk-(ant|proj|mem)-[A-Za-z0-9_-]{16}|ghp_[A-Za-z0-9]{20}|BEGIN [A-Z ]*PRIVATE KEY'` 應該找不到任何東西，搜尋內部主機名稱或家目錄路徑也一樣。
 6. **開 PR**，經過 review 後合併。
 7. 在 `main` 的合併 commit 上**打 tag** 並推送：
 
@@ -60,23 +60,28 @@
 - 連到指南，不要重複指南的內容。
 - 用 GitHub 帳號和 PR 編號標註貢獻者。
 
-## 5. 自動化（規劃中）
+## 5. 自動化
 
-目前還沒有 `.github/workflows`。規劃如下：
+### CI
 
-**`ci.yml`**：每個 pull request 和推到 `main` 時執行：
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 在每個 pull request 和每次推到 `main` 時執行：
 
 | Job | 執行內容 |
 | --- | --- |
 | fmt | `cargo fmt --all -- --check` |
 | clippy | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
-| test | `cargo test --workspace --locked`（SQLite） |
-| test-services | 同上，加上 `pgvector/pgvector:pg16` 和 `redis:8.4.0` service 容器與 `AGENT_MEMORY_TEST_*_URL` 環境變數 |
-| msrv | 用 Rust 1.88 執行 `cargo check --workspace --locked` |
+| test | `cargo test --workspace --locked`，搭配 `pgvector/pgvector:pg16` 和 `redis:8.4.0` service 容器與 `AGENT_MEMORY_TEST_*_URL` 環境變數，所以 SQLite、Postgres、Redis 的測試都會跑 |
+| msrv | 用 Rust 1.88 執行 `cargo check --workspace --all-targets --locked` |
 | panel | Node 22：`npm ci`、typecheck、test、build |
-| scripts | 對每支腳本跑 shellcheck |
-| consistency | [第 2 節](#2-版本號出現在哪些檔案)的每個檔案版本一致；以及第 3 節步驟 5 的金鑰掃描 |
+| scripts | 用 shellcheck v0.10.0 檢查每支腳本；確認 Hermes plugin 能編譯 |
+| consistency | [`.github/scripts/check-consistency.sh`](../../.github/scripts/check-consistency.sh)：[第 2 節](#2-版本號出現在哪些檔案)的每個檔案版本一致，以及步驟 5 的金鑰和私人路徑掃描 |
 | docker | build 兩個映像但不推送（core 用 `INSTALL_CLAUDE/ANTIGRAVITY/CODEX=false` 加快速度） |
+
+發版前可以在本機跑一致性檢查；加上版本號參數時，還會確認每個檔案都是那個版本：`.github/scripts/check-consistency.sh 0.2.0`。
+
+`Cargo.toml` 的 `rust-version` 改變時，msrv job 的工具鏈也要跟著改。
+
+### 發版（規劃中）
 
 **`release.yml`**：推送 `v*.*.*` tag 時執行：
 
@@ -86,5 +91,3 @@
 4. 用這些檔案建立 **draft** GitHub release，由維護者補上 release note 後發布。
 
 連帶的後續工作：Compose 和安裝腳本改成優先拉取已發布的映像（保留 `build:` 給本機修改用），並在 REMOTE-CLIENTS 補上下載 `amem` 的方式。
-
-shellcheck job 要設為必過之前，必須先修掉 [TESTING.zh-tw.md §4](TESTING.zh-tw.md#4-shell-腳本) 列出的警告。

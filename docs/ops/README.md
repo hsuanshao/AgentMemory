@@ -7,5 +7,5 @@ Notes for people who maintain Agent Memory itself: running the tests, cutting a 
 | Document | What it covers |
 | --- | --- |
 | [TESTING.md](TESTING.md) | Every test layer and how to run it: Rust unit and end-to-end tests, the Postgres and Redis integration tests, the Panel, shell scripts, and a full-stack smoke test that leaves your own install alone |
-| [RELEASE.md](RELEASE.md) | Version numbers and where they live, the release checklist, and the planned CI and release automation |
+| [RELEASE.md](RELEASE.md) | Version numbers and where they live, the release checklist, CI, and the planned release automation |
 | [STORAGE-MIGRATION.md](STORAGE-MIGRATION.md) | How the SQLite → PostgreSQL copy works, and what to update when the storage schema changes |

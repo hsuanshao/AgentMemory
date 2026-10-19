@@ -2,7 +2,7 @@
 
 [繁體中文](TESTING.zh-tw.md)
 
-Run the layers that match what you changed; before a release, run all of them.
+Run the layers that match what you changed; before a release, run all of them. CI runs sections 1 to 4 on every pull request ([RELEASE.md §5](RELEASE.md#5-automation)); section 5 and the screenshot comparison stay manual.
 
 ## Contents
 
@@ -81,7 +81,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 -x \
   install.sh upgrade.sh uninstall.sh migrate-to-postgres.sh
 ```
 
-`upgrade.sh` and `migrate-to-postgres.sh` `source ./install.sh` for their helpers, hence `-x`. Known findings at v0.10.0, to fix before shellcheck becomes a CI gate: `install.sh` SC2174 (`mkdir -p -m`), `uninstall.sh` SC2015 (`A && B || C`) and SC2013 (`for` over `cat`). New scripts should be clean.
+`upgrade.sh` and `migrate-to-postgres.sh` `source ./install.sh` for their helpers, hence `-x`. CI runs the same command (plus `.github/scripts/*.sh`) and fails on any finding, so every script must stay clean.
 
 The scripts' behaviour is only tested by running them (next section).
 

@@ -8,7 +8,7 @@
 - [2. Where the version lives](#2-where-the-version-lives)
 - [3. Release checklist](#3-release-checklist)
 - [4. Release notes](#4-release-notes)
-- [5. Automation (planned)](#5-automation-planned)
+- [5. Automation](#5-automation)
 
 ## 1. Version numbers
 
@@ -40,7 +40,7 @@ To find what to change: `git grep -n '<old version>' -- ':!Cargo.lock' ':!*.md'`
 2. **Bump** every file in [section 2](#2-where-the-version-lives).
 3. **Run every test layer** in [TESTING.md](TESTING.md): format, clippy, the full suite with Postgres and Redis, the Panel, shellcheck. When the release changes `install.sh`, `upgrade.sh`, `migrate-to-postgres.sh` or the Compose file, also run the full-stack smoke test.
 4. **Check the docs** that a release can affect: README (both languages), the UPGRADE guide when operators must act, API.md for changed endpoints. Every user-facing document exists in English and Traditional Chinese, so change both.
-5. **Scan for secrets and private details** before anything is pushed: `git grep -nE 'sk-(ant|proj|mem)-[A-Za-z0-9_-]{16}|ghp_[A-Za-z0-9]{20}|BEGIN [A-Z ]*PRIVATE KEY'` should find nothing, and neither should a search for internal host names or home-directory paths.
+5. **Scan for secrets and private details** before anything is pushed: `.github/scripts/check-consistency.sh X.Y.Z` does steps 2 and 5 together. By hand, `git grep -nE 'sk-(ant|proj|mem)-[A-Za-z0-9_-]{16}|ghp_[A-Za-z0-9]{20}|BEGIN [A-Z ]*PRIVATE KEY'` should find nothing, and neither should a search for internal host names or home-directory paths.
 6. **Open a PR**, let it be reviewed and merged.
 7. **Tag** the merge commit on `main` and push the tag:
 
@@ -60,23 +60,28 @@ Suggested shape:
 - Link the guides rather than repeating them.
 - Credit contributors by their GitHub handle and PR number.
 
-## 5. Automation (planned)
+## 5. Automation
 
-There is no `.github/workflows` yet. The plan:
+### CI
 
-**`ci.yml`**, on every pull request and push to `main`:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request and every push to `main`:
 
 | Job | Runs |
 | --- | --- |
 | fmt | `cargo fmt --all -- --check` |
 | clippy | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
-| test | `cargo test --workspace --locked` (SQLite) |
-| test-services | The same with `pgvector/pgvector:pg16` and `redis:8.4.0` service containers and the `AGENT_MEMORY_TEST_*_URL` variables |
-| msrv | `cargo check --workspace --locked` on Rust 1.88 |
+| test | `cargo test --workspace --locked` with `pgvector/pgvector:pg16` and `redis:8.4.0` service containers and the `AGENT_MEMORY_TEST_*_URL` variables, so the SQLite, Postgres and Redis tests all run |
+| msrv | `cargo check --workspace --all-targets --locked` on Rust 1.88 |
 | panel | Node 22: `npm ci`, typecheck, test, build |
-| scripts | shellcheck on every script |
-| consistency | Every file in [section 2](#2-where-the-version-lives) carries the same version; the secret scan from step 5 |
+| scripts | shellcheck v0.10.0 on every script; the Hermes plugin compiles |
+| consistency | [`.github/scripts/check-consistency.sh`](../../.github/scripts/check-consistency.sh): every file in [section 2](#2-where-the-version-lives) carries the same version, and the secret and private-path scan from step 5 |
 | docker | Build both images without pushing (core with `INSTALL_CLAUDE/ANTIGRAVITY/CODEX=false` to stay fast) |
+
+Run the consistency check locally before a release; with a version argument it also checks that every file says that version: `.github/scripts/check-consistency.sh 0.2.0`.
+
+When `rust-version` in `Cargo.toml` changes, change the toolchain of the msrv job with it.
+
+### Releases (planned)
 
 **`release.yml`**, on a pushed `v*.*.*` tag:
 
@@ -86,5 +91,3 @@ There is no `.github/workflows` yet. The plan:
 4. Create a **draft** GitHub release with those files, for the maintainer to add the notes and publish.
 
 Follow-ups that come with it: Compose and the install scripts pull the published images first (keeping `build:` for local changes), and REMOTE-CLIENTS documents downloading `amem`.
-
-Before the shellcheck job can be required, the findings listed in [TESTING.md §4](TESTING.md#4-shell-scripts) need fixing.
