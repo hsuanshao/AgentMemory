@@ -147,11 +147,14 @@ Meta list responses: `{items, total, limit, offset}`.
 — first-run bootstrap: a system admin plus `default-team` and `default-agent-<username>`
 (409 `already_initialized` once any user exists),
 `/v3/internal/meta/user/list-by-instance`,
-`/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, dry_run?}` →
+`/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` →
 `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`
 — upgrade helper that moves data written to the legacy `default` buckets
 (L0/L1 of `default/default/default`, L2/L3 and skills of `default/default`)
-into a real scope, pipeline cursors included. The agent must belong to the
+into a real scope, pipeline cursors included. A pre-0.1.1 client that named
+its agent or user wrote to `default/<agent>/<user>` instead; select that
+bucket with `from_team_id` / `from_agent_id` / `from_user_id` (each
+defaults to `default`). The agent must belong to the
 team, the user must be an active member, and the agent must have no L2/L3
 yet (409 `target_has_profile`, checked only when legacy data remains, so a
 re-run after a successful move is a no-op). `dry_run: true` rolls back and

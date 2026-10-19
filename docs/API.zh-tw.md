@@ -130,7 +130,7 @@ Meta 的列表回應格式：`{items, total, limit, offset}`。
 
 * `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`：第一次啟動時的初始化，建立一位系統管理者，以及 `default-team` 與 `default-agent-<username>`。只要已有任何使用者，就回 409 `already_initialized`。
 * `/v3/internal/meta/user/list-by-instance`。
-* `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, dry_run?}` → `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`：升級輔助工具，把寫在舊 `default` 桶的資料（`default/default/default` 的 L0/L1，以及 `default/default` 的 L2/L3 和 skills）連同管線游標搬到真正的範圍。條件：agent 必須屬於該 team、使用者必須是有效成員，而且 agent 還不能有 L2/L3（否則回 409 `target_has_profile`）。這項檢查只在仍有舊資料時進行，所以搬移成功後重跑不會有任何動作。`dry_run: true` 會 rollback，只回報筆數。
+* `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` → `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`：升級輔助工具，把寫在舊 `default` 桶的資料（`default/default/default` 的 L0/L1，以及 `default/default` 的 L2/L3 和 skills）連同管線游標搬到真正的範圍。0.1.1 之前若 client 有指定 agent 或使用者，資料會寫在 `default/<agent>/<user>`；這時用 `from_team_id`／`from_agent_id`／`from_user_id` 指定來源桶（未填的部分都是 `default`）。條件：agent 必須屬於該 team、使用者必須是有效成員，而且 agent 還不能有 L2/L3（否則回 409 `target_has_profile`）。這項檢查只在仍有舊資料時進行，所以搬移成功後重跑不會有任何動作。`dry_run: true` 會 rollback，只回報筆數。
 * `/v3/internal/upgrade` `{admin_username?, team_name?, agent_name?, issue_key?, dry_run?}` → `{dry_run, user_id, username, team_id, team_name, team_created, agent_id, agent_name, agent_created, moved, session_states, profile_states, user_key?}`：`upgrade.sh` 呼叫的就是這個。它會：
   * 選定系統管理者（預設是最早建立的那位）；
   * 以完全相同的名稱找 team（預設 `default-team`）和 agent（預設 `default-agent-<admin>`），找不到就建立；
