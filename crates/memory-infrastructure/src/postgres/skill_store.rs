@@ -65,7 +65,7 @@ fn snippet(v: &SkillVersion) -> String {
 }
 
 /// The text indexed for a head version (same as the SQLite FTS row).
-fn index_source(v: &SkillVersion) -> String {
+pub(crate) fn index_source(v: &SkillVersion) -> String {
     let body: String = v.content.chars().take(4000).collect();
     format!("{} {} {}", v.name.replace('-', " "), v.description, body)
 }

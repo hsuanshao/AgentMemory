@@ -9,6 +9,7 @@ pub mod openai;
 pub mod postgres;
 pub mod redis;
 pub mod sqlite;
+pub mod sqlite_to_postgres;
 pub mod system;
 pub mod text;
 pub mod worker;
