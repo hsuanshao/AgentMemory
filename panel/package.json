@@ -20,5 +20,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.5"
+  },
+  "overrides": {
+    "postcss-selector-parser": "^7.1.6"
   }
 }
