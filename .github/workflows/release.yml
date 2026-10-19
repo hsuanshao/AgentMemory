@@ -111,6 +111,45 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Build into the local Docker first and start it; only an image that
+      # runs gets pushed. The push below reuses this build's cache.
+      - name: Build for the smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: smoke-${{ matrix.image }}
+          cache-from: type=gha,scope=release-${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.image }}-${{ matrix.arch }}
+      - name: Smoke test
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          health() {
+            for _ in $(seq 30); do
+              if body=$(curl -fsS "$1"); then echo "$body"; return 0; fi
+              sleep 1
+            done
+            docker logs smoke
+            return 1
+          }
+          if [[ $IMAGE == core ]]; then
+            docker run -d --name smoke -p 8420:8420 -e AGENT_MEMORY_API_KEY=smoke smoke-core
+            body=$(health http://127.0.0.1:8420/health)
+            echo "$body"
+            jq -e --arg v "$VERSION" '.version == $v' <<<"$body"
+            # The bundled CLIs run as the service user on this architecture.
+            docker exec smoke claude --version
+            docker exec smoke codex --version
+            docker exec smoke test -x /home/memory/.local/bin/agy
+          else
+            docker run -d --name smoke -p 8125:8125 smoke-panel
+            health http://127.0.0.1:8125/health
+          fi
+          docker rm -f smoke
       - id: build
         uses: docker/build-push-action@v7
         with:
@@ -120,7 +159,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=${{ env.PUBLISH }}
           cache-from: type=gha,scope=release-${{ matrix.image }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=release-${{ matrix.image }}-${{ matrix.arch }}
       - name: Record the digest
         if: env.PUBLISH == 'true'
         run: |
