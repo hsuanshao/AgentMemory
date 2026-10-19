@@ -660,9 +660,14 @@ async fn the_amem_client_redacts_queues_and_delivers() {
         Msg {
             tool_name: None,
             tool_call_id: None,
+            // Assembled at runtime so no token-shaped literal trips a
+            // secret scanner.
             ..msg(
                 "user",
-                "We release v2 next Monday. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz",
+                &format!(
+                    "We release v2 next Monday. My key is sk-ant-{}",
+                    "x".repeat(24)
+                ),
             )
         },
         msg("tool_call", r#"{"command":"ls"}"#),

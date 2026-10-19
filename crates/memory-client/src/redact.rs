@@ -72,19 +72,31 @@ pub fn redact(text: &str) -> String {
 mod tests {
     use super::redact;
 
+    /// `prefix` followed by `len` filler characters. Fixtures are built at
+    /// runtime so the source holds no token-shaped literal for a secret
+    /// scanner (GitGuardian, GitHub push protection) to flag.
+    fn fake(prefix: &str, filler: char, len: usize) -> String {
+        format!("{prefix}{}", filler.to_string().repeat(len))
+    }
+
     #[test]
     fn redacts_known_token_shapes() {
+        let jwt = [fake("ey", 'J', 10), fake("ey", 'J', 10), fake("", 's', 10)].join(".");
         let cases = [
-            ("key sk-ant-api03-abcdefghijklmnopqrstuvwxyz", "anthropic-key"),
-            ("OPENAI_KEY sk-proj-AbCdEfGhIjKlMnOpQrStUvWx12", "openai-key"),
-            ("sk-mem-F1qDBbH-e7kQiPD0H-XO0Q_l2pPPYeL4", "memory-user-key"),
-            ("token ghp_abcdefghijklmnopqrstuvwxyz0123456789", "github-token"),
-            ("AKIAIOSFODNN7EXAMPLE", "aws-access-key"),
-            ("xoxb-1234567890-abcdefghij", "slack-token"),
-            ("AIzaSyA-1234567890abcdefghijklmnopqrstu", "google-api-key"),
-            ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "jwt"),
+            (format!("key {}", fake("sk-ant-", 'x', 24)), "anthropic-key"),
+            (
+                format!("OPENAI_KEY {}", fake("sk-proj-", 'x', 24)),
+                "openai-key",
+            ),
+            (fake("sk-mem-", 'x', 32), "memory-user-key"),
+            (format!("token {}", fake("ghp_", 'x', 36)), "github-token"),
+            (fake("AKIA", 'X', 16), "aws-access-key"),
+            (fake("xoxb-", 'x', 12), "slack-token"),
+            (fake("AIza", 'x', 35), "google-api-key"),
+            (jwt, "jwt"),
         ];
         for (input, kind) in cases {
+            let input = input.as_str();
             let out = redact(input);
             assert!(
                 out.contains(&format!("[REDACTED:{kind}]")),
@@ -96,7 +108,7 @@ mod tests {
     #[test]
     fn keeps_the_label_of_assignments_and_headers() {
         assert_eq!(
-            redact("DB_PASSWORD=hunter2hunter2 next"),
+            redact(&format!("DB_PASSWORD={} next", fake("", 'x', 12))),
             "DB_PASSWORD=[REDACTED:secret-assignment] next"
         );
         assert_eq!(
@@ -107,15 +119,17 @@ mod tests {
             redact("Authorization: Bearer abcdefghijklmnopqrstuvwx"),
             "Authorization: Bearer [REDACTED:bearer-token]"
         );
+        let url = format!("postgres://memory:{}@db:5432/x", fake("", 'x', 10));
         assert_eq!(
-            redact("postgres://memory:s3cret-pass@db:5432/x"),
+            redact(&url),
             "postgres://memory:[REDACTED:url-credentials]db:5432/x"
         );
     }
 
     #[test]
     fn redacts_private_keys_even_when_truncated() {
-        let out = redact("x\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAB3Nza\nmore");
+        let header = format!("-----BEGIN {} PRIVATE KEY-----", "OPENSSH");
+        let out = redact(&format!("x\n{header}\n{}\nmore", fake("", 'A', 9)));
         assert_eq!(out, "x\n[REDACTED:private-key]");
     }
 
