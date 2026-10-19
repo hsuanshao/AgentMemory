@@ -90,7 +90,7 @@
 | version | `check-consistency.sh X.Y.Z`：確認 tag 和[第 2 節](#2-版本號出現在哪些檔案)每個檔案的版本相同 |
 | ci | 跑完整的 `ci.yml` |
 | amem | 建置 `linux-x86_64`、`linux-arm64`（靜態連結，musl）、`macos-arm64`、`macos-x86_64` 的 `amem`，打包成 `amem-X.Y.Z-<platform>.tar.gz` |
-| image | 在各架構的原生 runner 上建置 `agentmemory-core`（含內建的 LLM CLI）和 `agentmemory-panel` 的 amd64、arm64 映像，以 digest 推送 |
+| image | 在各架構的原生 runner 上建置 `agentmemory-core`（含內建的 LLM CLI）和 `agentmemory-panel` 的 amd64、arm64 映像。每個映像會先啟動測試：core 的 `/health` 要回傳這次的版本，內建的 CLI 要能執行；Panel 的 `/health` 要有回應。通過後才以 digest 推送 |
 | manifest | 把兩個架構合併到 `ghcr.io/<owner>/agentmemory-core` 和 `-panel`，標上 `X.Y.Z`、`X.Y` 和 `latest` |
 | release | 建立 **draft** GitHub release，附上壓縮檔和 `SHA256SUMS` |
 

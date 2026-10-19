@@ -90,7 +90,7 @@ When `rust-version` in `Cargo.toml` changes, change the toolchain of the msrv jo
 | version | `check-consistency.sh X.Y.Z`: the tag matches every file in [section 2](#2-where-the-version-lives) |
 | ci | All of `ci.yml` |
 | amem | Builds `amem` for `linux-x86_64`, `linux-arm64` (static, musl), `macos-arm64` and `macos-x86_64` as `amem-X.Y.Z-<platform>.tar.gz` |
-| image | Builds `agentmemory-core` (with the bundled LLM CLIs) and `agentmemory-panel` for amd64 and arm64, each on a native runner, and pushes them by digest |
+| image | Builds `agentmemory-core` (with the bundled LLM CLIs) and `agentmemory-panel` for amd64 and arm64, each on a native runner. Each image is started first: core must answer `/health` with the release version and run its bundled CLIs, the Panel must answer `/health`. Only then is it pushed by digest |
 | manifest | Joins both architectures on `ghcr.io/<owner>/agentmemory-core` and `-panel` as `X.Y.Z`, `X.Y` and `latest` |
 | release | A **draft** GitHub release with the archives and `SHA256SUMS` |
 
