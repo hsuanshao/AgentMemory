@@ -129,6 +129,7 @@ docs/UPGRADE.md             Upgrading an existing install (upgrade.sh, manual st
 docs/UNINSTALL.md           Removing the client or the server (uninstall.sh, manual steps)
 docs/MULTI-TENANCY.md       Teams, users and agents: layouts, setup, isolation internals
 docs/MIGRATE-TO-POSTGRES.md Moving an install from SQLite to PostgreSQL (script, manual steps, rollback)
+docs/ops/                   For maintainers: testing, releases, storage-migration internals
 ```
 
 ## Configuration

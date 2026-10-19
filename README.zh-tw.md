@@ -129,6 +129,7 @@ docs/UPGRADE.zh-tw.md        舊版升級指引（upgrade.sh、手動步驟、�
 docs/UNINSTALL.zh-tw.md      移除 client 或伺服器（uninstall.sh、手動步驟）
 docs/MULTI-TENANCY.zh-tw.md  團隊、使用者與 agent：配置方式、設定、隔離機制
 docs/MIGRATE-TO-POSTGRES.zh-tw.md  從 SQLite 搬到 PostgreSQL（腳本、手動步驟、還原）
+docs/ops/                    給維護者：測試、發版、儲存搬移的內部設計
 ```
 
 ## 設定
