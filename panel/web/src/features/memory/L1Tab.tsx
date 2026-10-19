@@ -49,7 +49,7 @@ export function L1Tab({ scope }: { scope: Scope }) {
       header: "Content",
       render: (a) => (
         <div className="max-w-3xl">
-          <div className="whitespace-pre-wrap break-words">{a.content}</div>
+          <div className="whitespace-pre-wrap wrap-break-word">{a.content}</div>
           {a.background && <div className="mt-1 text-xs text-muted">↳ {a.background}</div>}
         </div>
       ),

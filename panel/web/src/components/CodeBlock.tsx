@@ -5,7 +5,7 @@ export function CodeBlock({ children, className }: { children: string; className
   return (
     <pre
       className={cx(
-        "max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded border border-line bg-raised p-3 font-mono text-[12px] leading-relaxed",
+        "max-h-[60vh] overflow-auto whitespace-pre-wrap wrap-break-word rounded-sm border border-line bg-raised p-3 font-mono text-[12px] leading-relaxed",
         className,
       )}
     >

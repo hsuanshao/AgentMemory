@@ -40,7 +40,7 @@ export function TextArea({ className, ...rest }: TextareaHTMLAttributes<HTMLText
     <textarea
       {...rest}
       className={cx(
-        "w-full rounded border border-line bg-surface p-2 font-mono text-[12px] leading-relaxed text-fg outline-none",
+        "w-full rounded-sm border border-line bg-surface p-2 font-mono text-[12px] leading-relaxed text-fg outline-hidden",
         "focus:border-accent focus:ring-1 focus:ring-accent/40",
         className,
       )}

@@ -82,7 +82,7 @@ function TreeItem({ row, active, onSelect }: { row: TreeRow; active: boolean; on
         type="button"
         style={indent}
         onClick={onSelect}
-        className={cx("block w-full truncate rounded py-1 pr-2 text-left", active ? "bg-accent/10 text-accent" : "hover:bg-raised")}
+        className={cx("block w-full truncate rounded-sm py-1 pr-2 text-left", active ? "bg-accent/10 text-accent" : "hover:bg-raised")}
         title={row.entry?.summary ?? row.path}
       >
         <span className="mono">{row.name}</span>

@@ -34,7 +34,7 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-full items-center justify-center p-6">
-      <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-md border border-line bg-surface p-6 shadow-sm">
+      <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-md border border-line bg-surface p-6 shadow-xs">
         <div>
           <h1 className="text-base font-semibold">Memory Panel</h1>
           <p className="mt-1 text-xs text-muted">Sign in with a MemoryCore user key.</p>
@@ -56,7 +56,7 @@ export function LoginPage() {
         <Button type="submit" variant="primary" className="w-full" busy={busy} disabled={!userKey.trim()}>
           Sign in
         </Button>
-        <div className="rounded border border-line bg-raised p-3 text-xxs leading-relaxed text-muted">
+        <div className="rounded-sm border border-line bg-raised p-3 text-xxs leading-relaxed text-muted">
           No key yet? An operator can bootstrap the first admin on Core with
           <code className="mono mx-1 text-fg">POST /v3/internal/meta/user/init-admin</code>
           (Bearer API key only). See the panel README for the curl command.

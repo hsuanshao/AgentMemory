@@ -38,7 +38,7 @@ function L1Breakdown({ l1 }: { l1: StatsOverview["l1"] }) {
   if (total === 0) return null;
   return (
     <div className="mt-3">
-      <div className="flex h-2 overflow-hidden rounded bg-raised">
+      <div className="flex h-2 overflow-hidden rounded-sm bg-raised">
         {L1_SEGMENTS.map((seg) => (
           <div key={seg.key} className={seg.color} style={{ width: `${(l1[seg.key] / total) * 100}%` }} title={`${seg.label}: ${l1[seg.key]}`} />
         ))}
@@ -46,7 +46,7 @@ function L1Breakdown({ l1 }: { l1: StatsOverview["l1"] }) {
       <div className="mt-1.5 flex gap-4 text-xxs text-muted">
         {L1_SEGMENTS.map((seg) => (
           <span key={seg.key} className="flex items-center gap-1">
-            <span className={`h-2 w-2 rounded-sm ${seg.color}`} />
+            <span className={`h-2 w-2 rounded-xs ${seg.color}`} />
             {seg.label} {Math.round((l1[seg.key] / total) * 100)}%
           </span>
         ))}

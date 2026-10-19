@@ -29,8 +29,8 @@ export function Button({ variant = "secondary", size = "md", busy, className, di
       {...rest}
       disabled={disabled || busy}
       className={cx(
-        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded border font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition-colors",
+        "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50",
         VARIANTS[variant],
         SIZES[size],
         className,

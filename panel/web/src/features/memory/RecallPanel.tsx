@@ -12,7 +12,7 @@ import { useAction } from "../../hooks/useAction";
 const COLUMNS: ReadonlyArray<Column<RecallMemory>> = [
   { key: "score", header: "Score", render: (m) => <span className="mono">{m.score.toFixed(4)}</span> },
   { key: "type", header: "Type", render: (m) => <Badge tone="accent">{m.type}</Badge> },
-  { key: "content", header: "Content", render: (m) => <div className="max-w-3xl whitespace-pre-wrap break-words">{m.content}</div> },
+  { key: "content", header: "Content", render: (m) => <div className="max-w-3xl whitespace-pre-wrap wrap-break-word">{m.content}</div> },
   { key: "id", header: "ID", render: (m) => <span className="mono text-muted">{m.id}</span> },
 ];
 

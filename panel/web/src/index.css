@@ -1,8 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-/* Design tokens as RGB triplets so Tailwind can apply alpha. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/* Design tokens as RGB triplets, so the Tailwind colors below can apply alpha. */
 :root {
   --bg: 246 247 249;
   --surface: 255 255 255;
@@ -33,6 +33,46 @@
   }
 }
 
+@theme {
+  --color-bg: rgb(var(--bg));
+  --color-surface: rgb(var(--surface));
+  --color-raised: rgb(var(--raised));
+  --color-line: rgb(var(--line));
+  --color-fg: rgb(var(--fg));
+  --color-muted: rgb(var(--muted));
+  --color-accent: rgb(var(--accent));
+  --color-ok: rgb(var(--ok));
+  --color-warn: rgb(var(--warn));
+  --color-err: rgb(var(--err));
+
+  --font-sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --font-mono: JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-xxs: 0.6875rem;
+  --text-xxs--line-height: 1rem;
+}
+
+/* Tailwind v3 defaults that v4 changed, kept so the Panel looks and behaves
+   as before: gray-200 borders (v4: currentcolor), gray-400 placeholders (v4:
+   the text color at 50%) and pointer cursors on buttons (v4: default). */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
 @layer base {
   html,
   body,
@@ -47,14 +87,14 @@
   }
 }
 
-@layer components {
-  .input {
-    @apply h-8 rounded border border-line bg-surface px-2 text-[13px] text-fg outline-none placeholder:text-muted focus:border-accent focus:ring-1 focus:ring-accent/40 disabled:opacity-50;
-  }
-  .label {
-    @apply text-xxs font-medium uppercase tracking-wide text-muted;
-  }
-  .mono {
-    @apply font-mono text-[12px];
-  }
+@utility input {
+  @apply h-8 rounded-sm border border-line bg-surface px-2 text-[13px] text-fg outline-hidden placeholder:text-muted focus:border-accent focus:ring-1 focus:ring-accent/40 disabled:opacity-50;
+}
+
+@utility label {
+  @apply text-xxs font-medium uppercase tracking-wide text-muted;
+}
+
+@utility mono {
+  @apply font-mono text-[12px];
 }

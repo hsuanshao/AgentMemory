@@ -25,7 +25,7 @@ export function PipelinePanel({ slot }: { slot: Slot<PipelineStatus> }) {
             <Stat label="Last task" value={formatRelative(p?.worker.last_task_at)} hint={formatTime(p?.worker.last_task_at)} />
           </div>
           {p?.worker.last_error && (
-            <div className="mono mt-3 rounded border border-err/30 bg-err/5 px-2 py-1.5 text-err">last error: {p.worker.last_error}</div>
+            <div className="mono mt-3 rounded-sm border border-err/30 bg-err/5 px-2 py-1.5 text-err">last error: {p.worker.last_error}</div>
           )}
         </Card>
         <Card title="Queue">

@@ -32,10 +32,10 @@ export function SecretNotice({ label, secret, onDismiss }: { label: string; secr
     }
   }
   return (
-    <div role="status" className="space-y-1.5 rounded border border-ok/40 bg-ok/10 px-3 py-2 text-xs">
+    <div role="status" className="space-y-1.5 rounded-sm border border-ok/40 bg-ok/10 px-3 py-2 text-xs">
       <div className="font-medium text-ok">{label} — copy it now, it is not shown again.</div>
       <div className="flex flex-wrap items-center gap-2">
-        <code className="mono break-all rounded bg-surface px-1.5 py-0.5">{secret}</code>
+        <code className="mono break-all rounded-sm bg-surface px-1.5 py-0.5">{secret}</code>
         <Button size="sm" onClick={() => void copy()}>
           {copied ? "Copied" : "Copy"}
         </Button>

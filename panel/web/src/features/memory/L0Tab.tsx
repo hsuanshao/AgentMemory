@@ -40,7 +40,7 @@ export function L0Tab({ scope }: { scope: Scope }) {
   const admin = useIsAdmin();
   const columns: ReadonlyArray<Column<ConversationItem>> = [
     { key: "role", header: "Role", render: (m) => <Badge tone={m.role === "user" ? "accent" : "neutral"}>{m.role}</Badge> },
-    { key: "content", header: "Content", render: (m) => <div className="max-w-3xl whitespace-pre-wrap break-words">{m.content}</div> },
+    { key: "content", header: "Content", render: (m) => <div className="max-w-3xl whitespace-pre-wrap wrap-break-word">{m.content}</div> },
     { key: "session", header: "Session", render: (m) => <span className="mono text-muted">{m.session_id ?? "—"}</span> },
     ...(query ? [{ key: "score", header: "Score", render: (m: ConversationItem) => <span className="mono">{m.score?.toFixed(3) ?? "—"}</span> }] : []),
     { key: "time", header: "Time", render: (m) => <span className="mono whitespace-nowrap text-muted">{formatTime(m.recorded_at ?? m.timestamp)}</span> },

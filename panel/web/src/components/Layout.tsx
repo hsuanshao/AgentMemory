@@ -34,7 +34,7 @@ export function Layout() {
               to={item.to}
               className={({ isActive }) =>
                 cx(
-                  "flex items-center gap-2 rounded px-2 py-1.5 text-[13px]",
+                  "flex items-center gap-2 rounded-sm px-2 py-1.5 text-[13px]",
                   isActive ? "bg-accent/10 font-medium text-accent" : "text-muted hover:bg-raised hover:text-fg",
                 )
               }
