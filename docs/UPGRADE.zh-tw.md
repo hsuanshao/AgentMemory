@@ -1,19 +1,37 @@
-# 升級到 0.1.1
+# 升級
 
 [English](UPGRADE.md)
 
-這份指引寫給已經在跑舊版 Agent Memory 伺服器的人。每個步驟都是你自己執行的指令，全程不需要透過 AI 或 agent。你可以交給 `./upgrade.sh` 一次完成（[A](#a-自動升級upgradesh)），也可以照著手動做一樣的步驟（[B](#b-手動逐步執行相同步驟)）。兩種做法最後都要更新 client（[C](#c-更新-client)）。
-
 ## 目錄
 
-- [有哪些改變](#有哪些改變)
-- [開始之前](#開始之前)
-- [A. 自動升級：`upgrade.sh`](#a-自動升級upgradesh)
-- [B. 手動：逐步執行相同步驟](#b-手動逐步執行相同步驟)
-- [C. 更新 client](#c-更新-client)
-- [D. 確認結果](#d-確認結果)
-- [E. 還原](#e-還原)
-- [F. 疑難排解](#f-疑難排解)
+- [從 0.1.1 或之後的版本升級](#從-011-或之後的版本升級)
+- [從 0.1.1 之前的版本升級](#從-011-之前的版本升級)
+  - [有哪些改變](#有哪些改變)
+  - [開始之前](#開始之前)
+  - [A. 自動升級：`upgrade.sh`](#a-自動升級upgradesh)
+  - [B. 手動：逐步執行相同步驟](#b-手動逐步執行相同步驟)
+  - [C. 更新 client](#c-更新-client)
+  - [D. 確認結果](#d-確認結果)
+  - [E. 還原](#e-還原)
+  - [F. 疑難排解](#f-疑難排解)
+
+## 從 0.1.1 或之後的版本升級
+
+0.1.1 之後的版本沒有改變資料格式，也沒有改變 client 的驗證方式。在安裝目錄（放 `.env` 的那個目錄）執行：
+
+```bash
+cd /path/to/agent-memory
+git fetch --tags && git checkout v0.2.0   # 或：git pull
+docker compose up -d --build
+```
+
+`docker compose` 會從 `.env` 讀取 `COMPOSE_PROFILES` 和其他設定，所以會啟動同樣的服務。用 `curl -s http://127.0.0.1:8420/health` 確認：`version` 會顯示新版本。client 不受影響，方便時再更新每台機器上的 `amem`（[REMOTE-CLIENTS §4](REMOTE-CLIENTS.zh-tw.md#4-在每台-client-機器安裝-amem)）。
+
+要回到舊版時，checkout 前一個 tag，再執行同樣的 `docker compose up -d --build`。
+
+## 從 0.1.1 之前的版本升級
+
+這部分寫給還在跑 0.1.1 之前版本的人。每個步驟都是你自己執行的指令，全程不需要透過 AI 或 agent。你可以交給 `./upgrade.sh` 一次完成（[A](#a-自動升級upgradesh)），也可以照著手動做一樣的步驟（[B](#b-手動逐步執行相同步驟)）。兩種做法最後都要更新 client（[C](#c-更新-client)）。
 
 ## 有哪些改變
 
@@ -35,7 +53,7 @@
 
   ```bash
   cd /path/to/agent-memory        # 有 .env 的目錄
-  git fetch && git checkout v0.1.1  # 或：git pull
+  git fetch --tags && git checkout v0.2.0  # 或：git pull
   ```
 
 ## A. 自動升級：`upgrade.sh`

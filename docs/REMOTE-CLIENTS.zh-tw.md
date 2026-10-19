@@ -92,19 +92,32 @@
 
 ## 4. 在每台 client 機器安裝 `amem`
 
-`amem` 是本 repo 中的單一 Rust 執行檔（`crates/memory-client`），只有安裝時需要 Rust toolchain。
+`amem` 是單一執行檔（`crates/memory-client`）。從 0.2.0 起，每個 [release](https://github.com/hsuanshao/AgentMemory/releases) 都附有預先編譯好的版本，支援 Linux（x86_64 和 arm64，靜態連結）和 macOS（Apple silicon 和 Intel）：
+
+```bash
+VERSION=0.2.0
+PLATFORM=linux-x86_64   # 或 linux-arm64、macos-arm64、macos-x86_64
+BASE=https://github.com/hsuanshao/AgentMemory/releases/download/v$VERSION
+curl -fsSLO "$BASE/amem-$VERSION-$PLATFORM.tar.gz"
+curl -fsSL "$BASE/SHA256SUMS" | grep " amem-$VERSION-$PLATFORM.tar.gz$" | shasum -a 256 -c
+tar -xzf "amem-$VERSION-$PLATFORM.tar.gz"
+mkdir -p ~/.local/bin
+install -m 755 "amem-$VERSION-$PLATFORM/amem" ~/.local/bin/amem
+
+amem --version
+```
+
+也可以用 Rust toolchain 自行編譯：
 
 ```bash
 # 從本 repo 的 checkout 安裝
 cargo install --path crates/memory-client
 
 # 或直接從 git 安裝
-cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.1.1 memory-client
-
-amem --version
+cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.2.0 memory-client
 ```
 
-請確認 agent 工具看得到的 `PATH` 包含 `~/.cargo/bin`。桌面應用程式啟動時的 `PATH` 有時比 shell 短。
+請確認 agent 工具看得到的 `PATH` 包含 `amem` 所在的目錄（上面的 `~/.local/bin`，或 `cargo install` 用的 `~/.cargo/bin`）。桌面應用程式啟動時的 `PATH` 有時比 shell 短。在 macOS 上，用瀏覽器而不是 `curl` 下載的檔案會被隔離，用 `xattr -d com.apple.quarantine ~/.local/bin/amem` 解除。
 
 接著登入一次。`--user-key -` 會從 stdin 讀取 key，避免留在 shell 歷史紀錄中：
 

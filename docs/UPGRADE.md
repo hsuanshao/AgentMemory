@@ -1,19 +1,37 @@
-# Upgrading to 0.1.1
+# Upgrading
 
 [繁體中文](UPGRADE.zh-tw.md)
 
-This guide is for people running an earlier Agent Memory server. Every step is a command you run yourself, and you don't need an AI agent for any of it. You can let `./upgrade.sh` do the whole thing ([A](#a-automatic-upgradesh)), or run the same steps by hand ([B](#b-manual-the-same-steps-by-hand)). Either way, finish with the clients ([C](#c-update-the-clients)).
-
 ## Contents
 
-- [What changes](#what-changes)
-- [Before you start](#before-you-start)
-- [A. Automatic: `upgrade.sh`](#a-automatic-upgradesh)
-- [B. Manual: the same steps by hand](#b-manual-the-same-steps-by-hand)
-- [C. Update the clients](#c-update-the-clients)
-- [D. Check the result](#d-check-the-result)
-- [E. Roll back](#e-roll-back)
-- [F. Troubleshooting](#f-troubleshooting)
+- [From 0.1.1 or later](#from-011-or-later)
+- [From a version before 0.1.1](#from-a-version-before-011)
+  - [What changes](#what-changes)
+  - [Before you start](#before-you-start)
+  - [A. Automatic: `upgrade.sh`](#a-automatic-upgradesh)
+  - [B. Manual: the same steps by hand](#b-manual-the-same-steps-by-hand)
+  - [C. Update the clients](#c-update-the-clients)
+  - [D. Check the result](#d-check-the-result)
+  - [E. Roll back](#e-roll-back)
+  - [F. Troubleshooting](#f-troubleshooting)
+
+## From 0.1.1 or later
+
+Releases after 0.1.1 change neither the data format nor how clients authenticate. In the install directory (the one holding `.env`):
+
+```bash
+cd /path/to/agent-memory
+git fetch --tags && git checkout v0.2.0   # or: git pull
+docker compose up -d --build
+```
+
+`docker compose` reads `COMPOSE_PROFILES` and the rest of your settings from `.env`, so the same services come back. Check `curl -s http://127.0.0.1:8420/health`: `version` shows the new release. Clients keep working; update `amem` on each machine when convenient ([REMOTE-CLIENTS §4](REMOTE-CLIENTS.md#4-install-amem-on-each-client-machine)).
+
+To go back, check out the previous tag and run the same `docker compose up -d --build`.
+
+## From a version before 0.1.1
+
+This part is for people running a server older than 0.1.1. Every step is a command you run yourself, and you don't need an AI agent for any of it. You can let `./upgrade.sh` do the whole thing ([A](#a-automatic-upgradesh)), or run the same steps by hand ([B](#b-manual-the-same-steps-by-hand)). Either way, finish with the clients ([C](#c-update-the-clients)).
 
 ## What changes
 
@@ -35,7 +53,7 @@ This guide is for people running an earlier Agent Memory server. Every step is a
 
   ```bash
   cd /path/to/agent-memory        # the directory with .env
-  git fetch && git checkout v0.1.1  # or: git pull
+  git fetch --tags && git checkout v0.2.0  # or: git pull
   ```
 
 ## A. Automatic: `upgrade.sh`

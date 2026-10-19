@@ -92,19 +92,32 @@ Users who are not admins can sign in to the Panel with their own key and browse 
 
 ## 4. Install `amem` on each client machine
 
-`amem` is a single Rust binary from this repository (`crates/memory-client`). It needs a Rust toolchain at install time only.
+`amem` is a single binary (`crates/memory-client`). Each [release](https://github.com/hsuanshao/AgentMemory/releases) from 0.2.0 on ships it prebuilt for Linux (x86_64 and arm64, statically linked) and macOS (Apple silicon and Intel):
+
+```bash
+VERSION=0.2.0
+PLATFORM=linux-x86_64   # or linux-arm64, macos-arm64, macos-x86_64
+BASE=https://github.com/hsuanshao/AgentMemory/releases/download/v$VERSION
+curl -fsSLO "$BASE/amem-$VERSION-$PLATFORM.tar.gz"
+curl -fsSL "$BASE/SHA256SUMS" | grep " amem-$VERSION-$PLATFORM.tar.gz$" | shasum -a 256 -c
+tar -xzf "amem-$VERSION-$PLATFORM.tar.gz"
+mkdir -p ~/.local/bin
+install -m 755 "amem-$VERSION-$PLATFORM/amem" ~/.local/bin/amem
+
+amem --version
+```
+
+Or build it with a Rust toolchain:
 
 ```bash
 # from a checkout of this repository
 cargo install --path crates/memory-client
 
 # or straight from git
-cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.1.1 memory-client
-
-amem --version
+cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.2.0 memory-client
 ```
 
-Make sure `~/.cargo/bin` is on the `PATH` that your agent tools see. Desktop apps sometimes start with a shorter `PATH` than your shell.
+Make sure the directory holding `amem` (`~/.local/bin` above, `~/.cargo/bin` for `cargo install`) is on the `PATH` that your agent tools see. Desktop apps sometimes start with a shorter `PATH` than your shell. On macOS, a file downloaded with a browser rather than `curl` is quarantined; clear it with `xattr -d com.apple.quarantine ~/.local/bin/amem`.
 
 Then log in once. `--user-key -` reads the key from stdin, so it stays out of your shell history:
 
