@@ -138,7 +138,9 @@ uninstall_amem() {
     confirm "Delete them anyway?" || fail "Stopped; nothing else removed."
   fi
   remove "$config"
-  [[ -d $(dirname "$config") ]] && rmdir "$(dirname "$config")" 2>/dev/null || true
+  if [[ -d $(dirname "$config") ]]; then
+    rmdir "$(dirname "$config")" 2>/dev/null || true
+  fi
   remove "$data"
   local bin
   bin=$(command -v amem || true)
@@ -206,14 +208,14 @@ uninstall_server() {
   # Images kept by upgrade.sh for a rollback, which purging rules out.
   if [[ $PURGE_DATA == true ]]; then
     local kept
-    for kept in $(cat "$BACKUP_ROOT"/*/images 2>/dev/null); do
+    while read -r kept; do
       docker image inspect "$kept" >/dev/null 2>&1 || continue
       if [[ $DRY_RUN == true ]]; then
         info "would run: docker image rm $kept"
       elif docker image rm "$kept" >/dev/null 2>&1; then
         ok "Removed image $kept"
       fi
-    done
+    done < <(cat "$BACKUP_ROOT"/*/images 2>/dev/null)
   fi
   echo
   if [[ $DRY_RUN == true ]]; then

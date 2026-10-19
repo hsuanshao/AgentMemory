@@ -265,7 +265,10 @@ configure_llm() {
     # The CLI runs inside the container as a non-root user with this as its
     # working directory, so a directory we create must stay traversable even
     # under a restrictive umask. An existing directory keeps its permissions.
-    [[ -d $PROJECT_DIR ]] || mkdir -p -m 755 "$PROJECT_DIR"
+    if [[ ! -d $PROJECT_DIR ]]; then
+      mkdir -p "$PROJECT_DIR"
+      chmod 755 "$PROJECT_DIR"
+    fi
   fi
 }
 
