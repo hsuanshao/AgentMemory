@@ -342,7 +342,7 @@ flowchart TB
   - `claude-config`、`antigravity-config`、`codex-config`：CLI 的登入資料
   - `PROJECT_DIR` 以 bind mount 掛在 `/workspace`，給 CLI 型的 LLM 使用
 - 映像標記為 `memory-core:${MEMORY_IMAGE_TAG}` 和 `memory-panel:${MEMORY_IMAGE_TAG}`，預設是 `local`。同一台主機上的每套部署要用不同的 tag，否則 build 其中一套會覆蓋另一套的映像。
-- 多節點需要 `storage.backend = postgres`、`coordination.backend = redis`，以及共享的 `<data>` volume。
+- 多節點需要 `storage.backend = postgres`、`coordination.backend = redis`，以及共享的 `<data>` volume。既有的 SQLite 安裝可以用 `migrate-to-postgres.sh` 搬過去（[MIGRATE-TO-POSTGRES.zh-tw.md](MIGRATE-TO-POSTGRES.zh-tw.md)）。
 - Client 透過網路連線時，請在 8420 埠前面加上 TLS，見 REMOTE-CLIENTS.zh-tw.md §2。
 
 ## 9. 升級與移除

@@ -69,6 +69,8 @@ Client（任何機器上的 agent）只用自己的 **user key** 驗證，不需
 
 **從舊版升級？** 更新程式碼後，在安裝目錄執行 `./upgrade.sh`。全手動的步驟與還原方式請見 [docs/UPGRADE.zh-tw.md](docs/UPGRADE.zh-tw.md)。
 
+**SQLite 不夠用了？** `./migrate-to-postgres.sh` 會把既有安裝搬到 PostgreSQL：使用者、key、記憶和 skill 都會一起搬，client 不需要任何修改。什麼時候該搬、手動步驟和還原方式請見 [docs/MIGRATE-TO-POSTGRES.zh-tw.md](docs/MIGRATE-TO-POSTGRES.zh-tw.md)。
+
 **移除：** 在跑 agent 的機器上執行 `./uninstall.sh client`，會移除 Claude Code、Codex、Antigravity、Hermes 的整合和 `amem`。在伺服器上執行 `./uninstall.sh server`，會移除容器和映像，但保留資料；加上 `--purge-data` 才會連資料一起刪除。兩者都可以先加 `--dry-run`，看看會移除哪些東西。詳細說明與手動步驟請見 [docs/UNINSTALL.zh-tw.md](docs/UNINSTALL.zh-tw.md)。
 
 ## 本機開發
@@ -126,6 +128,8 @@ docs/REMOTE-CLIENTS.zh-tw.md  伺服器與 client 分離部署指引
 docs/UPGRADE.zh-tw.md        舊版升級指引（upgrade.sh、手動步驟、還原）
 docs/UNINSTALL.zh-tw.md      移除 client 或伺服器（uninstall.sh、手動步驟）
 docs/MULTI-TENANCY.zh-tw.md  團隊、使用者與 agent：配置方式、設定、隔離機制
+docs/MIGRATE-TO-POSTGRES.zh-tw.md  從 SQLite 搬到 PostgreSQL（腳本、手動步驟、還原）
+docs/ops/                    給維護者：測試、發版、儲存搬移的內部設計
 ```
 
 ## 設定
@@ -158,6 +162,7 @@ docs/MULTI-TENANCY.zh-tw.md  團隊、使用者與 agent：配置方式、設定
 ### PostgreSQL
 
 - 連線：`AGENT_MEMORY_POSTGRES_URL=postgres://user:pass@host:5432/db`。
+- 既有的 SQLite 安裝要搬過來：執行 `./migrate-to-postgres.sh`，詳見 [docs/MIGRATE-TO-POSTGRES.zh-tw.md](docs/MIGRATE-TO-POSTGRES.zh-tw.md)。
 - 權限：需要資料庫的 CREATE 權限（建立 `agent_memory` 與各 `am_*` schema）。啟用 embedding 時需要建立 `vector` 擴充：以 superuser 執行，或由 DBA 預先 `CREATE EXTENSION vector`。
 - 與 SQLite 的差異：向量檢索為近似（HNSW）；變更 embedding 維度會清除既有向量；文字不可含 NUL 字元。
 

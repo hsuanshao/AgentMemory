@@ -69,6 +69,8 @@ Clients (agents on any machine) authenticate with their **user key only**; they 
 
 **Upgrading from an earlier version?** Run `./upgrade.sh` in your install directory, after updating the code. [docs/UPGRADE.md](docs/UPGRADE.md) describes the same steps by hand, plus how to roll back.
 
+**Outgrowing SQLite?** `./migrate-to-postgres.sh` moves an existing install to PostgreSQL: users, keys, memories and skills come along, and clients need no change. [docs/MIGRATE-TO-POSTGRES.md](docs/MIGRATE-TO-POSTGRES.md) covers when to move, the manual steps and how to go back.
+
 **Removing it:** `./uninstall.sh client` removes the client from a machine that runs agents: the Claude Code, Codex, Antigravity and Hermes integrations plus `amem`. On the server, `./uninstall.sh server` removes the containers and images and keeps the data; add `--purge-data` to delete the data as well. Add `--dry-run` to either command to see what would be removed first. Details and the manual steps are in [docs/UNINSTALL.md](docs/UNINSTALL.md).
 
 ## Local Development
@@ -126,6 +128,8 @@ docs/REMOTE-CLIENTS.md      Server/client split deployment guide
 docs/UPGRADE.md             Upgrading an existing install (upgrade.sh, manual steps, rollback)
 docs/UNINSTALL.md           Removing the client or the server (uninstall.sh, manual steps)
 docs/MULTI-TENANCY.md       Teams, users and agents: layouts, setup, isolation internals
+docs/MIGRATE-TO-POSTGRES.md Moving an install from SQLite to PostgreSQL (script, manual steps, rollback)
+docs/ops/                   For maintainers: testing, releases, storage-migration internals
 ```
 
 ## Configuration
@@ -158,6 +162,7 @@ Config file keys (`server`, `data`, `llm`, `memory.pipeline`, `memory.recall`, `
 ### PostgreSQL
 
 - Connection: `AGENT_MEMORY_POSTGRES_URL=postgres://user:pass@host:5432/db`.
+- Moving an existing SQLite install: `./migrate-to-postgres.sh`, see [docs/MIGRATE-TO-POSTGRES.md](docs/MIGRATE-TO-POSTGRES.md).
 - Permissions: requires CREATE privilege on the database (to create the `agent_memory` and `am_*` schemas). With embeddings enabled, the `vector` extension must be created: run as superuser, or have a DBA run `CREATE EXTENSION vector` beforehand.
 - Differences from SQLite: vector search is approximate (HNSW); changing the embedding dimension clears existing vectors; text must not contain NUL characters.
 
