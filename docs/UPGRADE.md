@@ -170,7 +170,7 @@ Every client needs four values: the server URL, a **user key**, a **team id** an
    | Codex CLI | Install the plugin and trust its hooks with `/hooks`: [REMOTE-CLIENTS.md §7](REMOTE-CLIENTS.md#7-codex-cli) |
    | Your own scripts | Keep the Bearer key for admin calls only. On data calls (`/v3/recall`, `/v3/conversation/add`, `/v3/session/add`, …), send `x-memory-user-key: sk-mem-…` plus `team_id` and `agent_id` in the body, or the `x-memory-team-id` / `x-memory-agent-id` headers. See [API.md](API.md) |
 
-Agents of the same team share team-visible memories, but each agent keeps its own persona and scenes. Give each client its own agent unless you want them to share one.
+Each agent keeps its own scenes and persona; nothing is shared between agents. People who use the same agent share its scenes and persona, while their conversations and facts stay private. Give each client its own agent unless you want them to share one. See [MULTI-TENANCY.md](MULTI-TENANCY.md#2-what-is-private-and-what-is-shared).
 
 ## D. Check the result
 

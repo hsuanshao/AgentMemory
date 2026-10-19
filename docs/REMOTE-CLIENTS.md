@@ -79,7 +79,7 @@ Install as described in the [README](../README.md#quick-start) (`./install.sh`).
 
 ## 3. Create users, teams and agents (admin)
 
-Sign in to the Memory Panel with the admin user key that `install.sh` printed. Then, in **Metadata**:
+Sign in to the Memory Panel with the admin user key that `install.sh` printed. (To decide how many teams and agents you need, and what each one shares, see [MULTI-TENANCY.md](MULTI-TENANCY.md).) Then, in **Metadata**:
 
 1. **Users → New user.** Copy the generated `sk-mem-…` key now; it is shown only once. Under the user's **Keys** you can issue more keys (one per machine is a good habit) and revoke them later.
 2. **Teams → New team.** Pick an owner (the owner becomes a team admin).

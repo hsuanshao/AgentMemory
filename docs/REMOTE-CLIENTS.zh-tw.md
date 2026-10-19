@@ -79,7 +79,7 @@
 
 ## 3. 建立使用者、團隊與 Agent（管理者）
 
-用 `install.sh` 顯示的管理員 user key 登入 Memory Panel，在 **Metadata** 中：
+用 `install.sh` 顯示的管理員 user key 登入 Memory Panel（要規劃需要幾個 team 和 agent、各自共用什麼，請見 [MULTI-TENANCY.zh-tw.md](MULTI-TENANCY.zh-tw.md)），在 **Metadata** 中：
 
 1. **Users → New user**：立刻複製產生的 `sk-mem-…` key，它只會顯示一次。在該使用者的 **Keys** 可以再發新 key（建議每台機器一把），之後也能撤銷。
 2. **Teams → New team**：選擇 owner（owner 會成為 team admin）。

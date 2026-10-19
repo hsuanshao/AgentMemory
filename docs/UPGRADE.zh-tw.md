@@ -170,7 +170,7 @@ curl -sS -X POST "$CORE/v3/internal/migrate/default-scope" "${H[@]}" \
    | Codex CLI | 安裝 plugin，並用 `/hooks` 信任它的 hook，見 [REMOTE-CLIENTS.zh-tw.md §7](REMOTE-CLIENTS.zh-tw.md#7-codex-cli) |
    | 自己寫的 script | Bearer key 只留給管理用的呼叫。資料相關的呼叫（`/v3/recall`、`/v3/conversation/add`、`/v3/session/add` 等）要送 `x-memory-user-key: sk-mem-…`，並在 body 帶 `team_id` 和 `agent_id`（或改用 `x-memory-team-id` / `x-memory-agent-id` header）。見 [API.zh-tw.md](API.zh-tw.md) |
 
-同一個 team 的 agent 會共用 team 可見的記憶，但 persona 和場景是各 agent 獨立的。除非你希望多個 client 共用，否則建議每個 client 各用一個 agent。
+每個 agent 都有自己的場景和 persona，agent 之間不共用任何東西。使用同一個 agent 的人會共用它的場景和 persona，但各自的對話和事實仍是私有的。除非你希望多個 client 共用，否則建議每個 client 各用一個 agent。詳見 [MULTI-TENANCY.zh-tw.md](MULTI-TENANCY.zh-tw.md#2-哪些是私有的哪些是共用的)。
 
 ## D. 確認結果
 

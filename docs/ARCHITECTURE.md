@@ -158,7 +158,7 @@ Two properties matter when extending the API:
 - **Fail closed.** A route whose last path segment is not a known read suffix is treated as a write.
 - **Handlers can't see an unauthorized scope.** The middleware overwrites whatever scope the caller sent, so a new handler inherits isolation without doing anything.
 
-The metadata plane has its own, finer rules (`memory-domain/src/meta/access.rs`). System admins manage everything; team admins manage their team; visibility (`private` / `team` / `restricted` / `agent`) and ACL allow/deny entries govern assets. The Panel adds a coarser rule on top, described in §7.
+The metadata plane has its own, finer rules (`memory-domain/src/meta/access.rs`). System admins manage everything; team admins manage their team; visibility (`private` / `team` / `restricted` / `agent` / `task`) and ACL allow entries govern assets (deny entries are stored but not applied yet). [MULTI-TENANCY.md](MULTI-TENANCY.md) covers teams, users and agents end to end. The Panel adds a coarser rule on top, described in §7.
 
 ## 4. Memory model and pipeline
 

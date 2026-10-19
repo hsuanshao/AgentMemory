@@ -165,7 +165,7 @@ sequenceDiagram
 - **預設拒絕（fail closed）**：路徑最後一段不在已知的讀取字尾清單中，就一律當成寫入。
 - **Handler 看不到未授權的範圍**：middleware 會覆寫呼叫端送來的範圍，所以新增的 handler 不用做任何事就自動有隔離。
 
-Metadata 平面有自己更細的規則（`memory-domain/src/meta/access.rs`）：系統管理者可以管理所有東西，team admin 管理自己的 team；asset 則由可見度（`private` / `team` / `restricted` / `agent`）和 ACL 的 allow/deny 決定。Panel 在這之上再加一層較粗的規則，見 §7。
+Metadata 平面有自己更細的規則（`memory-domain/src/meta/access.rs`）：系統管理者可以管理所有東西，team admin 管理自己的 team；asset 則由可見度（`private` / `team` / `restricted` / `agent` / `task`）和 ACL 的 allow 條目決定（deny 條目會儲存但目前不會套用）。團隊、使用者與 agent 的完整說明見 [MULTI-TENANCY.zh-tw.md](MULTI-TENANCY.zh-tw.md)。Panel 在這之上再加一層較粗的規則，見 §7。
 
 ## 4. 記憶模型與蒸餾管線
 

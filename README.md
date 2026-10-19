@@ -63,7 +63,7 @@ docker run --rm -p 8125:8125 -e CORE_URL=http://host.docker.internal:8420 \
 
 Sign in to the Panel with the admin user key. Under **Metadata**, a system admin creates users (each gets a user key, shown once), creates teams, assigns users to teams with a role, and creates agents. Everyone else gets a read-only Panel.
 
-Clients (agents on any machine) authenticate with their **user key only**; they never need `AGENT_MEMORY_API_KEY`. Every memory call names a `team_id` and an `agent_id` the user belongs to, and members can only read and write their own memory. See [docs/API.md](docs/API.md) for the exact rules and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
+Clients (agents on any machine) authenticate with their **user key only**; they never need `AGENT_MEMORY_API_KEY`. Every memory call names a `team_id` and an `agent_id` the user belongs to, and members only read and write their own conversations and facts; the scenes and persona of an agent are shared by the people who use it. [docs/MULTI-TENANCY.md](docs/MULTI-TENANCY.md) explains teams, users and agents, from choosing a layout to how isolation is enforced. See [docs/API.md](docs/API.md) for the exact rules and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
 **Server and agents on different machines?** Follow [docs/REMOTE-CLIENTS.md](docs/REMOTE-CLIENTS.md). It covers TLS, issuing keys, installing the `amem` client and the Claude Code, Codex, Antigravity and Hermes integrations, and the client side of an upgrade.
 
@@ -125,6 +125,7 @@ docs/API.md                 API reference and design trade-offs
 docs/REMOTE-CLIENTS.md      Server/client split deployment guide
 docs/UPGRADE.md             Upgrading an existing install (upgrade.sh, manual steps, rollback)
 docs/UNINSTALL.md           Removing the client or the server (uninstall.sh, manual steps)
+docs/MULTI-TENANCY.md       Teams, users and agents: layouts, setup, isolation internals
 ```
 
 ## Configuration
