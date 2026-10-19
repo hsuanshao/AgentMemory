@@ -23,7 +23,7 @@ cargo test --workspace --locked
 
 - Formatting uses the rustfmt defaults; there is no `rustfmt.toml`.
 - Clippy must be clean with `-D warnings`. A new toolchain can add lints, so run it on a current stable.
-- The workspace declares `rust-version = "1.88"`. A newer local toolchain will happily compile code that 1.88 rejects; check with `cargo +1.88 check --workspace --locked` when you use a recent language or library feature.
+- The workspace declares `rust-version = "1.88"` and every crate inherits it. A newer local toolchain will happily compile code that 1.88 rejects; check with `cargo +1.88 check --workspace --locked` when you use a recent language or library feature. `.cargo/config.toml` makes `cargo update` choose dependency versions that still support 1.88; CI's msrv job catches the rest.
 - `cargo test` covers unit tests and the end-to-end tests in `crates/memory-server/tests/e2e.rs`, which start a real server on SQLite with local coordination. The Postgres and Redis tests in the same run print `skipping: …` and pass unless you set them up (next section).
 
 ## 2. Postgres and Redis integration tests

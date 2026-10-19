@@ -23,7 +23,7 @@ cargo test --workspace --locked
 
 - 格式採用 rustfmt 預設值，沒有 `rustfmt.toml`。
 - Clippy 在 `-D warnings` 下必須沒有任何警告。新版工具鏈可能會加入新的 lint，所以請用目前的 stable 版本跑。
-- workspace 宣告 `rust-version = "1.88"`。較新的本機工具鏈會編譯 1.88 不接受的程式碼；用到較新的語言或函式庫功能時，請用 `cargo +1.88 check --workspace --locked` 確認。
+- workspace 宣告 `rust-version = "1.88"`，每個 crate 都繼承這個設定。較新的本機工具鏈會編譯 1.88 不接受的程式碼；用到較新的語言或函式庫功能時，請用 `cargo +1.88 check --workspace --locked` 確認。`.cargo/config.toml` 讓 `cargo update` 只挑仍支援 1.88 的依賴版本；其他問題由 CI 的 msrv job 抓出來。
 - `cargo test` 包含單元測試，以及 `crates/memory-server/tests/e2e.rs` 的端到端測試（以 SQLite 和 local 協調後端啟動真正的伺服器）。同一次執行裡的 Postgres 和 Redis 測試，在沒有設定的情況下會印出 `skipping: …` 並視為通過（見下一節）。
 
 ## 2. Postgres 與 Redis 整合測試

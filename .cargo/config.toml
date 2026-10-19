@@ -1,0 +1,5 @@
+# Keep Cargo.lock buildable on the declared rust-version (Cargo.toml): when a
+# dependency's newest release needs a newer Rust, `cargo update` picks the
+# newest one that doesn't.
+[resolver]
+incompatible-rust-versions = "fallback"

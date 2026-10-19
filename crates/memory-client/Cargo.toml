@@ -3,6 +3,7 @@ name = "memory-client"
 description = "amem: Agent Memory client for Claude Code, Antigravity and Hermes"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
