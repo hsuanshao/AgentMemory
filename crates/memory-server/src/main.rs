@@ -24,6 +24,10 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt().with_env_filter(filter).init();
     }
 
+    if std::env::args().nth(1).as_deref() == Some("migrate-storage") {
+        return memory_server::migrate_storage::run(std::env::args().skip(2)).await;
+    }
+
     let config = Config::load()?;
     let app = wiring::build(&config).await?;
     let addr = format!("{}:{}", config.server.host, config.server.port);

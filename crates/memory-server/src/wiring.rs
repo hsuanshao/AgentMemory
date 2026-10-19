@@ -87,6 +87,11 @@ fn embedder(config: &Config) -> Arc<dyn EmbeddingProvider> {
     }))
 }
 
+/// The embedding dimension storage is built for (`None`: embeddings off).
+pub fn vector_dims(config: &Config) -> Option<usize> {
+    embedder(config).dimensions()
+}
+
 fn pipeline_settings(config: &Config) -> PipelineSettings {
     let p = &config.memory.pipeline;
     PipelineSettings {

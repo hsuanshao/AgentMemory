@@ -2,4 +2,5 @@
 
 pub mod backends;
 pub mod config;
+pub mod migrate_storage;
 pub mod wiring;
