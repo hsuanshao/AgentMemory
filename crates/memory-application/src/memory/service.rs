@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use memory_domain::error::{DomainError, DomainResult};
-use memory_domain::memory::{AtomicMemory, ConversationMessage, Role};
+use memory_domain::memory::{without_nul, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{
     compose_persona, parse_scene, render_navigation, render_scene, scene_path,
     strip_scene_navigation, validate_relative_path, NavigationEntry, ProfileFile, ProfileScope,
@@ -102,7 +102,8 @@ impl MemoryService {
         let records = messages
             .into_iter()
             .enumerate()
-            .map(|(i, m)| {
+            .map(|(i, mut m)| {
+                m.content = without_nul(m.content);
                 ConversationMessage::validate_content(&m.content)?;
                 // Distinct recorded_at per message keeps L1 cursors exact.
                 let recorded_at = m

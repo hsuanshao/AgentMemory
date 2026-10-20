@@ -18,6 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use memory_domain::error::{DomainError, DomainResult};
+use memory_domain::memory::without_nul;
 use memory_domain::scope::{InstanceId, SegmentId};
 use memory_domain::skill::SkillVersion;
 use pgvector::Vector;
@@ -754,16 +755,34 @@ fn row_args(
     }
 }
 
+/// Drops U+0000 from every string in a JSON value, keys included: SQLite
+/// kept it (written before Core stripped it on the way in), JSONB refuses it.
+fn json_without_nul(value: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value as J;
+    match value {
+        J::String(s) => J::String(without_nul(s)),
+        J::Array(items) => J::Array(items.into_iter().map(json_without_nul).collect()),
+        J::Object(map) => J::Object(
+            map.into_iter()
+                .map(|(k, v)| (without_nul(k), json_without_nul(v)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 fn to_arg(table: &str, column: &str, kind: Kind, value: &Value) -> DomainResult<Arg> {
     Ok(match (kind, value) {
         (Text, Value::Null) => Arg::Text(None),
-        (Text, Value::Text(s)) => Arg::Text(Some(s.clone())),
+        (Text, Value::Text(s)) => Arg::Text(Some(without_nul(s.clone()))),
         (Int, Value::Null) => Arg::Int(None),
         (Int, Value::Integer(n)) => Arg::Int(Some(*n)),
         (Bool, Value::Integer(n)) => Arg::Bool(*n != 0),
-        (Json, Value::Text(s)) => Arg::Json(serde_json::from_str(s).map_err(|e| {
-            DomainError::internal(format!("{table}.{column} holds invalid JSON: {e}"))
-        })?),
+        (Json, Value::Text(s)) => {
+            Arg::Json(json_without_nul(serde_json::from_str(s).map_err(|e| {
+                DomainError::internal(format!("{table}.{column} holds invalid JSON: {e}"))
+            })?))
+        }
         (kind, other) => {
             return Err(DomainError::internal(format!(
                 "{table}.{column}: expected {kind:?}, found {:?}",
@@ -866,5 +885,23 @@ mod tests {
         ));
         assert!(to_arg("t", "c", Int, &Value::Text("x".into())).is_err());
         assert!(to_arg("t", "c", Json, &Value::Text("{".into())).is_err());
+    }
+
+    #[test]
+    fn drops_nul_that_postgres_cannot_store() {
+        // A tool result that printed binary data, as SQLite kept it.
+        let json =
+            r#"[{"role":"tool_result","content":"ELF\u0000\u0000ok","k\u0000":["a\u0000"]}]"#;
+        match to_arg("t", "c", Json, &Value::Text(json.into())).unwrap() {
+            Arg::Json(v) => {
+                assert_eq!(v[0]["content"], "ELFok");
+                assert_eq!(v[0]["k"][0], "a");
+            }
+            _ => panic!("expected a JSON argument"),
+        }
+        assert!(matches!(
+            to_arg("t", "c", Text, &Value::Text("a\0b".into())).unwrap(),
+            Arg::Text(Some(s)) if s == "ab"
+        ));
     }
 }

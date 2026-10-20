@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use memory_domain::error::{DomainError, DomainResult};
+use memory_domain::memory::without_nul;
 use memory_domain::scope::InstanceId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -162,6 +163,7 @@ impl SkillExtractionService {
     ) -> DomainResult<AddResult> {
         self.require_enabled()?;
         validate_key(&key)?;
+        let messages = without_nul_messages(messages);
         validate_messages(&messages)?;
         let raw_bytes = byte_size(&messages);
         let compress = raw_bytes >= self.settings.archive_bytes;
@@ -250,6 +252,7 @@ impl SkillExtractionService {
             session_id: session_id.unwrap_or_else(|| format!("sx-{}", self.ids.hex(8))),
         };
         validate_key(&key)?;
+        let messages = without_nul_messages(messages);
         validate_messages(&messages)?;
         let messages = if byte_size(&messages) >= self.settings.archive_bytes * 2 {
             self.trim_middle(self.compress_tools(messages))
@@ -510,6 +513,19 @@ fn validate_key(key: &BufferKey) -> DomainResult<()> {
         }
     }
     Ok(())
+}
+
+/// See `memory_domain::memory::without_nul`: tool output is where U+0000
+/// shows up in practice (a command printing binary data).
+fn without_nul_messages(messages: Vec<BufferedMessage>) -> Vec<BufferedMessage> {
+    messages
+        .into_iter()
+        .map(|mut m| {
+            m.content = without_nul(m.content);
+            m.tool_name = m.tool_name.map(without_nul);
+            m
+        })
+        .collect()
 }
 
 fn validate_messages(messages: &[BufferedMessage]) -> DomainResult<()> {
