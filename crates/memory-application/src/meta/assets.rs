@@ -9,7 +9,7 @@ use memory_domain::meta::{
     chat_memory_asset_id, AclEntry, AgentBinding, Asset, AssetStatus, AssetType, Effect,
     InjectionMode, Permission, SubjectType, Visibility,
 };
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -23,7 +23,7 @@ use crate::ports::meta::AssetFilter;
 pub trait ChatMemoryCleaner: Send + Sync {
     async fn clear_chat_memory(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         agent_id: &str,
     ) -> DomainResult<()>;
@@ -131,15 +131,15 @@ pub struct CheckResult {
 impl MetaService {
     async fn upsert_auto_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset: Asset,
         agent_id: &str,
         mode: InjectionMode,
     ) -> DomainResult<Asset> {
-        let stored = match self.store.get_asset(instance, &asset.asset_id).await? {
+        let stored = match self.store.get_asset(department, &asset.asset_id).await? {
             Some(existing) => existing,
             None => {
-                self.store.insert_asset(instance, &asset).await?;
+                self.store.insert_asset(department, &asset).await?;
                 asset
             }
         };
@@ -153,7 +153,7 @@ impl MetaService {
             created_by: stored.owner_user_id.clone(),
             created_at: self.now(),
         };
-        self.store.ensure_binding(instance, &binding).await?;
+        self.store.ensure_binding(department, &binding).await?;
         Ok(stored)
     }
 
@@ -193,11 +193,11 @@ impl MetaService {
     /// One private `chat_memory-{team}-{agent}` asset per agent, bound to it.
     pub async fn ensure_chat_memory_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         agent_id: &str,
     ) -> DomainResult<Asset> {
-        let agent = self.get_agent(instance, agent_id).await?;
+        let agent = self.get_agent(department, agent_id).await?;
         if agent.team_id != team_id {
             return Err(DomainError::permission_denied("agent_team_mismatch"));
         }
@@ -209,7 +209,7 @@ impl MetaService {
             &agent.owner_user_id,
             "auto",
         );
-        self.upsert_auto_asset(instance, asset, agent_id, InjectionMode::Summary)
+        self.upsert_auto_asset(department, asset, agent_id, InjectionMode::Summary)
             .await
     }
 
@@ -217,14 +217,14 @@ impl MetaService {
     /// written for an unknown agent are stored but not registered.
     pub async fn ensure_skill_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         name: &str,
         team_id: &str,
         agent_id: &str,
         owner_user_id: &str,
     ) -> DomainResult<Option<Asset>> {
-        if self.store.get_agent(instance, agent_id).await?.is_none() {
+        if self.store.get_agent(department, agent_id).await?.is_none() {
             return Ok(None);
         }
         let asset = self.auto_asset(
@@ -235,30 +235,30 @@ impl MetaService {
             owner_user_id,
             "extracted",
         );
-        self.upsert_auto_asset(instance, asset, agent_id, InjectionMode::Reference)
+        self.upsert_auto_asset(department, asset, agent_id, InjectionMode::Reference)
             .await
             .map(Some)
     }
 
     pub async fn remove_assets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
-        self.store.delete_assets(instance, ids).await
+        self.store.delete_assets(department, ids).await
     }
 
     pub async fn get_asset_unchecked(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset_id: &str,
     ) -> DomainResult<Option<Asset>> {
-        self.store.get_asset(instance, asset_id).await
+        self.store.get_asset(department, asset_id).await
     }
 
     async fn decide(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset: Option<&Asset>,
         user_id: &str,
         agent_id: Option<&str>,
@@ -266,13 +266,13 @@ impl MetaService {
     ) -> DomainResult<Decision> {
         let membership = match asset {
             Some(a) => {
-                self.active_membership(instance, &a.team_id, user_id)
+                self.active_membership(department, &a.team_id, user_id)
                     .await?
             }
             None => None,
         };
         let acl = match asset {
-            Some(a) => self.store.list_acl(instance, &a.asset_id).await?,
+            Some(a) => self.store.list_acl(department, &a.asset_id).await?,
             None => Vec::new(),
         };
         Ok(check_asset_permission(&AccessRequest {
@@ -287,7 +287,7 @@ impl MetaService {
 
     pub async fn create_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: CreateAssetInput,
     ) -> DomainResult<Asset> {
@@ -296,11 +296,11 @@ impl MetaService {
         if input.owner_user_id != caller.user_id {
             return Err(denied("owner must be the caller"));
         }
-        self.require_member(instance, &input.team_id, caller)
+        self.require_member(department, &input.team_id, caller)
             .await?;
         if self
             .store
-            .get_asset(instance, &input.asset_id)
+            .get_asset(department, &input.asset_id)
             .await?
             .is_some()
         {
@@ -341,22 +341,22 @@ impl MetaService {
             updated_at: now,
             metadata_json: input.metadata_json.unwrap_or_else(|| json!({})),
         };
-        self.store.insert_asset(instance, &asset).await?;
+        self.store.insert_asset(department, &asset).await?;
         Ok(asset)
     }
 
     /// 404 rather than 403 so callers cannot probe for existence.
     pub async fn get_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         asset_id: &str,
     ) -> DomainResult<Asset> {
-        let asset = self.store.get_asset(instance, asset_id).await?;
+        let asset = self.store.get_asset(department, asset_id).await?;
         let visible = match &asset {
             Some(a) if caller.is_system_admin || a.owner_user_id == caller.user_id => true,
             Some(a) => self
-                .decide(instance, Some(a), &caller.user_id, None, Permission::Read)
+                .decide(department, Some(a), &caller.user_id, None, Permission::Read)
                 .await?
                 .is_allowed(),
             None => false,
@@ -368,13 +368,13 @@ impl MetaService {
 
     async fn owned_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         asset_id: &str,
     ) -> DomainResult<Asset> {
         let asset = self
             .store
-            .get_asset(instance, asset_id)
+            .get_asset(department, asset_id)
             .await?
             .ok_or_else(|| DomainError::not_found("asset", asset_id))?;
         if asset.owner_user_id != caller.user_id && !caller.is_system_admin {
@@ -385,11 +385,13 @@ impl MetaService {
 
     pub async fn update_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: UpdateAssetInput,
     ) -> DomainResult<Asset> {
-        let mut asset = self.owned_asset(instance, caller, &input.asset_id).await?;
+        let mut asset = self
+            .owned_asset(department, caller, &input.asset_id)
+            .await?;
         if let Some(n) = input.name {
             require_non_empty("name", &n)?;
             asset.name = n;
@@ -417,20 +419,20 @@ impl MetaService {
         }
         asset.version += 1;
         asset.updated_at = self.now();
-        self.store.update_asset(instance, &asset).await?;
+        self.store.update_asset(department, &asset).await?;
         Ok(asset)
     }
 
     pub async fn delete_assets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let mut allowed = Vec::new();
         let mut failed = Vec::new();
         for id in ids {
-            match self.owned_asset(instance, caller, id).await {
+            match self.owned_asset(department, caller, id).await {
                 Ok(_) => allowed.push(id.clone()),
                 Err(e) if e.kind == memory_domain::error::ErrorKind::NotFound => {
                     allowed.push(id.clone())
@@ -441,27 +443,27 @@ impl MetaService {
                 }),
             }
         }
-        let mut result = self.store.delete_assets(instance, &allowed).await?;
+        let mut result = self.store.delete_assets(department, &allowed).await?;
         result.failed.extend(failed);
         Ok(result)
     }
 
     pub async fn touch_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         asset_id: &str,
     ) -> DomainResult<Asset> {
-        self.owned_asset(instance, caller, asset_id).await?;
+        self.owned_asset(department, caller, asset_id).await?;
         self.store
-            .touch_asset(instance, asset_id, &self.now())
+            .touch_asset(department, asset_id, &self.now())
             .await?;
-        self.owned_asset(instance, caller, asset_id).await
+        self.owned_asset(department, caller, asset_id).await
     }
 
     pub async fn list_assets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: ListAssetsInput,
     ) -> DomainResult<MetaPage<Asset>> {
@@ -486,14 +488,14 @@ impl MetaService {
                 .transpose()?
                 .map(|v| vec![v]),
         };
-        let all = self.store.list_assets(instance, &filter).await?;
+        let all = self.store.list_assets(department, &filter).await?;
         let mut visible = Vec::new();
         for asset in all {
             let ok = caller.is_system_admin
                 || asset.owner_user_id == caller.user_id
                 || self
                     .decide(
-                        instance,
+                        department,
                         Some(&asset),
                         &caller.user_id,
                         None,
@@ -511,7 +513,7 @@ impl MetaService {
     /// Every asset the user may perform `action` on, across their teams.
     pub async fn list_accessible(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: &str,
         input: ListAccessibleInput,
     ) -> DomainResult<MetaPage<Asset>> {
@@ -524,13 +526,13 @@ impl MetaService {
             .unwrap_or(Permission::Read);
         let teams: Vec<String> = match &input.team_id {
             Some(t) => self
-                .active_membership(instance, t, user_id)
+                .active_membership(department, t, user_id)
                 .await?
                 .map(|m| vec![m.team_id])
                 .unwrap_or_default(),
             None => self
                 .store
-                .list_memberships(instance, user_id)
+                .list_memberships(department, user_id)
                 .await?
                 .into_iter()
                 .filter(|m| m.is_active())
@@ -558,13 +560,13 @@ impl MetaService {
                 visibility: visibility.clone(),
                 ..Default::default()
             };
-            for asset in self.store.list_assets(instance, &filter).await? {
+            for asset in self.store.list_assets(department, &filter).await? {
                 if asset.status.is_retired() {
                     continue;
                 }
                 if self
                     .decide(
-                        instance,
+                        department,
                         Some(&asset),
                         user_id,
                         input.agent_id.as_deref(),
@@ -584,21 +586,21 @@ impl MetaService {
 
     pub async fn set_bindings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         agent_id: &str,
         inputs: Vec<BindingInput>,
     ) -> DomainResult<Vec<AgentBinding>> {
-        let agent = self.get_agent(instance, agent_id).await?;
+        let agent = self.get_agent(department, agent_id).await?;
         if agent.owner_user_id != caller.user_id && !caller.is_system_admin {
-            self.require_team_admin(instance, &agent.team_id, caller)
+            self.require_team_admin(department, &agent.team_id, caller)
                 .await?;
         }
         let mut bindings = Vec::new();
         for input in inputs {
             let asset = self
                 .store
-                .get_asset(instance, &input.asset_id)
+                .get_asset(department, &input.asset_id)
                 .await?
                 .ok_or_else(|| DomainError::not_found("asset", &input.asset_id))?;
             if !can_bind(&asset, &agent.team_id, &agent.owner_user_id) {
@@ -624,27 +626,27 @@ impl MetaService {
             });
         }
         self.store
-            .replace_bindings(instance, agent_id, &bindings)
+            .replace_bindings(department, agent_id, &bindings)
             .await?;
         Ok(bindings)
     }
 
     pub async fn list_bindings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_id: &str,
         pagination: Pagination,
     ) -> DomainResult<MetaPage<AgentBinding>> {
         let page = pagination.page();
         Ok(paginate(
-            self.store.list_bindings(instance, agent_id).await?,
+            self.store.list_bindings(department, agent_id).await?,
             page,
         ))
     }
 
     pub async fn list_bindings_with_detail(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         agent_id: &str,
         apply_visibility_filter: bool,
@@ -653,26 +655,26 @@ impl MetaService {
     ) -> DomainResult<MetaPage<BindingDetail>> {
         // Only the agent's owner, team admins and system admins see the
         // unfiltered loadout or bump usage counters.
-        let agent = self.read_agent(instance, caller, agent_id).await?;
+        let agent = self.read_agent(department, caller, agent_id).await?;
         let privileged = caller.is_system_admin
             || agent.owner_user_id == caller.user_id
             || self
-                .require_team_admin(instance, &agent.team_id, caller)
+                .require_team_admin(department, &agent.team_id, caller)
                 .await
                 .is_ok();
         let apply_visibility_filter = apply_visibility_filter || !privileged;
         let touch_usage = touch_usage && privileged;
         let page = pagination.page();
         let mut details = Vec::new();
-        for binding in self.store.list_bindings(instance, agent_id).await? {
-            let Some(asset) = self.store.get_asset(instance, &binding.asset_id).await? else {
+        for binding in self.store.list_bindings(department, agent_id).await? {
+            let Some(asset) = self.store.get_asset(department, &binding.asset_id).await? else {
                 continue;
             };
             if apply_visibility_filter
                 && asset.owner_user_id != caller.user_id
                 && !self
                     .decide(
-                        instance,
+                        department,
                         Some(&asset),
                         &caller.user_id,
                         Some(agent_id),
@@ -685,7 +687,7 @@ impl MetaService {
             }
             if touch_usage {
                 self.store
-                    .touch_asset(instance, &asset.asset_id, &self.now())
+                    .touch_asset(department, &asset.asset_id, &self.now())
                     .await?;
             }
             details.push(BindingDetail { binding, asset });
@@ -695,7 +697,7 @@ impl MetaService {
 
     pub async fn binding_summary(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_ids: &[String],
         asset_id: Option<&str>,
     ) -> DomainResult<MetaPage<AgentAssetSummary>> {
@@ -703,7 +705,7 @@ impl MetaService {
         for agent_id in agent_ids {
             let mut counts: HashMap<&'static str, usize> = AssetTypeKeys::zeroed();
             let mut total = 0;
-            for b in self.store.list_bindings(instance, agent_id).await? {
+            for b in self.store.list_bindings(department, agent_id).await? {
                 if asset_id.is_some_and(|a| a != b.asset_id) {
                     continue;
                 }
@@ -727,11 +729,12 @@ impl MetaService {
 
     pub async fn grant(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: GrantInput,
     ) -> DomainResult<AclEntry> {
-        self.owned_asset(instance, caller, &input.asset_id).await?;
+        self.owned_asset(department, caller, &input.asset_id)
+            .await?;
         if input
             .granted_by
             .as_deref()
@@ -756,61 +759,62 @@ impl MetaService {
             created_at: now.clone(),
             updated_at: now,
         };
-        self.store.grant(instance, &entry).await
+        self.store.grant(department, &entry).await
     }
 
     pub async fn revoke(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         id: &str,
     ) -> DomainResult<AclEntry> {
         let entry = self
             .store
-            .get_acl(instance, id)
+            .get_acl(department, id)
             .await?
             .ok_or_else(|| DomainError::not_found("acl", id))?;
-        self.owned_asset(instance, caller, &entry.asset_id).await?;
+        self.owned_asset(department, caller, &entry.asset_id)
+            .await?;
         self.store
-            .revoke(instance, id)
+            .revoke(department, id)
             .await?
             .ok_or_else(|| DomainError::not_found("acl", id))
     }
 
     pub async fn list_acl(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         asset_id: &str,
         pagination: Pagination,
     ) -> DomainResult<MetaPage<AclEntry>> {
         let asset = self
             .store
-            .get_asset(instance, asset_id)
+            .get_asset(department, asset_id)
             .await?
             .ok_or_else(|| DomainError::not_found("asset", asset_id))?;
         if asset.owner_user_id != caller.user_id && !caller.is_system_admin {
-            self.require_team_admin(instance, &asset.team_id, caller)
+            self.require_team_admin(department, &asset.team_id, caller)
                 .await?;
         }
         Ok(paginate(
-            self.store.list_acl(instance, asset_id).await?,
+            self.store.list_acl(department, asset_id).await?,
             pagination.page(),
         ))
     }
 
     pub async fn check(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset_id: &str,
         action: &str,
         user_id: &str,
         agent_id: Option<&str>,
     ) -> DomainResult<CheckResult> {
-        let asset = self.store.get_asset(instance, asset_id).await?;
+        let asset = self.store.get_asset(department, asset_id).await?;
         let decision = self
             .decide(
-                instance,
+                department,
                 asset.as_ref(),
                 user_id,
                 agent_id,

@@ -9,21 +9,21 @@ use memory_application::ports::skill::{
     SkillTask,
 };
 use memory_domain::error::DomainResult;
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use memory_domain::skill::{SkillStatus, SkillVersion};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
-use super::db::InstancePool;
+use super::db::DepartmentPool;
 use super::sql::{from_doc, like_prefix, to_doc, Where};
 use crate::text::{bm25_to_score, index_text, match_query};
 
 pub struct SqliteSkillStore {
-    pool: Arc<InstancePool>,
+    pool: Arc<DepartmentPool>,
 }
 
 impl SqliteSkillStore {
-    pub fn new(pool: Arc<InstancePool>) -> Self {
+    pub fn new(pool: Arc<DepartmentPool>) -> Self {
         Self { pool }
     }
 }
@@ -85,10 +85,14 @@ fn snippet(v: &SkillVersion) -> String {
 
 #[async_trait]
 impl SkillRepository for SqliteSkillStore {
-    async fn skill_id_exists(&self, instance: &InstanceId, skill_id: &str) -> DomainResult<bool> {
+    async fn skill_id_exists(
+        &self,
+        department: &DepartmentId,
+        skill_id: &str,
+    ) -> DomainResult<bool> {
         let id = skill_id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.query_row(
                     "SELECT EXISTS(SELECT 1 FROM skills WHERE skill_id = ?)",
@@ -101,12 +105,12 @@ impl SkillRepository for SqliteSkillStore {
 
     async fn head(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
     ) -> DomainResult<Option<SkillVersion>> {
         let id = skill_id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 one_version(
                     c,
@@ -119,13 +123,13 @@ impl SkillRepository for SqliteSkillStore {
 
     async fn version(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         version: u32,
     ) -> DomainResult<Option<SkillVersion>> {
         let id = skill_id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 one_version(
                     c,
@@ -138,14 +142,14 @@ impl SkillRepository for SqliteSkillStore {
 
     async fn find_head_by_name(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         agent_id: &str,
         name: &str,
     ) -> DomainResult<Option<SkillVersion>> {
         let (t, a, n) = (team_id.to_owned(), agent_id.to_owned(), name.to_owned());
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 one_version(
                     c,
@@ -156,10 +160,14 @@ impl SkillRepository for SqliteSkillStore {
             .await
     }
 
-    async fn append_version(&self, instance: &InstanceId, next: &SkillVersion) -> DomainResult<()> {
+    async fn append_version(
+        &self,
+        department: &DepartmentId,
+        next: &SkillVersion,
+    ) -> DomainResult<()> {
         let v = next.clone();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let tx = conn.transaction()?;
                 tx.execute("UPDATE skills SET is_head = 0, doc = json_set(doc, '$.is_head', json('false')) WHERE skill_id = ? AND is_head = 1", [&v.skill_id])?;
@@ -181,14 +189,14 @@ impl SkillRepository for SqliteSkillStore {
 
     async fn list_heads(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &SkillFilter,
         limit: usize,
         offset: usize,
     ) -> DomainResult<(Vec<SkillVersion>, usize)> {
         let w = head_where(filter, "");
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let total: usize = c.query_row(&format!("SELECT COUNT(*) FROM skills {}", w.sql()), params_from_iter(w.params.iter()), |r| r.get(0))?;
                 let sql = format!("SELECT doc FROM skills {} ORDER BY updated_at_ms DESC, skill_id LIMIT ? OFFSET ?", w.sql());
@@ -199,7 +207,7 @@ impl SkillRepository for SqliteSkillStore {
 
     async fn search_heads(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &SkillFilter,
         query: &str,
         limit: usize,
@@ -210,7 +218,7 @@ impl SkillRepository for SqliteSkillStore {
         let mut w = head_where(filter, "s.");
         w.raw("skills_fts MATCH ?", [Value::from(fts)]);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let sql = format!(
                     "SELECT s.doc, bm25(skills_fts) AS rank FROM skills_fts JOIN skills s ON s.skill_id = skills_fts.skill_id {} ORDER BY rank LIMIT ?",
@@ -233,14 +241,14 @@ impl SkillRepository for SqliteSkillStore {
 
     async fn list_versions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         limit: usize,
         offset: usize,
     ) -> DomainResult<(Vec<SkillVersion>, usize)> {
         let id = skill_id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let total: usize = c.query_row("SELECT COUNT(*) FROM skills WHERE skill_id = ?", [&id], |r| r.get(0))?;
                 let items = versions(c, "SELECT doc FROM skills WHERE skill_id = ? ORDER BY version DESC LIMIT ? OFFSET ?", &[Value::from(id), Value::from(limit as i64), Value::from(offset as i64)])?;
@@ -249,10 +257,10 @@ impl SkillRepository for SqliteSkillStore {
             .await
     }
 
-    async fn delete_skill(&self, instance: &InstanceId, skill_id: &str) -> DomainResult<usize> {
+    async fn delete_skill(&self, department: &DepartmentId, skill_id: &str) -> DomainResult<usize> {
         let id = skill_id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let tx = c.transaction()?;
                 tx.execute("DELETE FROM skills_fts WHERE skill_id = ?", [&id])?;
@@ -265,13 +273,13 @@ impl SkillRepository for SqliteSkillStore {
 
     async fn delete_versions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         versions_in: &[u32],
     ) -> DomainResult<usize> {
         let (id, vs) = (skill_id.to_owned(), versions_in.to_vec());
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let mut n = 0;
                 for v in vs {
@@ -285,9 +293,9 @@ impl SkillRepository for SqliteSkillStore {
             .await
     }
 
-    async fn count_heads(&self, instance: &InstanceId) -> DomainResult<usize> {
+    async fn count_heads(&self, department: &DepartmentId) -> DomainResult<usize> {
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(|c| {
                 c.query_row(
                     "SELECT COUNT(*) FROM skills WHERE is_head = 1 AND status = 'active'",
@@ -310,12 +318,12 @@ fn buffer_key(k: &BufferKey) -> String {
 impl SkillBufferStore for SqliteSkillStore {
     async fn load(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: &BufferKey,
     ) -> DomainResult<(Vec<BufferedMessage>, BufferCounters)> {
         let k = buffer_key(key);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let row: Option<(String, u32, usize)> = c
                     .query_row("SELECT messages, tool_call_count, byte_count FROM skill_buffers WHERE buffer_key = ?", [k], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -330,14 +338,14 @@ impl SkillBufferStore for SqliteSkillStore {
 
     async fn save(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: &BufferKey,
         messages: &[BufferedMessage],
         counters: &BufferCounters,
     ) -> DomainResult<()> {
         let (k, m, c) = (buffer_key(key), messages.to_vec(), counters.clone());
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 conn.execute(
                     "INSERT OR REPLACE INTO skill_buffers VALUES (?,?,?,?)",
@@ -348,10 +356,10 @@ impl SkillBufferStore for SqliteSkillStore {
             .await
     }
 
-    async fn clear(&self, instance: &InstanceId, key: &BufferKey) -> DomainResult<()> {
+    async fn clear(&self, department: &DepartmentId, key: &BufferKey) -> DomainResult<()> {
         let k = buffer_key(key);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.execute("DELETE FROM skill_buffers WHERE buffer_key = ?", [k])
                     .map(|_| ())
@@ -361,7 +369,7 @@ impl SkillBufferStore for SqliteSkillStore {
 
     async fn archive(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: &BufferKey,
         at_ms: i64,
         messages: &[BufferedMessage],
@@ -372,7 +380,7 @@ impl SkillBufferStore for SqliteSkillStore {
         );
         let (ak, m) = (archive_key.clone(), messages.to_vec());
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.execute(
                     "INSERT OR IGNORE INTO skill_archives VALUES (?,?,?)",
@@ -386,12 +394,12 @@ impl SkillBufferStore for SqliteSkillStore {
 
     async fn read_archive(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         archive_key: &str,
     ) -> DomainResult<Option<Vec<BufferedMessage>>> {
         let k = archive_key.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let doc: Option<String> = c
                     .query_row(
@@ -405,10 +413,10 @@ impl SkillBufferStore for SqliteSkillStore {
             .await
     }
 
-    async fn put_task(&self, instance: &InstanceId, task: &SkillTask) -> DomainResult<()> {
+    async fn put_task(&self, department: &DepartmentId, task: &SkillTask) -> DomainResult<()> {
         let t = task.clone();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.execute(
                     "INSERT OR REPLACE INTO skill_tasks VALUES (?,?)",
@@ -421,12 +429,12 @@ impl SkillBufferStore for SqliteSkillStore {
 
     async fn get_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task_id: &str,
     ) -> DomainResult<Option<SkillTask>> {
         let id = task_id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let doc: Option<String> = c
                     .query_row("SELECT doc FROM skill_tasks WHERE task_id = ?", [id], |r| {

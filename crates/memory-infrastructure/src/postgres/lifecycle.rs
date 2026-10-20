@@ -1,13 +1,13 @@
-//! Instance destruction for the Postgres backend: the instance schema goes
+//! Department destruction for the Postgres backend: the department schema goes
 //! with everything in it, and so does its registry row. Local files are a
 //! separate step (`LocalDirCleanup`) composed in by the server.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use memory_application::admin::InstanceLifecycle;
+use memory_application::admin::DepartmentLifecycle;
 use memory_domain::error::DomainResult;
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde_json::{json, Value};
 
 use super::db::PgDb;
@@ -23,9 +23,9 @@ impl PostgresCleanup {
 }
 
 #[async_trait]
-impl InstanceLifecycle for PostgresCleanup {
-    async fn destroy(&self, instance: &InstanceId) -> DomainResult<Value> {
-        let removed = self.db.drop_instance(instance).await?;
+impl DepartmentLifecycle for PostgresCleanup {
+    async fn destroy(&self, department: &DepartmentId) -> DomainResult<Value> {
+        let removed = self.db.drop_department(department).await?;
         Ok(json!({"removed": removed}))
     }
 }

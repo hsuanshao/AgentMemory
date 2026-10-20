@@ -10,7 +10,7 @@ use memory_domain::profile::{
     is_tombstone, normalize_scene_filename, render_scene, scene_path, ProfileScope, SceneMeta,
     MAX_SCENE_CHARS,
 };
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::Deserialize;
 use tracing::warn;
 
@@ -73,13 +73,13 @@ impl SceneExtractor {
 
     pub async fn consolidate(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         atoms: &[AtomicMemory],
         strategy: Option<&CustomStrategy>,
     ) -> DomainResult<L2Outcome> {
         let system_prompt = prompts::compose(Layer::L2, strategy);
-        let scenes = self.memory.list_scenes(instance, profile, "").await?;
+        let scenes = self.memory.list_scenes(department, profile, "").await?;
         let input = self.plan_input(atoms, &scenes);
         let reply = self
             .llm
@@ -90,9 +90,9 @@ impl SceneExtractor {
             .await?;
         let plan: ScenePlan = parse_llm_json(&reply, '{')?;
         let changed = self
-            .apply(instance, profile, &scenes, plan.operations)
+            .apply(department, profile, &scenes, plan.operations)
             .await?;
-        self.memory.refresh_navigation(instance, profile).await?;
+        self.memory.refresh_navigation(department, profile).await?;
         Ok(L2Outcome {
             changed_files: changed,
             persona_update_request: plan.persona_update_request.filter(|r| !r.trim().is_empty()),
@@ -129,7 +129,7 @@ impl SceneExtractor {
 
     async fn apply(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         scenes: &[SceneEntry],
         operations: Vec<SceneOperation>,
@@ -188,7 +188,7 @@ impl SceneExtractor {
             let body: String = op.content.chars().take(MAX_SCENE_CHARS).collect();
             self.profiles
                 .write(
-                    instance,
+                    department,
                     profile,
                     &scene_path(&file),
                     &render_scene(&meta, &body),
@@ -196,7 +196,7 @@ impl SceneExtractor {
                 .await?;
             for old in &merged_away {
                 self.profiles
-                    .remove(instance, profile, &scene_path(old))
+                    .remove(department, profile, &scene_path(old))
                     .await?;
                 heats.remove(old);
             }

@@ -1,4 +1,4 @@
-//! DDL for the registry and for one instance schema. Mirrors
+//! DDL for the registry and for one department schema. Mirrors
 //! `sqlite/schema.rs` table for table; differences are deliberate:
 //!
 //! * full-text tokens live in a `tsvector` column of the row itself (GIN
@@ -9,21 +9,42 @@
 //! * integers are `BIGINT` throughout (one Rust type, `i64`, decodes all);
 //! * documents are `JSONB`, so `touch_*` can patch them in place.
 
-/// Fixed schema holding the instance → schema registry.
+/// Fixed schema holding the department → schema registry.
 pub const REGISTRY_SCHEMA: &str = "agent_memory";
+
+/// Schema changes after the first release, oldest first. The DDL in this
+/// file always describes the latest version; `db::migrate` upgrades older
+/// databases step by step and records each step.
+pub const MIGRATIONS: &[(i64, &str)] = &[(1, "instance renamed to department")];
+
+/// The latest schema version.
+pub const SCHEMA_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
+
+const MIGRATIONS_DDL: &str = r#"
+CREATE SCHEMA IF NOT EXISTS $R;
+CREATE TABLE IF NOT EXISTS $R.schema_migrations (
+    version BIGINT PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"#;
+
+pub fn migrations_ddl(registry: &str) -> String {
+    MIGRATIONS_DDL.replace("$R", registry)
+}
 
 /// Creates the registry. `$R` is the quoted registry schema.
 const REGISTRY_DDL: &str = r#"
 CREATE SCHEMA IF NOT EXISTS $R;
-CREATE TABLE IF NOT EXISTS $R.instances (
-    instance_id TEXT COLLATE "C" PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS $R.departments (
+    department_id TEXT COLLATE "C" PRIMARY KEY,
     schema_name TEXT COLLATE "C" NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 "#;
 
-/// One instance. `$S` is the quoted instance schema, `$K` a bytewise text.
-const INSTANCE_DDL: &str = r#"
+/// One department. `$S` is the quoted department schema, `$K` a bytewise text.
+const DEPARTMENT_DDL: &str = r#"
 CREATE SCHEMA IF NOT EXISTS $S;
 
 CREATE TABLE IF NOT EXISTS $S.conversations (
@@ -152,8 +173,8 @@ CREATE TABLE IF NOT EXISTS $S.meta_config_params (
     PRIMARY KEY (scope, user_id, module, param_name)
 );
 INSERT INTO $S.meta_config_params VALUES
-    ('global', '', 'quota', 'max_users_per_instance', '500'),
-    ('global', '', 'quota', 'max_teams_per_instance', '100'),
+    ('global', '', 'quota', 'max_users_per_department', '500'),
+    ('global', '', 'quota', 'max_teams_per_department', '100'),
     ('global', '', 'asset_type', 'skill.enabled', '1'),
     ('global', '', 'asset_type', 'llm_wiki.enabled', '1'),
     ('global', '', 'asset_type', 'code_graph.enabled', '1'),
@@ -169,8 +190,8 @@ pub fn registry_ddl(registry: &str) -> String {
     REGISTRY_DDL.replace("$R", registry)
 }
 
-pub fn instance_ddl(schema: &str) -> String {
-    INSTANCE_DDL
+pub fn department_ddl(schema: &str) -> String {
+    DEPARTMENT_DDL
         .replace("$S", schema)
         .replace("$K", "TEXT COLLATE \"C\"")
 }

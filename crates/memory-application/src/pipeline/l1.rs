@@ -7,7 +7,7 @@ use std::sync::Arc;
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage};
 use memory_domain::retrieval::SearchMode;
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::warn;
@@ -97,7 +97,7 @@ impl L1Extractor {
 
     pub async fn extract(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         messages: &[ConversationMessage],
@@ -133,7 +133,7 @@ impl L1Extractor {
             .map(Into::into);
         let candidates = self.to_atoms(scope, session_id, blocks);
         let written = self
-            .reconcile_and_store(instance, scope, candidates)
+            .reconcile_and_store(department, scope, candidates)
             .await?;
         Ok(L1Outcome {
             written,
@@ -180,7 +180,7 @@ impl L1Extractor {
 
     async fn reconcile_and_store(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         fresh: Vec<AtomicMemory>,
     ) -> DomainResult<Vec<AtomicMemory>> {
@@ -188,7 +188,7 @@ impl L1Extractor {
             return Ok(Vec::new());
         }
         let decisions = if self.enable_dedup {
-            self.dedup(instance, scope, &fresh).await
+            self.dedup(department, scope, &fresh).await
         } else {
             HashMap::new()
         };
@@ -200,13 +200,14 @@ impl L1Extractor {
                     if (d.action == "update" || d.action == "merge")
                         && !d.target_ids.is_empty() =>
                 {
-                    if let Some(merged) = self.merge_into_targets(instance, scope, &atom, d).await?
+                    if let Some(merged) =
+                        self.merge_into_targets(department, scope, &atom, d).await?
                     {
                         written.push(merged);
                     }
                 }
                 _ => {
-                    self.store(instance, &atom).await?;
+                    self.store(department, &atom).await?;
                     written.push(atom);
                 }
             }
@@ -218,7 +219,7 @@ impl L1Extractor {
     /// Any failure degrades to "store everything".
     async fn dedup(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         fresh: &[AtomicMemory],
     ) -> HashMap<String, DedupDecision> {
@@ -228,7 +229,7 @@ impl L1Extractor {
             let hits = match self
                 .searcher
                 .search(
-                    instance,
+                    department,
                     scope,
                     &atom.content,
                     &AtomFilter::default(),
@@ -280,19 +281,19 @@ impl L1Extractor {
     /// clients) and deletes the remaining targets.
     async fn merge_into_targets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         fresh: &AtomicMemory,
         d: &DedupDecision,
     ) -> DomainResult<Option<AtomicMemory>> {
         let mut targets = Vec::new();
         for id in &d.target_ids {
-            if let Some(t) = self.atoms.get(instance, id).await? {
+            if let Some(t) = self.atoms.get(department, id).await? {
                 targets.push(t);
             }
         }
         let Some(first) = targets.first().cloned() else {
-            self.store(instance, fresh).await?;
+            self.store(department, fresh).await?;
             return Ok(Some(fresh.clone()));
         };
         let mut merged = first;
@@ -318,13 +319,13 @@ impl L1Extractor {
             .extend(fresh.source_message_ids.iter().cloned());
         let others: Vec<String> = targets.iter().skip(1).map(|t| t.id.clone()).collect();
         if !others.is_empty() {
-            self.atoms.delete(instance, scope, &others).await?;
+            self.atoms.delete(department, scope, &others).await?;
         }
-        self.store(instance, &merged).await?;
+        self.store(department, &merged).await?;
         Ok(Some(merged))
     }
 
-    async fn store(&self, instance: &InstanceId, atom: &AtomicMemory) -> DomainResult<()> {
+    async fn store(&self, department: &DepartmentId, atom: &AtomicMemory) -> DomainResult<()> {
         let embedding = match self.embedder.dimensions() {
             Some(_) => match self
                 .embedder
@@ -341,7 +342,7 @@ impl L1Extractor {
             None => None,
         };
         self.atoms
-            .upsert(instance, atom, embedding.as_deref())
+            .upsert(department, atom, embedding.as_deref())
             .await
     }
 }

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use memory_application::admin::{
-    ChatMemoryService, InstanceLifecycle, KnowledgeService, StatsService,
+    ChatMemoryService, DepartmentLifecycle, KnowledgeService, StatsService,
 };
 use memory_application::memory::recall::{RecallService, RecallSettings};
 use memory_application::memory::search::AtomSearcher;
@@ -122,6 +122,7 @@ fn recall_settings(config: &Config) -> RecallSettings {
 pub async fn build(config: &Config) -> Result<App> {
     let data_dir = expand_home(&config.data.base_dir);
     std::fs::create_dir_all(&data_dir)?;
+    memory_infrastructure::fs::migrate_data_dir(&data_dir)?;
 
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let ids: Arc<dyn IdGenerator> = Arc::new(RandomIds);
@@ -210,8 +211,8 @@ pub async fn build(config: &Config) -> Result<App> {
         Arc::clone(&clock),
         Arc::clone(&ids),
         MetaSettings {
-            max_users_per_instance: config.metadata.max_users_per_instance,
-            max_teams_per_instance: config.metadata.max_teams_per_instance,
+            max_users_per_department: config.metadata.max_users_per_department,
+            max_teams_per_department: config.metadata.max_teams_per_department,
             max_active_keys_per_user: config.metadata.max_active_keys_per_user,
         },
     ));
@@ -252,7 +253,7 @@ pub async fn build(config: &Config) -> Result<App> {
     ));
     pipeline.register_skill_runner(skill_extraction.clone() as Arc<dyn SkillJobRunner>);
 
-    let lifecycle: Arc<dyn InstanceLifecycle> = Arc::new(CompositeLifecycle::new(vec![
+    let lifecycle: Arc<dyn DepartmentLifecycle> = Arc::new(CompositeLifecycle::new(vec![
         ("storage", Arc::clone(&storage.cleanup)),
         (
             "state",
@@ -355,13 +356,14 @@ impl LateObserver {
 impl ConversationObserver for LateObserver {
     async fn on_conversation(
         &self,
-        instance: &memory_domain::scope::InstanceId,
+        department: &memory_domain::scope::DepartmentId,
         scope: &memory_domain::scope::MemoryScope,
         session_id: &str,
         rounds: u32,
     ) {
         if let Some(o) = self.inner.get() {
-            o.on_conversation(instance, scope, session_id, rounds).await;
+            o.on_conversation(department, scope, session_id, rounds)
+                .await;
         }
     }
 }

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use memory_application::admin::InstanceLifecycle;
+use memory_application::admin::DepartmentLifecycle;
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::memory::{
     AtomRepository, ConversationRepository, ProfileFileRepository, ScopeMigrationStore,
@@ -30,7 +30,7 @@ use memory_infrastructure::postgres::skill_store::PostgresSkillStore;
 use memory_infrastructure::redis::{
     self as redis_backend, KeySpace, RedisKeyLock, RedisPipelineState, RedisQueue,
 };
-use memory_infrastructure::sqlite::db::{Db, InstancePool};
+use memory_infrastructure::sqlite::db::{Db, DepartmentPool};
 use memory_infrastructure::sqlite::memory_store::SqliteMemoryStore;
 use memory_infrastructure::sqlite::meta_store::SqliteMetaStore;
 use memory_infrastructure::sqlite::pipeline_store::{
@@ -54,8 +54,8 @@ pub struct Storage {
     pub skill_buffers: Arc<dyn SkillBufferStore>,
     pub prompts: Arc<dyn MemoryPromptRepository>,
     pub generation_logs: Arc<dyn GenerationLogRepository>,
-    /// Removes the instance's stored data (and its local files).
-    pub cleanup: Arc<dyn InstanceLifecycle>,
+    /// Removes the department's stored data (and its local files).
+    pub cleanup: Arc<dyn DepartmentLifecycle>,
     pub name: &'static str,
     pub fts_available: bool,
     /// How vector search is executed, for `/health`.
@@ -86,9 +86,9 @@ pub async fn build_storage(
 }
 
 fn sqlite_storage(config: &Config, data_dir: &Path, vector_dims: Option<usize>) -> Storage {
-    let pool = Arc::new(InstancePool::new(
+    let pool = Arc::new(DepartmentPool::new(
         data_dir.to_path_buf(),
-        config.data.max_open_instances,
+        config.data.max_open_departments,
     ));
     let memory = Arc::new(SqliteMemoryStore::new(Arc::clone(&pool), vector_dims));
     let vector_index = memory.vector_index().to_owned();
@@ -110,8 +110,8 @@ fn sqlite_storage(config: &Config, data_dir: &Path, vector_dims: Option<usize>) 
     }
 }
 
-/// One shared pool, one schema per instance. Files (skill resources,
-/// session objects) still live under the local data directory, so instance
+/// One shared pool, one schema per department. Files (skill resources,
+/// session objects) still live under the local data directory, so department
 /// cleanup drops the schema and then the directory.
 async fn postgres_storage(
     config: &Config,
@@ -175,6 +175,9 @@ pub async fn build_coordination(config: &Config, data_dir: &Path) -> Result<Coor
                 .await
                 .context("coordination backend `redis`: cannot reach coordination.redis.url")?;
             let keys = KeySpace::new(&redis.key_prefix);
+            redis_backend::migrate::migrate(&conn, &keys)
+                .await
+                .context("migrating the coordination data in redis")?;
             let ttl = Duration::from_millis(redis.lock_ttl_ms);
             Ok(Coordination {
                 state: Arc::new(RedisPipelineState::new(conn.clone(), &keys)),

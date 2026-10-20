@@ -10,7 +10,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::authz;
-use crate::context::{Ctx, SERVICE_ID, USER_KEY};
+use crate::context::{Ctx, DEPARTMENT_ID, USER_KEY};
 use crate::envelope::ApiError;
 use crate::handlers::{memory, meta, ops, skill};
 use crate::state::SharedState;
@@ -69,7 +69,7 @@ fn cors(origins: &[String]) -> Option<CorsLayer> {
                 header::CONTENT_TYPE,
                 header::AUTHORIZATION,
                 header::HeaderName::from_static(USER_KEY),
-                header::HeaderName::from_static(SERVICE_ID),
+                header::HeaderName::from_static(DEPARTMENT_ID),
             ]),
     )
 }
@@ -153,7 +153,7 @@ fn ops_routes() -> Router<SharedState> {
         .route("/knowledge/delete", post(ops::knowledge_delete))
         .route("/knowledge/list", post(ops::knowledge_list))
         .route("/chat-memory/clear", post(ops::chat_memory_clear))
-        .route("/instance/destroy", post(ops::instance_destroy))
+        .route("/department/destroy", post(ops::department_destroy))
         .route("/meta/config/user/:action", post(meta::config_user))
         .route("/meta/:resource/:action", post(meta::dispatch))
         .route(
@@ -161,7 +161,7 @@ fn ops_routes() -> Router<SharedState> {
             post(meta::internal_init_admin),
         )
         .route(
-            "/internal/meta/user/list-by-instance",
+            "/internal/meta/user/list-by-department",
             post(meta::internal_list_users),
         )
         .route(
@@ -173,7 +173,7 @@ fn ops_routes() -> Router<SharedState> {
 
 /// Two trust zones. The memory data plane, skills and session turns are
 /// authorized per user (`x-memory-user-key`, see `authz`), so remote
-/// clients never hold the instance API key. Everything else (ops, metadata,
+/// clients never hold the department API key. Everything else (ops, metadata,
 /// internal bootstrap) still requires the Bearer key.
 pub fn build_router(state: SharedState) -> Router {
     let user_auth = || middleware::from_fn_with_state(state.clone(), authz::require_user);

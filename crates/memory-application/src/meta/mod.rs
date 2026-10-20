@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 use chrono::SecondsFormat;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use memory_domain::meta::{TeamMember, User, UserType};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 
 pub use agents::*;
@@ -45,16 +45,16 @@ impl Caller {
 
 #[derive(Debug, Clone, Copy)]
 pub struct MetaSettings {
-    pub max_users_per_instance: usize,
-    pub max_teams_per_instance: usize,
+    pub max_users_per_department: usize,
+    pub max_teams_per_department: usize,
     pub max_active_keys_per_user: usize,
 }
 
 impl Default for MetaSettings {
     fn default() -> Self {
         Self {
-            max_users_per_instance: 500,
-            max_teams_per_instance: 100,
+            max_users_per_department: 500,
+            max_teams_per_department: 100,
             max_active_keys_per_user: 20,
         }
     }
@@ -136,35 +136,35 @@ impl MetaService {
 
     pub(crate) async fn active_membership(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         user_id: &str,
     ) -> DomainResult<Option<TeamMember>> {
         Ok(self
             .store
-            .get_member(instance, team_id, user_id)
+            .get_member(department, team_id, user_id)
             .await?
             .filter(TeamMember::is_active))
     }
 
     pub(crate) async fn require_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         caller: &Caller,
     ) -> DomainResult<TeamMember> {
-        self.active_membership(instance, team_id, &caller.user_id)
+        self.active_membership(department, team_id, &caller.user_id)
             .await?
             .ok_or_else(|| denied("not an active member of the team"))
     }
 
     pub(crate) async fn require_team_admin(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         caller: &Caller,
     ) -> DomainResult<TeamMember> {
-        let member = self.require_member(instance, team_id, caller).await?;
+        let member = self.require_member(department, team_id, caller).await?;
         if member.is_admin() {
             Ok(member)
         } else {

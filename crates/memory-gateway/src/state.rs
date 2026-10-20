@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use memory_application::admin::{
-    ChatMemoryService, InstanceLifecycle, KnowledgeService, StatsService,
+    ChatMemoryService, DepartmentLifecycle, KnowledgeService, StatsService,
 };
 use memory_application::memory::recall::RecallService;
 use memory_application::memory::service::MemoryService;
@@ -53,7 +53,7 @@ pub struct Services {
     pub stats: Arc<StatsService>,
     pub skills: Arc<SkillService>,
     pub skill_extraction: Arc<SkillExtractionService>,
-    pub lifecycle: Arc<dyn InstanceLifecycle>,
+    pub lifecycle: Arc<dyn DepartmentLifecycle>,
     pub migration: Arc<LegacyScopeMigration>,
     pub upgrade: Arc<LegacyUpgrade>,
 }

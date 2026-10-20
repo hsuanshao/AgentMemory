@@ -1,5 +1,5 @@
 //! Operational use cases: chat-memory clearing, knowledge metadata,
-//! instance statistics and instance destruction.
+//! department statistics and department destruction.
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::AtomType;
 use memory_domain::meta::AssetType;
 use memory_domain::profile::{ProfileScope, PERSONA_PATH, SCENE_DIR};
-use memory_domain::scope::{InstanceId, SegmentId};
+use memory_domain::scope::{DepartmentId, SegmentId};
 use serde::{Deserialize, Serialize};
 
 use crate::common::{BatchDeleteResult, Page};
@@ -61,24 +61,27 @@ impl ChatMemoryService {
 
     async fn wipe(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<(usize, usize, usize)> {
-        let l0 = self.conversations.delete_profile(instance, profile).await?;
-        let l1 = self.atoms.delete_profile(instance, profile).await?;
-        let scenes = self.profiles.remove(instance, profile, SCENE_DIR).await?;
+        let l0 = self
+            .conversations
+            .delete_profile(department, profile)
+            .await?;
+        let l1 = self.atoms.delete_profile(department, profile).await?;
+        let scenes = self.profiles.remove(department, profile, SCENE_DIR).await?;
         let persona = self
             .profiles
-            .remove(instance, profile, PERSONA_PATH)
+            .remove(department, profile, PERSONA_PATH)
             .await?;
-        self.pipeline.reset_profile(instance, profile).await?;
+        self.pipeline.reset_profile(department, profile).await?;
         Ok((l0, l1, scenes + persona))
     }
 
     /// Clears content of chat-memory assets; assets, bindings and ACL stay.
     pub async fn clear(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         memory_ids: &[String],
     ) -> DomainResult<Vec<ClearItem>> {
         let mut ids: Vec<String> = memory_ids
@@ -92,8 +95,8 @@ impl ChatMemoryService {
         }
         let mut items = Vec::new();
         for id in ids {
-            items.push(match self.resolve_profile(instance, &id).await {
-                Ok(profile) => match self.wipe(instance, &profile).await {
+            items.push(match self.resolve_profile(department, &id).await {
+                Ok(profile) => match self.wipe(department, &profile).await {
                     Ok((l0, l1, files)) => ClearItem {
                         memory_id: id,
                         cleared: true,
@@ -112,12 +115,12 @@ impl ChatMemoryService {
 
     async fn resolve_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         memory_id: &str,
     ) -> DomainResult<ProfileScope> {
         let asset = self
             .meta
-            .get_asset_unchecked(instance, memory_id)
+            .get_asset_unchecked(department, memory_id)
             .await?
             .filter(|a| a.asset_type == AssetType::ChatMemory)
             .ok_or_else(|| DomainError::not_found("chat_memory", memory_id))?;
@@ -146,7 +149,7 @@ fn failed_item(memory_id: String, reason: String) -> ClearItem {
 impl ChatMemoryCleaner for ChatMemoryService {
     async fn clear_chat_memory(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         agent_id: &str,
     ) -> DomainResult<()> {
@@ -154,7 +157,7 @@ impl ChatMemoryCleaner for ChatMemoryService {
             team_id: SegmentId::parse("team_id", team_id)?,
             agent_id: SegmentId::parse("agent_id", agent_id)?,
         };
-        self.wipe(instance, &profile).await.map(|_| ())
+        self.wipe(department, &profile).await.map(|_| ())
     }
 }
 
@@ -192,7 +195,7 @@ impl KnowledgeService {
 
     pub async fn create(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         input: KnowledgeInput,
     ) -> DomainResult<KnowledgeEntity> {
         let kind = input
@@ -216,7 +219,7 @@ impl KnowledgeService {
         }
         let created_at = self
             .repo
-            .get_knowledge(instance, &input.knowledge_id)
+            .get_knowledge(department, &input.knowledge_id)
             .await?
             .map(|e| e.created_at)
             .unwrap_or_else(|| self.now());
@@ -233,19 +236,19 @@ impl KnowledgeService {
             created_at,
             updated_at: self.now(),
         };
-        self.repo.upsert_knowledge(instance, &entity).await?;
+        self.repo.upsert_knowledge(department, &entity).await?;
         Ok(entity)
     }
 
     pub async fn get(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         id: &str,
         team_id: Option<&str>,
     ) -> DomainResult<KnowledgeEntity> {
         let entity = self
             .repo
-            .get_knowledge(instance, id)
+            .get_knowledge(department, id)
             .await?
             .ok_or_else(|| DomainError::not_found("knowledge", id))?;
         if team_id.is_some_and(|t| t != entity.team_id) {
@@ -256,11 +259,11 @@ impl KnowledgeService {
 
     pub async fn update(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         input: KnowledgeInput,
     ) -> DomainResult<KnowledgeEntity> {
         let mut entity = self
-            .get(instance, &input.knowledge_id, input.team_id.as_deref())
+            .get(department, &input.knowledge_id, input.team_id.as_deref())
             .await?;
         if let Some(v) = input.name {
             entity.name = v;
@@ -278,13 +281,13 @@ impl KnowledgeService {
             entity.branch = input.branch;
         }
         entity.updated_at = self.now();
-        self.repo.upsert_knowledge(instance, &entity).await?;
+        self.repo.upsert_knowledge(department, &entity).await?;
         Ok(entity)
     }
 
     pub async fn delete(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
         team_id: Option<&str>,
     ) -> DomainResult<BatchDeleteResult> {
@@ -294,7 +297,7 @@ impl KnowledgeService {
         let mut allowed = Vec::new();
         let mut result = BatchDeleteResult::default();
         for id in ids {
-            match self.get(instance, id, team_id).await {
+            match self.get(department, id, team_id).await {
                 Ok(_) => allowed.push(id.clone()),
                 Err(e) => result.failed.push(crate::common::FailedId {
                     id: id.clone(),
@@ -302,21 +305,21 @@ impl KnowledgeService {
                 }),
             }
         }
-        let deleted = self.repo.delete_knowledge(instance, &allowed).await?;
+        let deleted = self.repo.delete_knowledge(department, &allowed).await?;
         result.deleted_ids = deleted.deleted_ids;
         Ok(result)
     }
 
     pub async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         kind: Option<&str>,
         ids: Option<&[String]>,
         page: Page,
     ) -> DomainResult<(Vec<KnowledgeEntity>, usize)> {
         self.repo
-            .list_knowledge(instance, team_id, kind, ids, page)
+            .list_knowledge(department, team_id, kind, ids, page)
             .await
     }
 }
@@ -339,10 +342,10 @@ pub struct StatsOverview {
     pub generation_logs: usize,
 }
 
-/// Wipes every trace of an instance (database + files).
+/// Wipes every trace of a department (database + files).
 #[async_trait]
-pub trait InstanceLifecycle: Send + Sync {
-    async fn destroy(&self, instance: &InstanceId) -> DomainResult<serde_json::Value>;
+pub trait DepartmentLifecycle: Send + Sync {
+    async fn destroy(&self, department: &DepartmentId) -> DomainResult<serde_json::Value>;
 }
 
 pub struct StatsService {
@@ -370,7 +373,7 @@ impl StatsService {
         }
     }
 
-    pub async fn overview(&self, instance: &InstanceId) -> DomainResult<StatsOverview> {
+    pub async fn overview(&self, department: &DepartmentId) -> DomainResult<StatsOverview> {
         let atoms_of = |t: Option<AtomType>| AtomFilter {
             atom_type: t,
             ..Default::default()
@@ -378,27 +381,27 @@ impl StatsService {
         Ok(StatsOverview {
             l0: self
                 .conversations
-                .count(instance, None, &ConversationFilter::default())
+                .count(department, None, &ConversationFilter::default())
                 .await?,
             l1: AtomCounts {
-                total: self.atoms.count(instance, None, &atoms_of(None)).await?,
+                total: self.atoms.count(department, None, &atoms_of(None)).await?,
                 episodic: self
                     .atoms
-                    .count(instance, None, &atoms_of(Some(AtomType::Episodic)))
+                    .count(department, None, &atoms_of(Some(AtomType::Episodic)))
                     .await?,
                 persona: self
                     .atoms
-                    .count(instance, None, &atoms_of(Some(AtomType::Persona)))
+                    .count(department, None, &atoms_of(Some(AtomType::Persona)))
                     .await?,
                 instruction: self
                     .atoms
-                    .count(instance, None, &atoms_of(Some(AtomType::Instruction)))
+                    .count(department, None, &atoms_of(Some(AtomType::Instruction)))
                     .await?,
             },
-            l2: self.profiles.count(instance, None, SCENE_DIR).await?,
-            l3: self.profiles.count(instance, None, PERSONA_PATH).await?,
-            skills: self.skills.count_heads(instance).await?,
-            generation_logs: self.logs.count(instance).await?,
+            l2: self.profiles.count(department, None, SCENE_DIR).await?,
+            l3: self.profiles.count(department, None, PERSONA_PATH).await?,
+            skills: self.skills.count_heads(department).await?,
+            generation_logs: self.logs.count(department).await?,
         })
     }
 }

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use memory_domain::error::{DomainError, DomainResult};
-use memory_domain::scope::{InstanceId, SegmentId};
+use memory_domain::scope::{DepartmentId, SegmentId};
 use serde_json::{Map, Value};
 
 use crate::ports::memory::SessionObjectStore;
@@ -46,7 +46,7 @@ impl SessionService {
 
     pub async fn add_turn(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         headers: SessionTurnHeaders<'_>,
         body: Value,
     ) -> DomainResult<StoredTurn> {
@@ -77,7 +77,7 @@ impl SessionService {
         };
         let bytes = serde_json::to_vec(&Value::Object(record))
             .map_err(|e| DomainError::internal(e.to_string()))?;
-        self.store.put(instance, &object_key, &bytes).await?;
+        self.store.put(department, &object_key, &bytes).await?;
         Ok(StoredTurn {
             object_key,
             bytes: bytes.len(),

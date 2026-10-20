@@ -1,4 +1,4 @@
-//! Per-request context: request id, target instance, isolation headers and
+//! Per-request context: request id, target department, isolation headers and
 //! the JSON body (parsed here so malformed input still gets an envelope).
 
 use axum::async_trait;
@@ -7,13 +7,13 @@ use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::http::HeaderMap;
 use memory_domain::error::DomainError;
-use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
+use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::envelope::ApiError;
 
-pub const SERVICE_ID: &str = "x-memory-service-id";
+pub const DEPARTMENT_ID: &str = "x-memory-department-id";
 pub const USER_KEY: &str = "x-memory-user-key";
 
 #[derive(Debug, Clone)]
@@ -57,12 +57,12 @@ impl Ctx {
         ApiError::from_domain(&self.request_id, e)
     }
 
-    /// The memory instance (`x-memory-service-id`), required on `/v3/*`.
-    pub fn instance(&self) -> Result<InstanceId, ApiError> {
-        let raw = self.header(SERVICE_ID).ok_or_else(|| {
-            ApiError::unauthorized(&self.request_id, "missing header: x-memory-service-id")
+    /// The memory department (`x-memory-department-id`), required on `/v3/*`.
+    pub fn department(&self) -> Result<DepartmentId, ApiError> {
+        let raw = self.header(DEPARTMENT_ID).ok_or_else(|| {
+            ApiError::unauthorized(&self.request_id, "missing header: x-memory-department-id")
         })?;
-        SegmentId::parse(SERVICE_ID, &raw).map_err(|e| self.err(e))
+        SegmentId::parse(DEPARTMENT_ID, &raw).map_err(|e| self.err(e))
     }
 
     pub fn user_key(&self) -> Result<String, ApiError> {

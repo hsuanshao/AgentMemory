@@ -1,5 +1,5 @@
 //! Isolation scope: every memory record belongs to exactly one
-//! `(instance, team, agent, user)` bucket. Missing dimensions fall back to
+//! `(department, team, agent, user)` bucket. Missing dimensions fall back to
 //! the `default` bucket, mirroring the original v3 data plane.
 
 use serde::{Deserialize, Serialize};
@@ -47,10 +47,10 @@ impl std::fmt::Display for SegmentId {
     }
 }
 
-/// The memory instance a request targets (`x-memory-service-id`).
-pub type InstanceId = SegmentId;
+/// The memory department a request targets (`x-memory-department-id`).
+pub type DepartmentId = SegmentId;
 
-/// Team + agent + user triple that isolates memory data inside an instance.
+/// Team + agent + user triple that isolates memory data inside a department.
 /// `task_id` is an optional narrowing tag, not an isolation boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MemoryScope {

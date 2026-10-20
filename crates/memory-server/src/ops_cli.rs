@@ -12,14 +12,14 @@ use crate::config::Config;
 
 const GENERATIONS_HELP: &str = "\
 memory-server generations [--status succeeded|empty|failed] [--layer l1|l2|l3]
-                          [--hours N] [--limit N] [--instance ID] [--json]
+                          [--hours N] [--limit N] [--department ID] [--json]
 
 Counts of distillation runs per layer and status over the last N hours
 (default 24), then the latest runs (default: failed ones, 10).";
 
 const DEAD_LETTERS_HELP: &str = "\
-memory-server dead-letters [list] [--kind l1|l2|l3|skill] [--limit N] [--instance ID] [--json]
-memory-server dead-letters redrive [--kind l1|l2|l3|skill] [--limit N] [--instance ID]
+memory-server dead-letters [list] [--kind l1|l2|l3|skill] [--limit N] [--department ID] [--json]
+memory-server dead-letters redrive [--kind l1|l2|l3|skill] [--limit N] [--department ID]
 
 Pipeline jobs that failed every retry. `redrive` queues them again as first
 attempts, oldest first (default limit 10), so a fixed LLM catches up gradually.";
@@ -75,11 +75,11 @@ struct Core {
     http: reqwest::Client,
     base: String,
     api_key: Option<String>,
-    instance: String,
+    department: String,
 }
 
 impl Core {
-    fn new(instance: String) -> Result<Self> {
+    fn new(department: String) -> Result<Self> {
         let config = Config::load()?;
         let host = match config.server.host.as_str() {
             "0.0.0.0" | "::" | "" => "127.0.0.1".to_owned(),
@@ -91,7 +91,7 @@ impl Core {
                 .build()?,
             base: format!("http://{host}:{}", config.server.port),
             api_key: config.server.api_key,
-            instance,
+            department,
         })
     }
 
@@ -99,7 +99,7 @@ impl Core {
         let mut req = self
             .http
             .post(format!("{}/v3/{path}", self.base))
-            .header("x-memory-service-id", &self.instance)
+            .header("x-memory-department-id", &self.department)
             .json(&body);
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
@@ -146,13 +146,13 @@ pub async fn generations(args: impl Iterator<Item = String>) -> Result<()> {
     let layer = a.value("--layer")?;
     let hours = a.number("--hours")?.unwrap_or(24);
     let limit = a.number("--limit")?.unwrap_or(10);
-    let instance = a.value("--instance")?.unwrap_or_else(|| "default".into());
+    let department = a.value("--department")?.unwrap_or_else(|| "default".into());
     a.finish()?;
     if !["succeeded", "empty", "failed"].contains(&status.as_str()) {
         bail!("--status must be succeeded, empty or failed");
     }
 
-    let core = Core::new(instance)?;
+    let core = Core::new(department)?;
     let summary = core
         .call("memory-generation-log/summary", json!({ "hours": hours }))
         .await?;
@@ -238,10 +238,10 @@ pub async fn dead_letters(args: impl Iterator<Item = String>) -> Result<()> {
     let json_out = a.flag("--json");
     let kind = a.value("--kind")?;
     let limit = a.number("--limit")?;
-    let instance = a.value("--instance")?.unwrap_or_else(|| "default".into());
+    let department = a.value("--department")?.unwrap_or_else(|| "default".into());
     a.finish()?;
 
-    let core = Core::new(instance)?;
+    let core = Core::new(department)?;
     let mut body = json!({});
     if let Some(kind) = &kind {
         body["kind"] = json!(kind);

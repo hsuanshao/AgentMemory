@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::Duration;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use memory_domain::memory::Layer;
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
@@ -54,7 +54,7 @@ impl GenerationLogService {
     }
 
     /// Best-effort: a failing log write never fails the generation itself.
-    pub async fn record(&self, instance: &InstanceId, r: GenerationRecord<'_>) {
+    pub async fn record(&self, department: &DepartmentId, r: GenerationRecord<'_>) {
         let finished = self.clock.now().timestamp_millis();
         // `empty`: the LLM answered but nothing was written (nothing worth
         // keeping, or an answer that changed nothing).
@@ -90,14 +90,14 @@ impl GenerationLogService {
             latency_ms: finished - r.started_at_ms,
             error_message: r.error,
         };
-        if let Err(err) = self.repo.append(instance, &log).await {
+        if let Err(err) = self.repo.append(department, &log).await {
             warn!(error = %err, "failed to write generation log");
         }
     }
 
     pub async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Option<Layer>,
         status: Option<String>,
         range_ms: Option<(i64, i64)>,
@@ -118,7 +118,7 @@ impl GenerationLogService {
             before,
         };
         let limit = limit.clamp(1, 100);
-        let items = self.repo.list(instance, &filter, limit).await?;
+        let items = self.repo.list(department, &filter, limit).await?;
         let next_cursor = (items.len() == limit)
             .then(|| {
                 items
@@ -132,28 +132,32 @@ impl GenerationLogService {
     /// Generations started in the last `hours`, per layer and status.
     pub async fn summary(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         hours: i64,
     ) -> DomainResult<(i64, Vec<GenerationCount>)> {
         let from_ms = (self.clock.now() - Duration::hours(hours)).timestamp_millis();
-        Ok((from_ms, self.repo.summarize(instance, from_ms).await?))
+        Ok((from_ms, self.repo.summarize(department, from_ms).await?))
     }
 
-    pub async fn get(&self, instance: &InstanceId, log_id: &str) -> DomainResult<GenerationLog> {
+    pub async fn get(
+        &self,
+        department: &DepartmentId,
+        log_id: &str,
+    ) -> DomainResult<GenerationLog> {
         self.repo
-            .get(instance, log_id)
+            .get(department, log_id)
             .await?
             .ok_or_else(log_not_found)
     }
 
     pub async fn find_by_memory(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Layer,
         memory_id: &str,
     ) -> DomainResult<GenerationLog> {
         self.repo
-            .find_by_output(instance, layer, memory_id)
+            .find_by_output(department, layer, memory_id)
             .await?
             .ok_or_else(log_not_found)
     }

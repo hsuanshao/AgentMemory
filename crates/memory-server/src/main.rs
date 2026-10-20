@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
     }
 
     match std::env::args().nth(1).as_deref() {
+        Some("migrate") => return memory_server::migrate::run(std::env::args().skip(2)).await,
         Some("migrate-storage") => {
             return memory_server::migrate_storage::run(std::env::args().skip(2)).await
         }

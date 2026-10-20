@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage};
 use memory_domain::profile::{ProfileFile, ProfileScope};
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::Serialize;
 
 use crate::common::{Page, Scored, TimeRange};
@@ -30,7 +30,7 @@ pub struct Sequenced<T> {
     pub item: T,
 }
 
-/// Which slice of an instance an operation addresses. L0/L1 rows carry the
+/// Which slice of a department an operation addresses. L0/L1 rows carry the
 /// full scope; L2 consumes every user's atoms of a team + agent.
 #[derive(Debug, Clone)]
 pub enum AtomSelector<'a> {
@@ -43,19 +43,19 @@ pub enum AtomSelector<'a> {
 pub trait ConversationRepository: Send + Sync {
     async fn append(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         messages: &[ConversationMessage],
     ) -> DomainResult<()>;
     async fn query(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         filter: &ConversationFilter,
         page: Page,
     ) -> DomainResult<(Vec<ConversationMessage>, usize)>;
     async fn search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &ConversationFilter,
@@ -63,33 +63,33 @@ pub trait ConversationRepository: Send + Sync {
     ) -> DomainResult<Vec<Scored<ConversationMessage>>>;
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: Option<&MemoryScope>,
         filter: &ConversationFilter,
     ) -> DomainResult<usize>;
     async fn delete_by_ids(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
     ) -> DomainResult<usize>;
     async fn delete_by_sessions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         sessions: &[String],
     ) -> DomainResult<usize>;
     /// Deletes every message of a team + agent (chat-memory clear).
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize>;
     /// Messages of one session stored after sequence `after` (exclusive),
     /// in storage order. Drives L1 extraction.
     async fn after_seq(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         after: Option<i64>,
@@ -102,14 +102,14 @@ pub trait ConversationRepository: Send + Sync {
 pub trait AtomRepository: Send + Sync {
     async fn upsert(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         atom: &AtomicMemory,
         embedding: Option<&[f32]>,
     ) -> DomainResult<()>;
-    async fn get(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<AtomicMemory>>;
+    async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AtomicMemory>>;
     async fn query(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         selector: AtomSelector<'_>,
         filter: &AtomFilter,
         page: Page,
@@ -118,14 +118,14 @@ pub trait AtomRepository: Send + Sync {
     /// in write order. Drives L2 consolidation.
     async fn after_seq(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         after: Option<i64>,
         limit: usize,
     ) -> DomainResult<Vec<Sequenced<AtomicMemory>>>;
     async fn keyword_search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &AtomFilter,
@@ -133,7 +133,7 @@ pub trait AtomRepository: Send + Sync {
     ) -> DomainResult<Vec<Scored<AtomicMemory>>>;
     async fn vector_search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         embedding: &[f32],
         filter: &AtomFilter,
@@ -141,19 +141,19 @@ pub trait AtomRepository: Send + Sync {
     ) -> DomainResult<Vec<Scored<AtomicMemory>>>;
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: Option<&MemoryScope>,
         filter: &AtomFilter,
     ) -> DomainResult<usize>;
     async fn delete(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
     ) -> DomainResult<usize>;
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize>;
 }
@@ -164,13 +164,13 @@ pub trait ProfileFileRepository: Send + Sync {
     /// Head versions of files whose path starts with `prefix`.
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
     ) -> DomainResult<Vec<ProfileFile>>;
     async fn read(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         version: Option<u32>,
@@ -178,7 +178,7 @@ pub trait ProfileFileRepository: Send + Sync {
     /// Writes a new head version; identical content keeps the version.
     async fn write(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         content: &str,
@@ -186,13 +186,13 @@ pub trait ProfileFileRepository: Send + Sync {
     /// Removes `path`, or every file below it when it ends with `/`.
     async fn remove(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
     ) -> DomainResult<usize>;
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: Option<&ProfileScope>,
         prefix: &str,
     ) -> DomainResult<usize>;
@@ -217,7 +217,7 @@ pub trait ScopeMigrationStore: Send + Sync {
     /// back and only the counts are reported.
     async fn reassign_default(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         from: &MemoryScope,
         to: &MemoryScope,
         dry_run: bool,
@@ -227,6 +227,6 @@ pub trait ScopeMigrationStore: Send + Sync {
 /// Raw session-turn objects written by `/v3/session/add`.
 #[async_trait]
 pub trait SessionObjectStore: Send + Sync {
-    /// Stores `bytes` under `key` (relative to the instance root).
-    async fn put(&self, instance: &InstanceId, key: &str, bytes: &[u8]) -> DomainResult<()>;
+    /// Stores `bytes` under `key` (relative to the department root).
+    async fn put(&self, department: &DepartmentId, key: &str, bytes: &[u8]) -> DomainResult<()>;
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use memory_domain::skill::{
     apply_patch, guess_mime, parse_frontmatter, render_listing, validate_resource_path,
     ListingLine, ResourceEntry, SkillStatus, SkillVersion, DEFAULT_LISTING_BUDGET,
@@ -301,10 +301,10 @@ impl SkillService {
         self.clock.now().timestamp_millis()
     }
 
-    async fn new_skill_id(&self, instance: &InstanceId) -> DomainResult<String> {
+    async fn new_skill_id(&self, department: &DepartmentId) -> DomainResult<String> {
         for _ in 0..3 {
             let id = format!("skl-{}", self.ids.hex(12));
-            if !self.repo.skill_id_exists(instance, &id).await? {
+            if !self.repo.skill_id_exists(department, &id).await? {
                 return Ok(id);
             }
         }
@@ -317,7 +317,7 @@ impl SkillService {
 
     pub async fn create(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         name: &str,
         content: &str,
@@ -335,7 +335,7 @@ impl SkillService {
         }
         if self
             .repo
-            .find_head_by_name(instance, team, agent, name)
+            .find_head_by_name(department, team, agent, name)
             .await?
             .is_some()
         {
@@ -346,10 +346,10 @@ impl SkillService {
             ));
         }
         let resources = decode_resources(resources)?;
-        let skill_id = self.new_skill_id(instance).await?;
+        let skill_id = self.new_skill_id(department).await?;
         let now = self.now_ms();
         let mut manifest = Vec::new();
-        self.write_resources(instance, &skill_id, 1, &resources, &mut manifest)
+        self.write_resources(department, &skill_id, 1, &resources, &mut manifest)
             .await?;
         let version = SkillVersion {
             skill_id: skill_id.clone(),
@@ -369,17 +369,17 @@ impl SkillService {
             created_at_ms: now,
             updated_at_ms: now,
         };
-        if let Err(err) = self.repo.append_version(instance, &version).await {
-            let _ = self.resources.delete_skill(instance, &skill_id).await;
+        if let Err(err) = self.repo.append_version(department, &version).await {
+            let _ = self.resources.delete_skill(department, &skill_id).await;
             return Err(err);
         }
         if let Err(err) = self
             .meta
-            .ensure_skill_asset(instance, &skill_id, &version.name, team, agent, user)
+            .ensure_skill_asset(department, &skill_id, &version.name, team, agent, user)
             .await
         {
-            self.repo.delete_skill(instance, &skill_id).await?;
-            self.resources.delete_skill(instance, &skill_id).await?;
+            self.repo.delete_skill(department, &skill_id).await?;
+            self.resources.delete_skill(department, &skill_id).await?;
             return Err(err);
         }
         Ok(SkillSummary::from(&version))
@@ -389,13 +389,13 @@ impl SkillService {
     /// and optimistic-lock rules for writes.
     async fn head_for_write(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         expected: u32,
     ) -> DomainResult<SkillVersion> {
         let (_, agent, _) = who.require_writer()?;
-        let head = self.visible_head(instance, who, skill_id).await?;
+        let head = self.visible_head(department, who, skill_id).await?;
         if head.owner_agent_id != agent {
             return Err(skill_error(
                 ErrorKind::PermissionDenied,
@@ -415,13 +415,13 @@ impl SkillService {
 
     async fn visible_head(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
     ) -> DomainResult<SkillVersion> {
         let head = self
             .repo
-            .head(instance, skill_id)
+            .head(department, skill_id)
             .await?
             .ok_or_else(|| not_found(skill_id))?;
         // Team members read team skills; without a team only the owner
@@ -440,7 +440,7 @@ impl SkillService {
     /// removals then writes, and moves the head.
     async fn append_next(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         head: SkillVersion,
         content: Option<String>,
@@ -465,7 +465,7 @@ impl SkillService {
         }
         let next_version = head.version + 1;
         self.resources
-            .copy_version(instance, &head.skill_id, head.version, next_version)
+            .copy_version(department, &head.skill_id, head.version, next_version)
             .await?;
         let mut manifest: Vec<ResourceEntry> = head
             .manifest
@@ -475,11 +475,11 @@ impl SkillService {
             .collect();
         for path in &removes {
             self.resources
-                .remove(instance, &head.skill_id, next_version, path)
+                .remove(department, &head.skill_id, next_version, path)
                 .await?;
         }
         self.write_resources(
-            instance,
+            department,
             &head.skill_id,
             next_version,
             &writes,
@@ -498,14 +498,14 @@ impl SkillService {
             created_at_ms: self.now_ms(),
             ..head
         };
-        self.repo.append_version(instance, &next).await?;
-        self.cleanup_versions(instance, &next.skill_id).await;
+        self.repo.append_version(department, &next).await?;
+        self.cleanup_versions(department, &next.skill_id).await;
         Ok(SkillSummary::from(&next))
     }
 
     async fn write_resources(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         version: u32,
         resources: &[Resource],
@@ -513,7 +513,7 @@ impl SkillService {
     ) -> DomainResult<()> {
         for r in resources {
             self.resources
-                .write(instance, skill_id, version, &r.path, &r.bytes)
+                .write(department, skill_id, version, &r.path, &r.bytes)
                 .await?;
             manifest.retain(|m| m.path != r.path);
             manifest.push(ResourceEntry {
@@ -536,11 +536,11 @@ impl SkillService {
 
     /// Keeps at most `max_versions` non-head versions and drops expired
     /// ones beyond the newest three. Best-effort.
-    async fn cleanup_versions(&self, instance: &InstanceId, skill_id: &str) {
+    async fn cleanup_versions(&self, department: &DepartmentId, skill_id: &str) {
         let result: DomainResult<()> = async {
             let (versions, _) = self
                 .repo
-                .list_versions(instance, skill_id, 10_000, 0)
+                .list_versions(department, skill_id, 10_000, 0)
                 .await?;
             let now = self.now_ms();
             let ttl = self.settings.version_ttl_days * 86_400;
@@ -555,10 +555,12 @@ impl SkillService {
                 .collect();
             if !doomed.is_empty() {
                 self.repo
-                    .delete_versions(instance, skill_id, &doomed)
+                    .delete_versions(department, skill_id, &doomed)
                     .await?;
                 for v in doomed {
-                    self.resources.delete_version(instance, skill_id, v).await?;
+                    self.resources
+                        .delete_version(department, skill_id, v)
+                        .await?;
                 }
             }
             Ok(())
@@ -571,17 +573,17 @@ impl SkillService {
 
     pub async fn update(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         expected: u32,
         content: &str,
     ) -> DomainResult<SkillSummary> {
         let head = self
-            .head_for_write(instance, who, skill_id, expected)
+            .head_for_write(department, who, skill_id, expected)
             .await?;
         self.append_next(
-            instance,
+            department,
             who,
             head,
             Some(content.to_owned()),
@@ -593,23 +595,23 @@ impl SkillService {
 
     pub async fn patch(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         expected: u32,
         patch: &StringPatch,
     ) -> DomainResult<SkillSummary> {
         let head = self
-            .head_for_write(instance, who, skill_id, expected)
+            .head_for_write(department, who, skill_id, expected)
             .await?;
         let content = apply_patch(&head.content, &patch.old, &patch.new, patch.replace_all)?;
-        self.append_next(instance, who, head, Some(content), Vec::new(), Vec::new())
+        self.append_next(department, who, head, Some(content), Vec::new(), Vec::new())
             .await
     }
 
     pub async fn write_files(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         expected: u32,
@@ -619,16 +621,16 @@ impl SkillService {
             return Err(DomainError::invalid("files must not be empty"));
         }
         let head = self
-            .head_for_write(instance, who, skill_id, expected)
+            .head_for_write(department, who, skill_id, expected)
             .await?;
         let writes = decode_resources(files)?;
-        self.append_next(instance, who, head, None, writes, Vec::new())
+        self.append_next(department, who, head, None, writes, Vec::new())
             .await
     }
 
     pub async fn remove_files(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         expected: u32,
@@ -638,26 +640,26 @@ impl SkillService {
             return Err(DomainError::invalid("paths must contain 1-100 items"));
         }
         let head = self
-            .head_for_write(instance, who, skill_id, expected)
+            .head_for_write(department, who, skill_id, expected)
             .await?;
-        self.append_next(instance, who, head, None, Vec::new(), paths)
+        self.append_next(department, who, head, None, Vec::new(), paths)
             .await
     }
 
     pub async fn delete(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         expected: u32,
     ) -> DomainResult<Value> {
-        self.head_for_write(instance, who, skill_id, expected)
+        self.head_for_write(department, who, skill_id, expected)
             .await?;
-        let deleted = self.repo.delete_skill(instance, skill_id).await?;
-        self.resources.delete_skill(instance, skill_id).await?;
+        let deleted = self.repo.delete_skill(department, skill_id).await?;
+        self.resources.delete_skill(department, skill_id).await?;
         if let Err(err) = self
             .meta
-            .remove_assets(instance, &[skill_id.to_owned()])
+            .remove_assets(department, &[skill_id.to_owned()])
             .await
         {
             warn!(error = %err, skill_id, "failed to remove skill asset");
@@ -667,7 +669,7 @@ impl SkillService {
 
     async fn resolve_version(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         head: SkillVersion,
         version: Option<u32>,
     ) -> DomainResult<SkillVersion> {
@@ -676,7 +678,7 @@ impl SkillService {
         };
         let found = self
             .repo
-            .version(instance, &head.skill_id, v)
+            .version(department, &head.skill_id, v)
             .await?
             .ok_or_else(|| not_found(&head.skill_id))?;
         if found.is_expired(self.now_ms(), self.settings.version_ttl_days * 86_400) {
@@ -700,19 +702,19 @@ impl SkillService {
 
     pub async fn get(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         read: ReadOptions,
     ) -> DomainResult<SkillDetail> {
-        let head = self.visible_head(instance, who, skill_id).await?;
-        let v = self.resolve_version(instance, head, read.version).await?;
+        let head = self.visible_head(department, who, skill_id).await?;
+        let v = self.resolve_version(department, head, read.version).await?;
         Ok(Self::detail(v, read))
     }
 
     pub async fn get_by_name(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         agent_id: &str,
         name: &str,
@@ -720,10 +722,10 @@ impl SkillService {
     ) -> DomainResult<SkillDetail> {
         let head = self
             .repo
-            .find_head_by_name(instance, team_id, agent_id, name)
+            .find_head_by_name(department, team_id, agent_id, name)
             .await?
             .ok_or_else(|| not_found(name))?;
-        let v = self.resolve_version(instance, head, read.version).await?;
+        let v = self.resolve_version(department, head, read.version).await?;
         Ok(Self::detail(v, read))
     }
 
@@ -752,7 +754,7 @@ impl SkillService {
 
     pub async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         query: ListQuery,
     ) -> DomainResult<(Vec<SkillSummary>, usize)> {
@@ -760,7 +762,7 @@ impl SkillService {
         let (heads, total) = self
             .repo
             .list_heads(
-                instance,
+                department,
                 &filter,
                 query.limit.unwrap_or(50).clamp(1, 1000),
                 query.offset.unwrap_or(0),
@@ -773,7 +775,7 @@ impl SkillService {
     /// instead of the caller agent's skills.
     pub async fn search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         query: &str,
         top_k: Option<usize>,
@@ -790,7 +792,7 @@ impl SkillService {
         let filter = Self::filter_for(who, owner, None, Vec::new());
         let hits = self
             .repo
-            .search_heads(instance, &filter, query, top_k.unwrap_or(10).clamp(1, 50))
+            .search_heads(department, &filter, query, top_k.unwrap_or(10).clamp(1, 50))
             .await?;
         Ok(hits
             .into_iter()
@@ -804,17 +806,17 @@ impl SkillService {
 
     pub async fn versions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         limit: Option<usize>,
         offset: Option<usize>,
     ) -> DomainResult<(Vec<VersionItem>, usize)> {
-        self.visible_head(instance, who, skill_id).await?;
+        self.visible_head(department, who, skill_id).await?;
         let (versions, total) = self
             .repo
             .list_versions(
-                instance,
+                department,
                 skill_id,
                 limit.unwrap_or(50).clamp(1, 1000),
                 offset.unwrap_or(0),
@@ -836,7 +838,7 @@ impl SkillService {
 
     pub async fn read_file(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         skill_id: &str,
         path: &str,
@@ -844,8 +846,8 @@ impl SkillService {
         encoding: Option<&str>,
     ) -> DomainResult<FileContent> {
         validate_resource_path(path)?;
-        let head = self.visible_head(instance, who, skill_id).await?;
-        let v = self.resolve_version(instance, head, version).await?;
+        let head = self.visible_head(department, who, skill_id).await?;
+        let v = self.resolve_version(department, head, version).await?;
         let entry = v
             .manifest
             .iter()
@@ -853,7 +855,7 @@ impl SkillService {
             .ok_or_else(|| not_found(path))?;
         let bytes = self
             .resources
-            .read(instance, skill_id, v.version, path)
+            .read(department, skill_id, v.version, path)
             .await?
             .ok_or_else(|| {
                 skill_error(
@@ -881,33 +883,34 @@ impl SkillService {
     /// than `top_k` skills, otherwise the best matches for `query`.
     pub async fn listing(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         query: Option<&str>,
         char_budget: Option<usize>,
     ) -> DomainResult<Listing> {
         let budget = char_budget.unwrap_or(DEFAULT_LISTING_BUDGET).min(64_000);
         let top_k = self.settings.listing_top_k;
-        let (mode, skills): (&'static str, Vec<SkillVersion>) =
-            match query.filter(|q| !q.trim().is_empty()) {
-                Some(q) => {
-                    let filter = Self::filter_for(who, who.agent_id.clone(), None, Vec::new());
-                    (
-                        "search",
-                        self.repo
-                            .search_heads(instance, &filter, q, top_k)
-                            .await?
-                            .into_iter()
-                            .map(|(v, _, _)| v)
-                            .collect(),
-                    )
-                }
-                None => {
-                    let filter = Self::filter_for(who, who.agent_id.clone(), None, Vec::new());
-                    let (heads, total) = self.repo.list_heads(instance, &filter, top_k, 0).await?;
-                    (if total < top_k { "full" } else { "search" }, heads)
-                }
-            };
+        let (mode, skills): (&'static str, Vec<SkillVersion>) = match query
+            .filter(|q| !q.trim().is_empty())
+        {
+            Some(q) => {
+                let filter = Self::filter_for(who, who.agent_id.clone(), None, Vec::new());
+                (
+                    "search",
+                    self.repo
+                        .search_heads(department, &filter, q, top_k)
+                        .await?
+                        .into_iter()
+                        .map(|(v, _, _)| v)
+                        .collect(),
+                )
+            }
+            None => {
+                let filter = Self::filter_for(who, who.agent_id.clone(), None, Vec::new());
+                let (heads, total) = self.repo.list_heads(department, &filter, top_k, 0).await?;
+                (if total < top_k { "full" } else { "search" }, heads)
+            }
+        };
         let lines: Vec<ListingLine<'_>> = skills
             .iter()
             .map(|s| ListingLine {

@@ -3,7 +3,7 @@
 
 use rusqlite::Connection;
 
-const INSTANCE_SCHEMA: &str = r#"
+const DEPARTMENT_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS conversations (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -128,8 +128,8 @@ CREATE TABLE IF NOT EXISTS meta_config_params (
     PRIMARY KEY (scope, user_id, module, param_name)
 );
 INSERT OR IGNORE INTO meta_config_params VALUES
-    ('global', '', 'quota', 'max_users_per_instance', '500'),
-    ('global', '', 'quota', 'max_teams_per_instance', '100'),
+    ('global', '', 'quota', 'max_users_per_department', '500'),
+    ('global', '', 'quota', 'max_teams_per_department', '100'),
     ('global', '', 'asset_type', 'skill.enabled', '1'),
     ('global', '', 'asset_type', 'llm_wiki.enabled', '1'),
     ('global', '', 'asset_type', 'code_graph.enabled', '1'),
@@ -138,22 +138,146 @@ INSERT OR IGNORE INTO meta_config_params VALUES
 
 const SYSTEM_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS session_states (
-    instance TEXT NOT NULL, scope_key TEXT NOT NULL, session_id TEXT NOT NULL,
+    department TEXT NOT NULL, scope_key TEXT NOT NULL, session_id TEXT NOT NULL,
     l1_due_ms INTEGER, last_active_ms INTEGER NOT NULL, doc TEXT NOT NULL,
-    PRIMARY KEY (instance, scope_key, session_id)
+    PRIMARY KEY (department, scope_key, session_id)
 );
 CREATE INDEX IF NOT EXISTS ix_session_due ON session_states(l1_due_ms) WHERE l1_due_ms IS NOT NULL;
 CREATE TABLE IF NOT EXISTS profile_states (
-    instance TEXT NOT NULL, profile_key TEXT NOT NULL, l2_due_ms INTEGER, updated_ms INTEGER NOT NULL, doc TEXT NOT NULL,
-    PRIMARY KEY (instance, profile_key)
+    department TEXT NOT NULL, profile_key TEXT NOT NULL, l2_due_ms INTEGER, updated_ms INTEGER NOT NULL, doc TEXT NOT NULL,
+    PRIMARY KEY (department, profile_key)
 );
 CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_due_ms IS NOT NULL;
 "#;
 
-pub fn migrate_instance(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(INSTANCE_SCHEMA)
+/// Schema version of both database kinds, kept in `PRAGMA user_version`.
+/// Each step below upgrades from the version before it; the DDL above
+/// always describes the latest version.
+///
+/// 1. 0.3.0: "instance" became "department" (column, prompt target and
+///    quota names).
+pub const SCHEMA_VERSION: i64 = 1;
+
+fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT count(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+}
+
+pub fn migrate_department(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(DEPARTMENT_SCHEMA)?;
+    if user_version(conn)? < 1 {
+        conn.execute_batch(
+            "BEGIN;
+             UPDATE prompt_settings SET target_type = 'department' WHERE target_type = 'instance';
+             UPDATE prompt_logs SET target_type = 'department' WHERE target_type = 'instance';
+             UPDATE OR REPLACE meta_config_params SET param_name = replace(param_name, '_per_instance', '_per_department')
+             WHERE module = 'quota' AND param_name IN ('max_users_per_instance', 'max_teams_per_instance');
+             COMMIT;",
+        )?;
+    }
+    conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
 }
 
 pub fn migrate_system(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(SYSTEM_SCHEMA)
+    // Before the DDL: its indexes name the new column.
+    if user_version(conn)? < 1 {
+        let tx = conn.unchecked_transaction()?;
+        for table in ["session_states", "profile_states"] {
+            if has_column(&tx, table, "instance")? {
+                tx.execute_batch(&format!(
+                    "ALTER TABLE {table} RENAME COLUMN instance TO department;
+                     UPDATE {table} SET doc = json_set(json_remove(doc, '$.instance'), '$.department', json_extract(doc, '$.instance'))
+                     WHERE json_type(doc, '$.instance') IS NOT NULL;"
+                ))?;
+            }
+        }
+        tx.commit()?;
+    }
+    conn.execute_batch(SYSTEM_SCHEMA)?;
+    conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_db_from_before_departments_is_renamed() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE session_states (
+                instance TEXT NOT NULL, scope_key TEXT NOT NULL, session_id TEXT NOT NULL,
+                l1_due_ms INTEGER, last_active_ms INTEGER NOT NULL, doc TEXT NOT NULL,
+                PRIMARY KEY (instance, scope_key, session_id));
+            CREATE TABLE profile_states (
+                instance TEXT NOT NULL, profile_key TEXT NOT NULL, l2_due_ms INTEGER, updated_ms INTEGER NOT NULL, doc TEXT NOT NULL,
+                PRIMARY KEY (instance, profile_key));
+            INSERT INTO session_states VALUES ('default', 'k', 's', NULL, 1, '{"instance":"default","session_id":"s"}');
+            INSERT INTO profile_states VALUES ('default', 'p', NULL, 1, '{"instance":"default"}');"#,
+        )
+        .unwrap();
+
+        migrate_system(&conn).unwrap();
+        migrate_system(&conn).unwrap();
+
+        let (department, doc): (String, String) = conn
+            .query_row("SELECT department, doc FROM session_states", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(department, "default");
+        let doc: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        assert_eq!(
+            doc,
+            serde_json::json!({"department": "default", "session_id": "s"})
+        );
+        let doc: String = conn
+            .query_row("SELECT doc FROM profile_states", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(doc, r#"{"department":"default"}"#);
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn department_db_names_are_renamed() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(DEPARTMENT_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO prompt_settings VALUES ('instance', '', '', 'l1', 'p-1', 1);
+             INSERT INTO meta_config_params VALUES ('global', '', 'quota', 'max_users_per_instance', '20');",
+        )
+        .unwrap();
+
+        migrate_department(&conn).unwrap();
+
+        let target: String = conn
+            .query_row("SELECT target_type FROM prompt_settings", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(target, "department");
+        let users: String = conn
+            .query_row(
+                "SELECT param_value FROM meta_config_params WHERE param_name = 'max_users_per_department'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(users, "20", "the operator's value replaces the default");
+        let old: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM meta_config_params WHERE param_name LIKE '%instance'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old, 0);
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
 }

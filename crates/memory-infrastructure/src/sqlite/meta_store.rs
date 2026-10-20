@@ -16,29 +16,29 @@ use memory_domain::meta::{
     chat_memory_asset_id, AclEntry, Agent, AgentBinding, Asset, ParticipationLog, Task, TaskAgent,
     Team, TeamMember, User, UserKey,
 };
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transaction};
 use serde::de::DeserializeOwned;
 
-use super::db::InstancePool;
+use super::db::DepartmentPool;
 use super::sql::{from_doc, to_doc, Where};
 
 pub struct SqliteMetaStore {
-    pool: Arc<InstancePool>,
+    pool: Arc<DepartmentPool>,
 }
 
 impl SqliteMetaStore {
-    pub fn new(pool: Arc<InstancePool>) -> Self {
+    pub fn new(pool: Arc<DepartmentPool>) -> Self {
         Self { pool }
     }
 
-    async fn with<T, F>(&self, instance: &InstanceId, f: F) -> DomainResult<T>
+    async fn with<T, F>(&self, department: &DepartmentId, f: F) -> DomainResult<T>
     where
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> rusqlite::Result<T> + Send + 'static,
     {
-        self.pool.get(instance)?.call(f).await
+        self.pool.get(department)?.call(f).await
     }
 }
 
@@ -159,12 +159,12 @@ fn insert_binding(conn: &Connection, b: &AgentBinding, replace: bool) -> rusqlit
 impl UserRepository for SqliteMetaStore {
     async fn create_user(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user: &User,
         default_key: &UserKey,
     ) -> DomainResult<()> {
         let (user, key) = (user.clone(), default_key.clone());
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
                 "INSERT INTO meta_users (user_id, username, user_type, status, created_at, doc) VALUES (?,?,?,?,?,?)",
@@ -176,9 +176,13 @@ impl UserRepository for SqliteMetaStore {
         .await
     }
 
-    async fn get_user(&self, instance: &InstanceId, user_id: &str) -> DomainResult<Option<User>> {
+    async fn get_user(
+        &self,
+        department: &DepartmentId,
+        user_id: &str,
+    ) -> DomainResult<Option<User>> {
         let id = user_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_users WHERE user_id = ?", [id])
         })
         .await
@@ -186,11 +190,11 @@ impl UserRepository for SqliteMetaStore {
 
     async fn find_user_by_name(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         username: &str,
     ) -> DomainResult<Option<User>> {
         let name = username.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_users WHERE username = ?", [name])
         })
         .await
@@ -198,7 +202,7 @@ impl UserRepository for SqliteMetaStore {
 
     async fn list_users(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &UserFilter,
         page: Page,
     ) -> DomainResult<(Vec<User>, usize)> {
@@ -214,14 +218,14 @@ impl UserRepository for SqliteMetaStore {
         }
         w.eq_opt("user_type", filter.user_type.map(|t| t.as_str().to_owned()));
         w.eq_opt("status", filter.status.map(|s| s.as_str().to_owned()));
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "meta_users", &w, "created_at, user_id", page)
         })
         .await
     }
 
-    async fn count_users(&self, instance: &InstanceId) -> DomainResult<usize> {
-        self.with(instance, |c| {
+    async fn count_users(&self, department: &DepartmentId) -> DomainResult<usize> {
+        self.with(department, |c| {
             c.query_row("SELECT COUNT(*) FROM meta_users", [], |r| r.get(0))
         })
         .await
@@ -229,11 +233,11 @@ impl UserRepository for SqliteMetaStore {
 
     async fn delete_users(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let ids = ids.to_vec();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             let result = batch_delete(&tx, &ids, |tx, id| {
                 tx.execute("DELETE FROM meta_user_keys WHERE user_id = ?", [id])?;
@@ -257,27 +261,31 @@ impl UserRepository for SqliteMetaStore {
 
 #[async_trait]
 impl UserKeyRepository for SqliteMetaStore {
-    async fn insert_key(&self, instance: &InstanceId, key: &UserKey) -> DomainResult<()> {
+    async fn insert_key(&self, department: &DepartmentId, key: &UserKey) -> DomainResult<()> {
         let key = key.clone();
-        self.with(instance, move |c| insert_key(c, &key).map(|_| ()))
+        self.with(department, move |c| insert_key(c, &key).map(|_| ()))
             .await
     }
 
     async fn find_key_by_value(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         value: &str,
     ) -> DomainResult<Option<UserKey>> {
         let v = value.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_user_keys WHERE key_value = ?", [v])
         })
         .await
     }
 
-    async fn get_key(&self, instance: &InstanceId, key_id: &str) -> DomainResult<Option<UserKey>> {
+    async fn get_key(
+        &self,
+        department: &DepartmentId,
+        key_id: &str,
+    ) -> DomainResult<Option<UserKey>> {
         let id = key_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_user_keys WHERE key_id = ?", [id])
         })
         .await
@@ -285,21 +293,21 @@ impl UserKeyRepository for SqliteMetaStore {
 
     async fn list_keys(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: &str,
         page: Page,
     ) -> DomainResult<(Vec<UserKey>, usize)> {
         let mut w = Where::default();
         w.eq("user_id", user_id.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "meta_user_keys", &w, "created_at, key_id", page)
         })
         .await
     }
 
-    async fn update_key(&self, instance: &InstanceId, key: &UserKey) -> DomainResult<()> {
+    async fn update_key(&self, department: &DepartmentId, key: &UserKey) -> DomainResult<()> {
         let key = key.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "UPDATE meta_user_keys SET doc = ? WHERE key_id = ?",
                 params![to_doc(&key)?, key.key_id],
@@ -309,9 +317,9 @@ impl UserKeyRepository for SqliteMetaStore {
         .await
     }
 
-    async fn delete_key(&self, instance: &InstanceId, key_id: &str) -> DomainResult<()> {
+    async fn delete_key(&self, department: &DepartmentId, key_id: &str) -> DomainResult<()> {
         let id = key_id.to_owned();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             let removed: Option<UserKey> = one(
                 &tx,
@@ -338,9 +346,14 @@ impl UserKeyRepository for SqliteMetaStore {
         .await
     }
 
-    async fn touch_key(&self, instance: &InstanceId, key_id: &str, at: &str) -> DomainResult<()> {
+    async fn touch_key(
+        &self,
+        department: &DepartmentId,
+        key_id: &str,
+        at: &str,
+    ) -> DomainResult<()> {
         let (id, at) = (key_id.to_owned(), at.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute("UPDATE meta_user_keys SET doc = json_set(doc, '$.last_used_at', ?) WHERE key_id = ?", params![at, id]).map(|_| ())
         })
         .await
@@ -351,12 +364,12 @@ impl UserKeyRepository for SqliteMetaStore {
 impl TeamRepository for SqliteMetaStore {
     async fn create_team(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team: &Team,
         owner: &TeamMember,
     ) -> DomainResult<()> {
         let (team, owner) = (team.clone(), owner.clone());
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
                 "INSERT INTO meta_teams (team_id, name, created_at, doc) VALUES (?,?,?,?)",
@@ -368,17 +381,21 @@ impl TeamRepository for SqliteMetaStore {
         .await
     }
 
-    async fn get_team(&self, instance: &InstanceId, team_id: &str) -> DomainResult<Option<Team>> {
+    async fn get_team(
+        &self,
+        department: &DepartmentId,
+        team_id: &str,
+    ) -> DomainResult<Option<Team>> {
         let id = team_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_teams WHERE team_id = ?", [id])
         })
         .await
     }
 
-    async fn update_team(&self, instance: &InstanceId, team: &Team) -> DomainResult<()> {
+    async fn update_team(&self, department: &DepartmentId, team: &Team) -> DomainResult<()> {
         let team = team.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "UPDATE meta_teams SET name = ?, doc = ? WHERE team_id = ?",
                 params![team.name, to_doc(&team)?, team.team_id],
@@ -390,7 +407,7 @@ impl TeamRepository for SqliteMetaStore {
 
     async fn list_teams_of_user(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: Option<&str>,
         name: Option<&str>,
         page: Page,
@@ -402,14 +419,14 @@ impl TeamRepository for SqliteMetaStore {
         if let Some(n) = name {
             w.raw("name LIKE ?", [Value::from(format!("%{n}%"))]);
         }
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "meta_teams", &w, "created_at, team_id", page)
         })
         .await
     }
 
-    async fn count_teams(&self, instance: &InstanceId) -> DomainResult<usize> {
-        self.with(instance, |c| {
+    async fn count_teams(&self, department: &DepartmentId) -> DomainResult<usize> {
+        self.with(department, |c| {
             c.query_row("SELECT COUNT(*) FROM meta_teams", [], |r| r.get(0))
         })
         .await
@@ -417,11 +434,11 @@ impl TeamRepository for SqliteMetaStore {
 
     async fn delete_teams(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let ids = ids.to_vec();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             let result = batch_delete(&tx, &ids, |tx, id| {
                 let assets: Vec<String> = {
@@ -448,20 +465,24 @@ impl TeamRepository for SqliteMetaStore {
 
 #[async_trait]
 impl MemberRepository for SqliteMetaStore {
-    async fn upsert_member(&self, instance: &InstanceId, member: &TeamMember) -> DomainResult<()> {
+    async fn upsert_member(
+        &self,
+        department: &DepartmentId,
+        member: &TeamMember,
+    ) -> DomainResult<()> {
         let m = member.clone();
-        self.with(instance, move |c| insert_member(c, &m).map(|_| ()))
+        self.with(department, move |c| insert_member(c, &m).map(|_| ()))
             .await
     }
 
     async fn get_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         user_id: &str,
     ) -> DomainResult<Option<TeamMember>> {
         let (t, u) = (team_id.to_owned(), user_id.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(
                 c,
                 "SELECT doc FROM meta_team_members WHERE team_id = ? AND user_id = ?",
@@ -473,14 +494,14 @@ impl MemberRepository for SqliteMetaStore {
 
     async fn list_members(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         page: Page,
     ) -> DomainResult<(Vec<TeamMember>, usize)> {
         let mut w = Where::default();
         w.eq("team_id", team_id.to_owned())
             .eq("status", "active".to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "meta_team_members", &w, "joined_at, user_id", page)
         })
         .await
@@ -488,11 +509,11 @@ impl MemberRepository for SqliteMetaStore {
 
     async fn list_memberships(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: &str,
     ) -> DomainResult<Vec<TeamMember>> {
         let u = user_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             many(
                 c,
                 "SELECT doc FROM meta_team_members WHERE user_id = ?",
@@ -504,12 +525,12 @@ impl MemberRepository for SqliteMetaStore {
 
     async fn remove_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         user_id: &str,
     ) -> DomainResult<bool> {
         let (t, u) = (team_id.to_owned(), user_id.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "DELETE FROM meta_team_members WHERE team_id = ? AND user_id = ?",
                 [t, u],
@@ -522,9 +543,9 @@ impl MemberRepository for SqliteMetaStore {
 
 #[async_trait]
 impl AgentRepository for SqliteMetaStore {
-    async fn insert_agent(&self, instance: &InstanceId, agent: &Agent) -> DomainResult<()> {
+    async fn insert_agent(&self, department: &DepartmentId, agent: &Agent) -> DomainResult<()> {
         let a = agent.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "INSERT INTO meta_agents (agent_id, team_id, owner_user_id, status, name, created_at, doc) VALUES (?,?,?,?,?,?,?)",
                 params![a.agent_id, a.team_id, a.owner_user_id, a.status.as_str(), a.name, a.created_at, to_doc(&a)?],
@@ -536,19 +557,19 @@ impl AgentRepository for SqliteMetaStore {
 
     async fn get_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_id: &str,
     ) -> DomainResult<Option<Agent>> {
         let id = agent_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_agents WHERE agent_id = ?", [id])
         })
         .await
     }
 
-    async fn update_agent(&self, instance: &InstanceId, agent: &Agent) -> DomainResult<()> {
+    async fn update_agent(&self, department: &DepartmentId, agent: &Agent) -> DomainResult<()> {
         let a = agent.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "UPDATE meta_agents SET status = ?, name = ?, doc = ? WHERE agent_id = ?",
                 params![a.status.as_str(), a.name, to_doc(&a)?, a.agent_id],
@@ -560,7 +581,7 @@ impl AgentRepository for SqliteMetaStore {
 
     async fn list_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &AgentFilter,
         page: Page,
     ) -> DomainResult<(Vec<Agent>, usize)> {
@@ -571,7 +592,7 @@ impl AgentRepository for SqliteMetaStore {
         if let Some(n) = &filter.name {
             w.raw("name LIKE ?", [Value::from(format!("%{n}%"))]);
         }
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "meta_agents", &w, "created_at, agent_id", page)
         })
         .await
@@ -579,11 +600,11 @@ impl AgentRepository for SqliteMetaStore {
 
     async fn delete_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let ids = ids.to_vec();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             let result = batch_delete(&tx, &ids, |tx, id| {
                 let team: Option<String> = tx
@@ -611,12 +632,12 @@ impl AgentRepository for SqliteMetaStore {
 impl TaskRepository for SqliteMetaStore {
     async fn insert_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task: &Task,
         links: &[TaskAgent],
     ) -> DomainResult<()> {
         let (t, links) = (task.clone(), links.to_vec());
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
                 "INSERT INTO meta_tasks (task_id, team_id, creator_user_id, status, created_at, doc) VALUES (?,?,?,?,?,?)",
@@ -630,17 +651,21 @@ impl TaskRepository for SqliteMetaStore {
         .await
     }
 
-    async fn get_task(&self, instance: &InstanceId, task_id: &str) -> DomainResult<Option<Task>> {
+    async fn get_task(
+        &self,
+        department: &DepartmentId,
+        task_id: &str,
+    ) -> DomainResult<Option<Task>> {
         let id = task_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_tasks WHERE task_id = ?", [id])
         })
         .await
     }
 
-    async fn update_task(&self, instance: &InstanceId, task: &Task) -> DomainResult<()> {
+    async fn update_task(&self, department: &DepartmentId, task: &Task) -> DomainResult<()> {
         let t = task.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "UPDATE meta_tasks SET status = ?, doc = ? WHERE task_id = ?",
                 params![t.status.as_str(), to_doc(&t)?, t.task_id],
@@ -652,7 +677,7 @@ impl TaskRepository for SqliteMetaStore {
 
     async fn list_tasks(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &TaskFilter,
         page: Page,
     ) -> DomainResult<(Vec<Task>, usize)> {
@@ -660,7 +685,7 @@ impl TaskRepository for SqliteMetaStore {
         w.eq_opt("team_id", filter.team_id.clone())
             .eq_opt("creator_user_id", filter.creator_user_id.clone())
             .eq_opt("status", filter.status.map(|s| s.as_str().to_owned()));
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "meta_tasks", &w, "created_at DESC, task_id", page)
         })
         .await
@@ -668,11 +693,11 @@ impl TaskRepository for SqliteMetaStore {
 
     async fn delete_tasks(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let ids = ids.to_vec();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             let result = batch_delete(&tx, &ids, |tx, id| {
                 tx.execute("DELETE FROM meta_task_agents WHERE task_id = ?", [id])?;
@@ -684,20 +709,20 @@ impl TaskRepository for SqliteMetaStore {
         .await
     }
 
-    async fn link_agent(&self, instance: &InstanceId, link: &TaskAgent) -> DomainResult<()> {
+    async fn link_agent(&self, department: &DepartmentId, link: &TaskAgent) -> DomainResult<()> {
         let l = link.clone();
-        self.with(instance, move |c| insert_link(c, &l).map(|_| ()))
+        self.with(department, move |c| insert_link(c, &l).map(|_| ()))
             .await
     }
 
     async fn unlink_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task_id: &str,
         agent_id: &str,
     ) -> DomainResult<bool> {
         let (t, a) = (task_id.to_owned(), agent_id.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "DELETE FROM meta_task_agents WHERE task_id = ? AND agent_id = ?",
                 [t, a],
@@ -709,13 +734,13 @@ impl TaskRepository for SqliteMetaStore {
 
     async fn list_task_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task_id: &str,
         page: Page,
     ) -> DomainResult<(Vec<TaskAgent>, usize)> {
         let mut w = Where::default();
         w.eq("task_id", task_id.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "meta_task_agents", &w, "created_at, agent_id", page)
         })
         .await
@@ -723,11 +748,11 @@ impl TaskRepository for SqliteMetaStore {
 
     async fn append_participation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         log: &ParticipationLog,
     ) -> DomainResult<()> {
         let l = log.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "INSERT INTO meta_participation_logs (id, team_id, task_id, agent_id, user_id, created_at, doc) VALUES (?,?,?,?,?,?,?)",
                 params![l.id, l.team_id, l.task_id, l.agent_id, l.user_id, l.created_at, to_doc(&l)?],
@@ -739,7 +764,7 @@ impl TaskRepository for SqliteMetaStore {
 
     async fn list_participation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &ParticipationFilter,
         page: Page,
     ) -> DomainResult<(Vec<ParticipationLog>, usize)> {
@@ -754,7 +779,7 @@ impl TaskRepository for SqliteMetaStore {
         if let Some(b) = &filter.created_before {
             w.raw("created_at <= ?", [Value::from(b.clone())]);
         }
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(
                 c,
                 "meta_participation_logs",
@@ -769,9 +794,9 @@ impl TaskRepository for SqliteMetaStore {
 
 #[async_trait]
 impl AssetRepository for SqliteMetaStore {
-    async fn insert_asset(&self, instance: &InstanceId, asset: &Asset) -> DomainResult<()> {
+    async fn insert_asset(&self, department: &DepartmentId, asset: &Asset) -> DomainResult<()> {
         let a = asset.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "INSERT INTO meta_assets (asset_id, team_id, asset_type, status, owner_user_id, visibility, created_at, doc) VALUES (?,?,?,?,?,?,?,?)",
                 params![a.asset_id, a.team_id, a.asset_type.as_str(), a.status.as_str(), a.owner_user_id, a.visibility.as_str(), a.created_at, to_doc(&a)?],
@@ -783,19 +808,19 @@ impl AssetRepository for SqliteMetaStore {
 
     async fn get_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset_id: &str,
     ) -> DomainResult<Option<Asset>> {
         let id = asset_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_assets WHERE asset_id = ?", [id])
         })
         .await
     }
 
-    async fn update_asset(&self, instance: &InstanceId, asset: &Asset) -> DomainResult<()> {
+    async fn update_asset(&self, department: &DepartmentId, asset: &Asset) -> DomainResult<()> {
         let a = asset.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "UPDATE meta_assets SET status = ?, visibility = ?, doc = ? WHERE asset_id = ?",
                 params![
@@ -812,7 +837,7 @@ impl AssetRepository for SqliteMetaStore {
 
     async fn list_assets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &AssetFilter,
     ) -> DomainResult<Vec<Asset>> {
         let mut w = Where::default();
@@ -827,7 +852,7 @@ impl AssetRepository for SqliteMetaStore {
             let values: Vec<String> = vs.iter().map(|v| v.as_str().to_owned()).collect();
             w.in_list("visibility", &values);
         }
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             many(
                 c,
                 &format!(
@@ -842,11 +867,11 @@ impl AssetRepository for SqliteMetaStore {
 
     async fn delete_assets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let ids = ids.to_vec();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             for id in &ids {
                 delete_asset_rows(&tx, id)?;
@@ -862,12 +887,12 @@ impl AssetRepository for SqliteMetaStore {
 
     async fn touch_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset_id: &str,
         at: &str,
     ) -> DomainResult<()> {
         let (id, at) = (asset_id.to_owned(), at.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "UPDATE meta_assets SET doc = json_set(doc, '$.last_used_at', ?, '$.usage_count', json_extract(doc, '$.usage_count') + 1) WHERE asset_id = ?",
                 params![at, id],
@@ -882,12 +907,12 @@ impl AssetRepository for SqliteMetaStore {
 impl BindingRepository for SqliteMetaStore {
     async fn replace_bindings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_id: &str,
         bindings: &[AgentBinding],
     ) -> DomainResult<()> {
         let (agent, bindings) = (agent_id.to_owned(), bindings.to_vec());
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
                 "DELETE FROM meta_agent_bindings WHERE agent_id = ?",
@@ -903,29 +928,31 @@ impl BindingRepository for SqliteMetaStore {
 
     async fn ensure_binding(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         binding: &AgentBinding,
     ) -> DomainResult<()> {
         let b = binding.clone();
-        self.with(instance, move |c| insert_binding(c, &b, false).map(|_| ()))
-            .await
+        self.with(department, move |c| {
+            insert_binding(c, &b, false).map(|_| ())
+        })
+        .await
     }
 
     async fn list_bindings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_id: &str,
     ) -> DomainResult<Vec<AgentBinding>> {
         let a = agent_id.to_owned();
-        self.with(instance, move |c| many(c, "SELECT doc FROM meta_agent_bindings WHERE agent_id = ? ORDER BY priority DESC, asset_id", &[Value::from(a)])).await
+        self.with(department, move |c| many(c, "SELECT doc FROM meta_agent_bindings WHERE agent_id = ? ORDER BY priority DESC, asset_id", &[Value::from(a)])).await
     }
 }
 
 #[async_trait]
 impl AclRepository for SqliteMetaStore {
-    async fn grant(&self, instance: &InstanceId, entry: &AclEntry) -> DomainResult<AclEntry> {
+    async fn grant(&self, department: &DepartmentId, entry: &AclEntry) -> DomainResult<AclEntry> {
         let e = entry.clone();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let existing: Option<AclEntry> = one(
                 conn,
                 "SELECT doc FROM meta_asset_acl WHERE asset_id = ? AND subject_type = ? AND subject_id = ? AND permission = ?",
@@ -949,9 +976,9 @@ impl AclRepository for SqliteMetaStore {
         .await
     }
 
-    async fn revoke(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<AclEntry>> {
+    async fn revoke(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AclEntry>> {
         let id = id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             let entry: Option<AclEntry> =
                 one(c, "SELECT doc FROM meta_asset_acl WHERE id = ?", [&id])?;
             c.execute("DELETE FROM meta_asset_acl WHERE id = ?", [&id])?;
@@ -960,17 +987,21 @@ impl AclRepository for SqliteMetaStore {
         .await
     }
 
-    async fn get_acl(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<AclEntry>> {
+    async fn get_acl(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AclEntry>> {
         let id = id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM meta_asset_acl WHERE id = ?", [id])
         })
         .await
     }
 
-    async fn list_acl(&self, instance: &InstanceId, asset_id: &str) -> DomainResult<Vec<AclEntry>> {
+    async fn list_acl(
+        &self,
+        department: &DepartmentId,
+        asset_id: &str,
+    ) -> DomainResult<Vec<AclEntry>> {
         let a = asset_id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             many(
                 c,
                 "SELECT doc FROM meta_asset_acl WHERE asset_id = ? ORDER BY id",
@@ -985,12 +1016,12 @@ impl AclRepository for SqliteMetaStore {
 impl ConfigRepository for SqliteMetaStore {
     async fn get_params(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: Option<&str>,
         module: &str,
     ) -> DomainResult<Vec<ConfigParam>> {
         let (user, module) = (user_id.unwrap_or("").to_owned(), module.to_owned());
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             // User values shadow globals: the `user` scope sorts after `global`.
             let mut stmt = c.prepare(
                 "SELECT scope, module, param_name, param_value FROM meta_config_params \
@@ -1015,13 +1046,13 @@ impl ConfigRepository for SqliteMetaStore {
 
     async fn set_user_params(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: &str,
         module: &str,
         params_in: &[(String, String)],
     ) -> DomainResult<()> {
         let (user, module, values) = (user_id.to_owned(), module.to_owned(), params_in.to_vec());
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             for (name, value) in &values {
                 tx.execute(
@@ -1039,11 +1070,11 @@ impl ConfigRepository for SqliteMetaStore {
 impl KnowledgeRepository for SqliteMetaStore {
     async fn upsert_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         entity: &KnowledgeEntity,
     ) -> DomainResult<()> {
         let e = entity.clone();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             c.execute(
                 "INSERT OR REPLACE INTO knowledge (id, team_id, kind, created_at, doc) VALUES (?,?,?,?,?)",
                 params![e.knowledge_id, e.team_id, e.kind, e.created_at, to_doc(&e)?],
@@ -1055,11 +1086,11 @@ impl KnowledgeRepository for SqliteMetaStore {
 
     async fn get_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         id: &str,
     ) -> DomainResult<Option<KnowledgeEntity>> {
         let id = id.to_owned();
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             one(c, "SELECT doc FROM knowledge WHERE id = ?", [id])
         })
         .await
@@ -1067,11 +1098,11 @@ impl KnowledgeRepository for SqliteMetaStore {
 
     async fn delete_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let ids = ids.to_vec();
-        self.with(instance, move |conn| {
+        self.with(department, move |conn| {
             let tx = conn.transaction()?;
             let result = batch_delete(&tx, &ids, |tx, id| {
                 tx.execute("DELETE FROM knowledge WHERE id = ?", [id])
@@ -1084,7 +1115,7 @@ impl KnowledgeRepository for SqliteMetaStore {
 
     async fn list_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         kind: Option<&str>,
         ids: Option<&[String]>,
@@ -1096,7 +1127,7 @@ impl KnowledgeRepository for SqliteMetaStore {
         if let Some(ids) = ids {
             w.in_list("id", ids);
         }
-        self.with(instance, move |c| {
+        self.with(department, move |c| {
             paged(c, "knowledge", &w, "created_at DESC, id", page)
         })
         .await

@@ -12,7 +12,7 @@ use serde_json::Value;
 const USAGE: &str = "amem — Agent Memory client
 
 USAGE:
-  amem login --server-url URL --user-key KEY|- --team-id ID --agent-id ID [--service-id ID] [--no-verify]
+  amem login --server-url URL --user-key KEY|- --team-id ID --agent-id ID [--department-id ID] [--no-verify]
   amem status                      Show configuration (key masked) and queue size
   amem recall [--json] QUERY...    Recall memories for QUERY
   amem capture --format openai --session ID < messages.json
@@ -24,7 +24,7 @@ USAGE:
 
 `--user-key -` reads the key from stdin, keeping it out of shell history.
 Settings can be overridden with AMEM_SERVER_URL, AMEM_USER_KEY, AMEM_TEAM_ID,
-AMEM_AGENT_ID, AMEM_SERVICE_ID; AMEM_SKIP_PROMPT_PREFIXES (comma-separated)
+AMEM_AGENT_ID, AMEM_DEPARTMENT_ID; AMEM_SKIP_PROMPT_PREFIXES (comma-separated)
 skips recall and capture for prompts starting with one of them; AMEM_CONFIG
 and AMEM_DATA_DIR move the files.";
 
@@ -58,12 +58,12 @@ fn login(args: &[String]) -> Result<(), String> {
         server_url: pick("--server-url", &existing.server_url)
             .trim_end_matches('/')
             .to_owned(),
-        service_id: pick(
-            "--service-id",
-            if existing.service_id.is_empty() {
+        department_id: pick(
+            "--department-id",
+            if existing.department_id.is_empty() {
                 "default"
             } else {
-                &existing.service_id
+                &existing.department_id
             },
         ),
         user_key: user_key.trim().to_owned(),
@@ -95,7 +95,7 @@ fn status() -> Result<(), String> {
     let cfg = Config::load()?;
     println!("config:     {}", config_path().display());
     println!("server_url: {}", cfg.server_url);
-    println!("service_id: {}", cfg.service_id);
+    println!("department_id: {}", cfg.department_id);
     println!("user_key:   {}", mask(&cfg.user_key));
     println!("team_id:    {}", cfg.team_id);
     println!("agent_id:   {}", cfg.agent_id);

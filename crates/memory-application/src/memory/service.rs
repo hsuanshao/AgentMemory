@@ -12,7 +12,7 @@ use memory_domain::profile::{
     SceneMeta, PERSONA_PATH, SCENE_DIR,
 };
 use memory_domain::retrieval::SearchMode;
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use tracing::warn;
 
 use super::search::AtomSearcher;
@@ -30,7 +30,7 @@ pub const MAX_MESSAGES_PER_ADD: usize = 100;
 pub trait ConversationObserver: Send + Sync {
     async fn on_conversation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         user_rounds: u32,
@@ -90,7 +90,7 @@ impl MemoryService {
 
     pub async fn add_conversation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         messages: Vec<NewMessage>,
@@ -121,11 +121,11 @@ impl MemoryService {
                 })
             })
             .collect::<DomainResult<Vec<_>>>()?;
-        self.conversations.append(instance, &records).await?;
+        self.conversations.append(department, &records).await?;
         let rounds = records.iter().filter(|m| m.role == Role::User).count() as u32;
         if rounds > 0 {
             self.observer
-                .on_conversation(instance, scope, session_id, rounds)
+                .on_conversation(department, scope, session_id, rounds)
                 .await;
         }
         Ok(records)
@@ -133,19 +133,19 @@ impl MemoryService {
 
     pub async fn query_conversation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         filter: &ConversationFilter,
         page: Page,
     ) -> DomainResult<(Vec<ConversationMessage>, usize)> {
         self.conversations
-            .query(instance, scope, filter, page)
+            .query(department, scope, filter, page)
             .await
     }
 
     pub async fn search_conversation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &ConversationFilter,
@@ -153,13 +153,13 @@ impl MemoryService {
     ) -> DomainResult<Vec<Scored<ConversationMessage>>> {
         require_query(query)?;
         self.conversations
-            .search(instance, scope, query, filter, limit)
+            .search(department, scope, query, filter, limit)
             .await
     }
 
     pub async fn delete_conversation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         message_ids: &[String],
         session_ids: &[String],
@@ -173,13 +173,13 @@ impl MemoryService {
         if !message_ids.is_empty() {
             deleted += self
                 .conversations
-                .delete_by_ids(instance, scope, message_ids)
+                .delete_by_ids(department, scope, message_ids)
                 .await?;
         }
         if !session_ids.is_empty() {
             deleted += self
                 .conversations
-                .delete_by_sessions(instance, scope, session_ids)
+                .delete_by_sessions(department, scope, session_ids)
                 .await?;
         }
         Ok(deleted)
@@ -187,12 +187,12 @@ impl MemoryService {
 
     pub async fn count_conversation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         filter: &ConversationFilter,
     ) -> DomainResult<usize> {
         self.conversations
-            .count(instance, Some(scope), filter)
+            .count(department, Some(scope), filter)
             .await
     }
 
@@ -200,7 +200,7 @@ impl MemoryService {
 
     pub async fn update_atom(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         id: &str,
         content: String,
@@ -208,7 +208,7 @@ impl MemoryService {
     ) -> DomainResult<AtomicMemory> {
         let mut atom = self
             .atoms
-            .get(instance, id)
+            .get(department, id)
             .await?
             .ok_or_else(|| DomainError::not_found("atomic", id))?;
         if atom.scope.team_id != scope.team_id
@@ -222,26 +222,26 @@ impl MemoryService {
         atom.revise(content, background, self.clock.now())?;
         let embedding = self.embed_one(&atom.content).await;
         self.atoms
-            .upsert(instance, &atom, embedding.as_deref())
+            .upsert(department, &atom, embedding.as_deref())
             .await?;
         Ok(atom)
     }
 
     pub async fn query_atoms(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         filter: &AtomFilter,
         page: Page,
     ) -> DomainResult<(Vec<AtomicMemory>, usize)> {
         self.atoms
-            .query(instance, AtomSelector::Scope(scope), filter, page)
+            .query(department, AtomSelector::Scope(scope), filter, page)
             .await
     }
 
     pub async fn search_atoms(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &AtomFilter,
@@ -250,30 +250,30 @@ impl MemoryService {
         require_query(query)?;
         Ok(self
             .searcher
-            .search(instance, scope, query, filter, limit, SearchMode::Hybrid)
+            .search(department, scope, query, filter, limit, SearchMode::Hybrid)
             .await?
             .hits)
     }
 
     pub async fn delete_atoms(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
     ) -> DomainResult<usize> {
         if ids.is_empty() {
             return Err(DomainError::invalid("ids is required"));
         }
-        self.atoms.delete(instance, scope, ids).await
+        self.atoms.delete(department, scope, ids).await
     }
 
     pub async fn count_atoms(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         filter: &AtomFilter,
     ) -> DomainResult<usize> {
-        self.atoms.count(instance, Some(scope), filter).await
+        self.atoms.count(department, Some(scope), filter).await
     }
 
     async fn embed_one(&self, text: &str) -> Option<Vec<f32>> {
@@ -292,14 +292,14 @@ impl MemoryService {
 
     pub async fn list_scenes(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
     ) -> DomainResult<Vec<SceneEntry>> {
         validate_relative_path(prefix)?;
         let files = self
             .profiles
-            .list(instance, profile, &scene_path(prefix))
+            .list(department, profile, &scene_path(prefix))
             .await?;
         Ok(files
             .into_iter()
@@ -317,14 +317,14 @@ impl MemoryService {
 
     pub async fn read_scene(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         version: Option<u32>,
     ) -> DomainResult<Option<ProfileFile>> {
         validate_scene_path(path)?;
         self.profiles
-            .read(instance, profile, &scene_path(path), version)
+            .read(department, profile, &scene_path(path), version)
             .await
     }
 
@@ -333,7 +333,7 @@ impl MemoryService {
     /// given.
     pub async fn write_scene(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         content: &str,
@@ -343,7 +343,7 @@ impl MemoryService {
         let now = self.clock.now().to_rfc3339();
         let existing = self
             .profiles
-            .read(instance, profile, &scene_path(path), None)
+            .read(department, profile, &scene_path(path), None)
             .await?;
         let mut meta = existing
             .as_ref()
@@ -361,19 +361,19 @@ impl MemoryService {
         let file = self
             .profiles
             .write(
-                instance,
+                department,
                 profile,
                 &scene_path(path),
                 &render_scene(&meta, &body),
             )
             .await?;
-        self.refresh_navigation(instance, profile).await?;
+        self.refresh_navigation(department, profile).await?;
         Ok(file)
     }
 
     pub async fn remove_scene(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
     ) -> DomainResult<usize> {
@@ -383,21 +383,21 @@ impl MemoryService {
         }
         let removed = self
             .profiles
-            .remove(instance, profile, &scene_path(path))
+            .remove(department, profile, &scene_path(path))
             .await?;
-        self.refresh_navigation(instance, profile).await?;
+        self.refresh_navigation(department, profile).await?;
         Ok(removed)
     }
 
     pub async fn count_scenes(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
     ) -> DomainResult<usize> {
         validate_relative_path(prefix)?;
         self.profiles
-            .count(instance, Some(profile), &scene_path(prefix))
+            .count(department, Some(profile), &scene_path(prefix))
             .await
     }
 
@@ -405,27 +405,27 @@ impl MemoryService {
 
     pub async fn read_persona(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         version: Option<u32>,
     ) -> DomainResult<Option<ProfileFile>> {
         self.profiles
-            .read(instance, profile, PERSONA_PATH, version)
+            .read(department, profile, PERSONA_PATH, version)
             .await
     }
 
     /// Stores the persona body followed by a freshly rendered navigation.
     pub async fn write_persona(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         content: &str,
     ) -> DomainResult<ProfileFile> {
         let body = strip_scene_navigation(content);
-        let navigation = self.navigation(instance, profile).await?;
+        let navigation = self.navigation(department, profile).await?;
         self.profiles
             .write(
-                instance,
+                department,
                 profile,
                 PERSONA_PATH,
                 &compose_persona(&body, &navigation),
@@ -435,21 +435,21 @@ impl MemoryService {
 
     pub async fn count_persona(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize> {
         self.profiles
-            .count(instance, Some(profile), PERSONA_PATH)
+            .count(department, Some(profile), PERSONA_PATH)
             .await
     }
 
     /// Rendered Scene Navigation for the profile ("" when there are no scenes).
     pub async fn navigation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<String> {
-        let scenes = self.list_scenes(instance, profile, "").await?;
+        let scenes = self.list_scenes(department, profile, "").await?;
         if scenes.is_empty() {
             return Ok(String::new());
         }
@@ -472,20 +472,20 @@ impl MemoryService {
     /// Rewrites the navigation of an existing persona after scene changes.
     pub async fn refresh_navigation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<()> {
-        let Some(persona) = self.read_persona(instance, profile, None).await? else {
+        let Some(persona) = self.read_persona(department, profile, None).await? else {
             return Ok(());
         };
         let body = strip_scene_navigation(&persona.content);
         if body.is_empty() {
             return Ok(());
         }
-        let navigation = self.navigation(instance, profile).await?;
+        let navigation = self.navigation(department, profile).await?;
         self.profiles
             .write(
-                instance,
+                department,
                 profile,
                 PERSONA_PATH,
                 &compose_persona(&body, &navigation),

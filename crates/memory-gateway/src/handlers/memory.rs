@@ -107,7 +107,7 @@ pub async fn conversation_add(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let scope = ctx.scope(&body)?;
     let session = ctx.session_id(&body).unwrap_or_else(|| "default".into());
     let raw: Vec<AddMessage> = ctx.parse(body.get("messages").unwrap_or(&Value::Null))?;
@@ -123,7 +123,7 @@ pub async fn conversation_add(
     let stored = s
         .services
         .memory
-        .add_conversation(&instance, &scope, &session, messages)
+        .add_conversation(&department, &scope, &session, messages)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -148,12 +148,12 @@ pub async fn conversation_query(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let filter = conversation_filter(&ctx, &body)?;
     let (items, total) = s
         .services
         .memory
-        .query_conversation(&instance, &scope, &filter, page(&body))
+        .query_conversation(&department, &scope, &filter, page(&body))
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -167,13 +167,13 @@ pub async fn conversation_search(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let filter = conversation_filter(&ctx, &body)?;
     let hits = s
         .services
         .memory
         .search_conversation(
-            &instance,
+            &department,
             &scope,
             &query_text(&ctx, &body)?,
             &filter,
@@ -210,7 +210,7 @@ pub async fn conversation_delete(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let ids = string_list(&ctx, &body, "message_ids", 5000)?;
     let mut sessions = string_list(&ctx, &body, "session_ids", 100)?;
     if let Some(legacy) = body.get("session_id").and_then(Value::as_str) {
@@ -219,7 +219,7 @@ pub async fn conversation_delete(
     let deleted = s
         .services
         .memory
-        .delete_conversation(&instance, &scope, &ids, &sessions)
+        .delete_conversation(&department, &scope, &ids, &sessions)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"deleted_count": deleted})))
@@ -230,11 +230,11 @@ pub async fn conversation_count(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let total = s
         .services
         .memory
-        .count_conversation(&instance, &scope, &conversation_filter(&ctx, &body)?)
+        .count_conversation(&department, &scope, &conversation_filter(&ctx, &body)?)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"total": total})))
@@ -267,13 +267,13 @@ pub async fn atomic_update(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let input: AtomUpdate = ctx.parse(&body)?;
     let atom = s
         .services
         .memory
         .update_atom(
-            &instance,
+            &department,
             &scope,
             &input.id,
             input.content,
@@ -292,11 +292,11 @@ pub async fn atomic_query(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let (items, total) = s
         .services
         .memory
-        .query_atoms(&instance, &scope, &atom_filter(&ctx, &body)?, page(&body))
+        .query_atoms(&department, &scope, &atom_filter(&ctx, &body)?, page(&body))
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -310,12 +310,12 @@ pub async fn atomic_search(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let hits = s
         .services
         .memory
         .search_atoms(
-            &instance,
+            &department,
             &scope,
             &query_text(&ctx, &body)?,
             &atom_filter(&ctx, &body)?,
@@ -334,12 +334,12 @@ pub async fn atomic_delete(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let ids = string_list(&ctx, &body, "ids", 5000)?;
     let deleted = s
         .services
         .memory
-        .delete_atoms(&instance, &scope, &ids)
+        .delete_atoms(&department, &scope, &ids)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"deleted_count": deleted})))
@@ -350,11 +350,11 @@ pub async fn atomic_count(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let total = s
         .services
         .memory
-        .count_atoms(&instance, &scope, &atom_filter(&ctx, &body)?)
+        .count_atoms(&department, &scope, &atom_filter(&ctx, &body)?)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"total": total})))
@@ -392,12 +392,12 @@ pub async fn scenario_ls(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let prefix = str_field(&body, "path_prefix").unwrap_or("");
     let scenes = s
         .services
         .memory
-        .list_scenes(&instance, &profile, prefix)
+        .list_scenes(&department, &profile, prefix)
         .await
         .map_err(|e| ctx.err(e))?;
     let entries: Vec<Value> = scenes
@@ -424,12 +424,12 @@ pub async fn scenario_read(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let path = str_field(&body, "path").unwrap_or("");
     let file = s
         .services
         .memory
-        .read_scene(&instance, &profile, path, version_field(&body))
+        .read_scene(&department, &profile, path, version_field(&body))
         .await
         .map_err(|e| ctx.err(e))?;
     let mut data = file_json(path, file.as_ref(), &profile);
@@ -445,7 +445,7 @@ pub async fn scenario_write(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let path = str_field(&body, "path").unwrap_or("");
     let content = str_field(&body, "content")
         .ok_or_else(|| ApiError::bad_request(&ctx.request_id, "content is required"))?;
@@ -453,7 +453,7 @@ pub async fn scenario_write(
         .services
         .memory
         .write_scene(
-            &instance,
+            &department,
             &profile,
             path,
             content,
@@ -472,11 +472,15 @@ pub async fn scenario_rm(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let removed = s
         .services
         .memory
-        .remove_scene(&instance, &profile, str_field(&body, "path").unwrap_or(""))
+        .remove_scene(
+            &department,
+            &profile,
+            str_field(&body, "path").unwrap_or(""),
+        )
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"removed": removed})))
@@ -487,12 +491,12 @@ pub async fn scenario_count(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let total = s
         .services
         .memory
         .count_scenes(
-            &instance,
+            &department,
             &profile,
             str_field(&body, "path_prefix").unwrap_or(""),
         )
@@ -506,11 +510,11 @@ pub async fn core_read(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let file = s
         .services
         .memory
-        .read_persona(&instance, &profile, version_field(&body))
+        .read_persona(&department, &profile, version_field(&body))
         .await
         .map_err(|e| ctx.err(e))?;
     let mut data = file_json("persona.md", file.as_ref(), &profile);
@@ -523,13 +527,13 @@ pub async fn core_write(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let content = str_field(&body, "content")
         .ok_or_else(|| ApiError::bad_request(&ctx.request_id, "content is required"))?;
     let file = s
         .services
         .memory
-        .write_persona(&instance, &profile, content)
+        .write_persona(&department, &profile, content)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -543,11 +547,11 @@ pub async fn core_count(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let (instance, profile) = (ctx.instance()?, profile_of(&ctx, &body)?);
+    let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let total = s
         .services
         .memory
-        .count_persona(&instance, &profile)
+        .count_persona(&department, &profile)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"total": total})))
@@ -560,7 +564,7 @@ pub async fn session_add(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let required = |name: &str| {
         ctx.header(name).ok_or_else(|| {
             ApiError::bad_request(&ctx.request_id, format!("missing header: {name}"))
@@ -575,7 +579,7 @@ pub async fn session_add(
         .services
         .session
         .add_turn(
-            &instance,
+            &department,
             SessionTurnHeaders {
                 user_id: &user,
                 session_id: &session,
@@ -592,7 +596,7 @@ pub async fn session_add(
 }
 
 pub async fn recall(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let (instance, scope) = (ctx.instance()?, ctx.scope(&body)?);
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
     let strategy = str_field(&body, "strategy").and_then(SearchMode::parse);
     let max = body
         .get("max_results")
@@ -601,7 +605,13 @@ pub async fn recall(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
     let result = s
         .services
         .recall
-        .recall(&instance, &scope, &query_text(&ctx, &body)?, max, strategy)
+        .recall(
+            &department,
+            &scope,
+            &query_text(&ctx, &body)?,
+            max,
+            strategy,
+        )
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, result))

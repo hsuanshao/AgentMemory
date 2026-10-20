@@ -6,7 +6,7 @@ use std::sync::Arc;
 use memory_domain::error::DomainResult;
 use memory_domain::memory::AtomicMemory;
 use memory_domain::retrieval::{normalise_rrf, rrf_fuse, RankedHit, SearchMode, DEFAULT_RRF_K};
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use tracing::warn;
 
 use crate::common::Scored;
@@ -37,7 +37,7 @@ impl AtomSearcher {
     /// fail. Scores are normalised to 0..=1 in every mode.
     pub async fn search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &AtomFilter,
@@ -54,14 +54,14 @@ impl AtomSearcher {
             SearchMode::Embedding => Vec::new(),
             _ => relative_to_best(
                 self.atoms
-                    .keyword_search(instance, scope, query, filter, candidates)
+                    .keyword_search(department, scope, query, filter, candidates)
                     .await?,
             ),
         };
         let vector = match effective {
             SearchMode::Bm25 => Vec::new(),
             _ => {
-                self.vector_hits(instance, scope, query, filter, candidates)
+                self.vector_hits(department, scope, query, filter, candidates)
                     .await
             }
         };
@@ -83,7 +83,7 @@ impl AtomSearcher {
 
     async fn vector_hits(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &AtomFilter,
@@ -98,7 +98,7 @@ impl AtomSearcher {
             }
         };
         self.atoms
-            .vector_search(instance, scope, &embedded, filter, limit)
+            .vector_search(department, scope, &embedded, filter, limit)
             .await
             .unwrap_or_else(|err| {
                 warn!(error = %err, "vector search failed");

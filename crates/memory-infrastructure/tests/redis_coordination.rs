@@ -19,7 +19,7 @@ use memory_application::ports::pipeline::{
     DeadLetter, DeadLetterFilter, PipelineJob, PipelineStateRepository, ProfileState, SessionState,
 };
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
+use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
 use memory_infrastructure::redis::{
     connect, KeySpace, RedisKeyLock, RedisPipelineState, RedisQueue,
 };
@@ -44,8 +44,8 @@ async fn conn(url: &str) -> ConnectionManager {
     connect(url).await.expect("test redis must be reachable")
 }
 
-fn id(raw: &str) -> InstanceId {
-    SegmentId::parse("instance", raw).unwrap()
+fn id(raw: &str) -> DepartmentId {
+    SegmentId::parse("department", raw).unwrap()
 }
 
 fn scope(team: &str, agent: &str, user: &str) -> MemoryScope {
@@ -57,14 +57,14 @@ fn profile(team: &str, agent: &str) -> ProfileScope {
 }
 
 fn session(
-    instance: &str,
+    department: &str,
     scope: MemoryScope,
     sid: &str,
     due: Option<DateTime<Utc>>,
     active: DateTime<Utc>,
 ) -> SessionState {
     SessionState {
-        instance: id(instance),
+        department: id(department),
         scope,
         session_id: sid.into(),
         conversation_count: 3,
@@ -100,13 +100,13 @@ async fn state_round_trips_and_due_indexes_follow_updates() {
         store.put_session(s).await.unwrap();
     }
     let got = store
-        .get_session(&due.instance, &due.scope, "s1")
+        .get_session(&due.department, &due.scope, "s1")
         .await
         .unwrap();
     assert_eq!(got.as_ref(), Some(&due));
     assert_eq!(
         store
-            .get_session(&idle.instance, &idle.scope, "s/3|x")
+            .get_session(&idle.department, &idle.scope, "s/3|x")
             .await
             .unwrap()
             .as_ref(),
@@ -139,7 +139,7 @@ async fn state_round_trips_and_due_indexes_follow_updates() {
     let other = ProfileState::new(id("ins"), profile("t", "b"));
     store.put_profile(&other).await.unwrap();
     assert_eq!(
-        store.get_profile(&p.instance, &p.profile).await.unwrap(),
+        store.get_profile(&p.department, &p.profile).await.unwrap(),
         Some(p.clone())
     );
     assert_eq!(store.due_profiles(now).await.unwrap(), vec![p.clone()]);
@@ -150,7 +150,7 @@ async fn state_round_trips_and_due_indexes_follow_updates() {
 }
 
 #[tokio::test]
-async fn delete_profile_and_instance_remove_documents_and_indexes() {
+async fn delete_profile_and_department_remove_documents_and_indexes() {
     let Some((url, keys)) = redis().await else {
         return;
     };
@@ -173,12 +173,12 @@ async fn delete_profile_and_instance_remove_documents_and_indexes() {
         .await
         .unwrap();
     assert_eq!(
-        store.get_profile(&p.instance, &p.profile).await.unwrap(),
+        store.get_profile(&p.department, &p.profile).await.unwrap(),
         None
     );
     assert_eq!(
         store
-            .get_session(&mine.instance, &mine.scope, "s1")
+            .get_session(&mine.department, &mine.scope, "s1")
             .await
             .unwrap(),
         None
@@ -192,13 +192,17 @@ async fn delete_profile_and_instance_remove_documents_and_indexes() {
         .map(|s| s.session_id)
         .collect();
     due.sort();
-    assert_eq!(due, ["s2", "s3"], "agent `ab` and instance `ins2` survive");
+    assert_eq!(
+        due,
+        ["s2", "s3"],
+        "agent `ab` and department `ins2` survive"
+    );
 
     store
         .put_profile(&ProfileState::new(id("ins"), profile("t", "ab")))
         .await
         .unwrap();
-    store.delete_instance(&id("ins")).await.unwrap();
+    store.delete_department(&id("ins")).await.unwrap();
     assert!(store
         .list_sessions(&id("ins"), 10)
         .await
@@ -225,7 +229,7 @@ fn letter(job: PipelineJob, attempt: u32) -> DeadLetter {
 
 fn job(task: &str) -> PipelineJob {
     PipelineJob::SkillExtract {
-        instance: id("ins"),
+        department: id("ins"),
         task_id: task.into(),
     }
 }
@@ -327,11 +331,11 @@ async fn dead_letters_are_listed_and_taken_once() {
     assert_eq!(all[20].error, None, "old letters parse without an error");
 
     let skills = DeadLetterFilter {
-        instance: Some(id("ins")),
+        department: Some(id("ins")),
         kind: Some("skill".into()),
     };
     let none = DeadLetterFilter {
-        instance: Some(id("elsewhere")),
+        department: Some(id("elsewhere")),
         kind: None,
     };
     assert!(q.take_dead_letters(&none, 50).await.unwrap().is_empty());
@@ -500,7 +504,7 @@ async fn eventually_locks(lock: &RedisKeyLock, key: &str) -> bool {
 }
 
 #[tokio::test]
-async fn locks_are_exclusive_across_instances_and_released_on_drop() {
+async fn locks_are_exclusive_across_departments_and_released_on_drop() {
     let Some((url, keys)) = redis().await else {
         return;
     };

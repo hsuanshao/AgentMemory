@@ -6,14 +6,14 @@ use std::sync::Arc;
 
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
+use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
 use serde::{Deserialize, Serialize};
 
 use crate::ports::memory::{MovedRows, ProfileFileRepository, ScopeMigrationStore};
 use crate::ports::meta::MetaStore;
 use crate::ports::pipeline::PipelineStateRepository;
 
-/// Upper bound on scheduling records scanned per instance.
+/// Upper bound on scheduling records scanned per department.
 const STATE_SCAN_LIMIT: usize = 100_000;
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +68,7 @@ impl LegacyScopeMigration {
     /// The target must be a scope the data plane would authorize.
     async fn validate(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         input: &MigrateDefaultInput,
     ) -> DomainResult<MemoryScope> {
         let to = MemoryScope {
@@ -78,19 +78,19 @@ impl LegacyScopeMigration {
             task_id: None,
         };
         self.meta
-            .get_team(instance, &input.team_id)
+            .get_team(department, &input.team_id)
             .await?
             .ok_or_else(|| DomainError::not_found("team", &input.team_id))?;
         let agent = self
             .meta
-            .get_agent(instance, &input.agent_id)
+            .get_agent(department, &input.agent_id)
             .await?
             .ok_or_else(|| DomainError::not_found("agent", &input.agent_id))?;
         if agent.team_id != input.team_id {
             return Err(DomainError::invalid("agent does not belong to the team"));
         }
         self.meta
-            .get_member(instance, &input.team_id, &input.user_id)
+            .get_member(department, &input.team_id, &input.user_id)
             .await?
             .filter(|m| m.is_active())
             .ok_or_else(|| DomainError::invalid("user is not an active member of the team"))?;
@@ -99,12 +99,12 @@ impl LegacyScopeMigration {
 
     async fn ensure_fresh_target(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         to: &MemoryScope,
     ) -> DomainResult<()> {
         if self
             .profiles
-            .count(instance, Some(&ProfileScope::from(to)), "")
+            .count(department, Some(&ProfileScope::from(to)), "")
             .await?
             > 0
         {
@@ -118,19 +118,19 @@ impl LegacyScopeMigration {
 
     /// Rows still in the legacy buckets. The count does not depend on the
     /// target, so any well-formed scope will do.
-    pub async fn pending(&self, instance: &InstanceId) -> DomainResult<MovedRows> {
+    pub async fn pending(&self, department: &DepartmentId) -> DomainResult<MovedRows> {
         let probe = MemoryScope::from_optional(None, None, None, None)?;
         self.rows
-            .reassign_default(instance, &probe, &probe, true)
+            .reassign_default(department, &probe, &probe, true)
             .await
     }
 
     pub async fn migrate_default(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         input: MigrateDefaultInput,
     ) -> DomainResult<MigrationReport> {
-        let to = self.validate(instance, &input).await?;
+        let to = self.validate(department, &input).await?;
         let from = MemoryScope::from_optional(
             input.from_team_id.as_deref(),
             input.from_agent_id.as_deref(),
@@ -140,12 +140,12 @@ impl LegacyScopeMigration {
         let from_profile = ProfileScope::from(&from);
         let pending = self
             .rows
-            .reassign_default(instance, &from, &to, true)
+            .reassign_default(department, &from, &to, true)
             .await?;
 
         let sessions: Vec<_> = self
             .state
-            .list_sessions(instance, STATE_SCAN_LIMIT)
+            .list_sessions(department, STATE_SCAN_LIMIT)
             .await?
             .into_iter()
             .filter(|s| {
@@ -156,7 +156,7 @@ impl LegacyScopeMigration {
             .collect();
         let profiles: Vec<_> = self
             .state
-            .list_profiles(instance, STATE_SCAN_LIMIT)
+            .list_profiles(department, STATE_SCAN_LIMIT)
             .await?
             .into_iter()
             .filter(|p| p.profile == from_profile)
@@ -174,12 +174,12 @@ impl LegacyScopeMigration {
         }
         // The target agent must have no L2/L3 yet: scenes are versioned
         // files, and merging two sets of them is not something to do silently.
-        self.ensure_fresh_target(instance, &to).await?;
+        self.ensure_fresh_target(department, &to).await?;
         let moved = if input.dry_run {
             pending
         } else {
             self.rows
-                .reassign_default(instance, &from, &to, false)
+                .reassign_default(department, &from, &to, false)
                 .await?
         };
         let report = MigrationReport {
@@ -204,7 +204,7 @@ impl LegacyScopeMigration {
         for mut profile in profiles {
             profile.profile = ProfileScope::from(&to);
             self.state.put_profile(&profile).await?;
-            self.state.delete_profile(instance, &from_profile).await?;
+            self.state.delete_profile(department, &from_profile).await?;
         }
         Ok(report)
     }

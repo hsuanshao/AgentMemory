@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     pub server_url: String,
-    #[serde(default = "default_service_id")]
-    pub service_id: String,
+    #[serde(default = "default_department_id")]
+    pub department_id: String,
     pub user_key: String,
     pub team_id: String,
     pub agent_id: String,
@@ -23,13 +23,13 @@ pub struct Config {
     pub skip_prompt_prefixes: String,
 }
 
-fn default_service_id() -> String {
+fn default_department_id() -> String {
     "default".into()
 }
 
 const FIELDS: [&str; 5] = [
     "server_url",
-    "service_id",
+    "department_id",
     "user_key",
     "team_id",
     "agent_id",
@@ -47,7 +47,7 @@ impl Config {
 
     pub fn merge(file: Option<Config>, env: impl Fn(&str) -> Option<String>) -> Self {
         let mut c = file.unwrap_or_else(|| Config {
-            service_id: default_service_id(),
+            department_id: default_department_id(),
             ..Default::default()
         });
         for field in FIELDS.into_iter().chain(OPTIONAL_FIELDS) {
@@ -66,7 +66,7 @@ impl Config {
     fn field_mut(&mut self, field: &str) -> &mut String {
         match field {
             "server_url" => &mut self.server_url,
-            "service_id" => &mut self.service_id,
+            "department_id" => &mut self.department_id,
             "user_key" => &mut self.user_key,
             "team_id" => &mut self.team_id,
             "skip_prompt_prefixes" => &mut self.skip_prompt_prefixes,
@@ -89,7 +89,7 @@ impl Config {
             .into_iter()
             .filter(|f| match *f {
                 "server_url" => self.server_url.is_empty(),
-                "service_id" => self.service_id.is_empty(),
+                "department_id" => self.department_id.is_empty(),
                 "user_key" => self.user_key.is_empty(),
                 "team_id" => self.team_id.is_empty(),
                 _ => self.agent_id.is_empty(),
@@ -104,12 +104,35 @@ impl Config {
 }
 
 fn read_file(path: &Path) -> Result<Option<Config>, String> {
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|e| format!("{}: {e}", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    let migrated = migrate_file(&mut value);
+    let config: Config =
+        serde_json::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
+    if migrated {
+        // Best effort: an unwritable file is migrated again on every load.
+        let _ = config.save(path);
+    }
+    Ok(Some(config))
+}
+
+/// Renames fields written by older versions; true when anything changed.
+/// Before 0.3.0 the department was called `service_id`.
+fn migrate_file(value: &mut serde_json::Value) -> bool {
+    let Some(map) = value.as_object_mut() else {
+        return false;
+    };
+    match map.remove("service_id") {
+        Some(id) => {
+            map.entry("department_id").or_insert(id);
+            true
+        }
+        None => false,
     }
 }
 
@@ -162,10 +185,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_file_from_before_departments_is_rewritten_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.json");
+        std::fs::write(
+            &path,
+            r#"{"server_url":"http://s","service_id":"sales","user_key":"k","team_id":"t","agent_id":"a"}"#,
+        )
+        .unwrap();
+
+        let config = read_file(&path).unwrap().unwrap();
+        assert_eq!(config.department_id, "sales");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains(r#""department_id": "sales""#));
+        assert!(!saved.contains("service_id"));
+        assert_eq!(read_file(&path).unwrap().unwrap(), config);
+    }
+
+    #[test]
     fn env_overrides_file_and_amem_beats_plugin_options() {
         let file = Config {
             server_url: "http://file/".into(),
-            service_id: "default".into(),
+            department_id: "default".into(),
             user_key: "sk-mem-file".into(),
             team_id: "team-file".into(),
             agent_id: "agt-file".into(),
@@ -207,7 +248,7 @@ mod tests {
     #[test]
     fn reports_missing_fields() {
         let c = Config::merge(None, |_| None);
-        assert_eq!(c.service_id, "default");
+        assert_eq!(c.department_id, "default");
         assert_eq!(
             c.missing(),
             ["server_url", "user_key", "team_id", "agent_id"]

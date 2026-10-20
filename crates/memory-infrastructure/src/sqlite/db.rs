@@ -1,4 +1,4 @@
-//! A SQLite connection usable from async code, and a per-instance pool.
+//! A SQLite connection usable from async code, and a per-department pool.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use memory_domain::error::{DomainError, DomainResult};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use rusqlite::Connection;
 
 use super::{schema, vec_index};
@@ -89,15 +89,15 @@ struct Entry {
     last_used: Instant,
 }
 
-/// Lazily opens `<data_dir>/instances/<id>/memory.db`, keeping at most
+/// Lazily opens `<data_dir>/departments/<id>/memory.db`, keeping at most
 /// `capacity` connections (least recently used are closed first).
-pub struct InstancePool {
+pub struct DepartmentPool {
     data_dir: PathBuf,
     capacity: usize,
-    entries: Mutex<HashMap<InstanceId, Entry>>,
+    entries: Mutex<HashMap<DepartmentId, Entry>>,
 }
 
-impl InstancePool {
+impl DepartmentPool {
     pub fn new(data_dir: PathBuf, capacity: usize) -> Self {
         Self {
             data_dir,
@@ -106,16 +106,16 @@ impl InstancePool {
         }
     }
 
-    pub fn instance_dir(&self, instance: &InstanceId) -> PathBuf {
-        self.data_dir.join("instances").join(instance.as_str())
+    pub fn department_dir(&self, department: &DepartmentId) -> PathBuf {
+        self.data_dir.join("departments").join(department.as_str())
     }
 
-    pub fn get(&self, instance: &InstanceId) -> DomainResult<Arc<Db>> {
+    pub fn get(&self, department: &DepartmentId) -> DomainResult<Arc<Db>> {
         let mut entries = self
             .entries
             .lock()
             .map_err(|_| DomainError::internal("pool lock poisoned"))?;
-        if let Some(entry) = entries.get_mut(instance) {
+        if let Some(entry) = entries.get_mut(department) {
             entry.last_used = Instant::now();
             return Ok(Arc::clone(&entry.db));
         }
@@ -129,11 +129,11 @@ impl InstancePool {
             }
         }
         let db = Arc::new(Db::open(
-            &self.instance_dir(instance).join("memory.db"),
-            schema::migrate_instance,
+            &self.department_dir(department).join("memory.db"),
+            schema::migrate_department,
         )?);
         entries.insert(
-            instance.clone(),
+            department.clone(),
             Entry {
                 db: Arc::clone(&db),
                 last_used: Instant::now(),
@@ -142,16 +142,16 @@ impl InstancePool {
         Ok(db)
     }
 
-    /// Closes the instance database (in-flight users keep their handle).
-    pub fn evict(&self, instance: &InstanceId) {
+    /// Closes the department database (in-flight users keep their handle).
+    pub fn evict(&self, department: &DepartmentId) {
         if let Ok(mut entries) = self.entries.lock() {
-            entries.remove(instance);
+            entries.remove(department);
         }
     }
 
-    /// Instances that currently have a database on disk.
-    pub fn known_instances(&self) -> Vec<String> {
-        std::fs::read_dir(self.data_dir.join("instances"))
+    /// Departments that currently have a database on disk.
+    pub fn known_departments(&self) -> Vec<String> {
+        std::fs::read_dir(self.data_dir.join("departments"))
             .map(|dir| {
                 dir.filter_map(Result::ok)
                     .filter_map(|e| e.file_name().into_string().ok())

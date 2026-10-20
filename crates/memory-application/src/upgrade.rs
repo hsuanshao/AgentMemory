@@ -1,5 +1,5 @@
 //! One-step upgrade from a pre-0.1.1 install, driven by the operator with the
-//! instance API key only (no admin user key, which old installs printed once
+//! department API key only (no admin user key, which old installs printed once
 //! and may have lost): pick the system admin, make sure a team and an agent
 //! exist, move the legacy `default` buckets there and, on request, issue a
 //! fresh user key for the clients. Safe to repeat: names are looked up
@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::meta::{UserStatus, UserType};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 
 use crate::meta::{
@@ -69,11 +69,11 @@ impl LegacyUpgrade {
 
     pub async fn run(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         input: UpgradeInput,
     ) -> DomainResult<UpgradeReport> {
         let (admin, username) = self
-            .admin(instance, input.admin_username.as_deref())
+            .admin(department, input.admin_username.as_deref())
             .await?;
         let team_name = input.team_name.unwrap_or_else(|| "default-team".into());
         let agent_name = input
@@ -83,7 +83,7 @@ impl LegacyUpgrade {
             dry_run: input.dry_run,
             user_id: admin.user_id.clone(),
             username,
-            team_id: self.find_team(instance, &team_name).await?,
+            team_id: self.find_team(department, &team_name).await?,
             team_name,
             team_created: false,
             agent_id: None,
@@ -96,12 +96,12 @@ impl LegacyUpgrade {
         };
         if let Some(team_id) = &report.team_id {
             report.agent_id = self
-                .find_agent(instance, team_id, &report.agent_name)
+                .find_agent(department, team_id, &report.agent_name)
                 .await?;
         }
         if input.dry_run && (report.team_id.is_none() || report.agent_id.is_none()) {
             // Nothing exists to validate against yet: just count.
-            report.moved = self.migration.pending(instance).await?;
+            report.moved = self.migration.pending(department).await?;
             return Ok(report);
         }
 
@@ -111,7 +111,7 @@ impl LegacyUpgrade {
                 report.team_created = true;
                 self.meta
                     .create_team(
-                        instance,
+                        department,
                         &admin,
                         CreateTeamInput {
                             name: report.team_name.clone(),
@@ -128,13 +128,13 @@ impl LegacyUpgrade {
         if !input.dry_run
             && self
                 .meta
-                .get_member(instance, &admin, &team_id, &admin.user_id)
+                .get_member(department, &admin, &team_id, &admin.user_id)
                 .await
                 .is_err()
         {
             self.meta
                 .add_member(
-                    instance,
+                    department,
                     &admin,
                     AddMemberInput {
                         team_id: team_id.clone(),
@@ -150,7 +150,7 @@ impl LegacyUpgrade {
                 report.agent_created = true;
                 self.meta
                     .create_agent(
-                        instance,
+                        department,
                         &admin,
                         CreateAgentInput {
                             team_id: team_id.clone(),
@@ -174,7 +174,7 @@ impl LegacyUpgrade {
         let migrated: MigrationReport = self
             .migration
             .migrate_default(
-                instance,
+                department,
                 MigrateDefaultInput {
                     team_id,
                     agent_id,
@@ -194,7 +194,7 @@ impl LegacyUpgrade {
             let key = self
                 .meta
                 .create_key(
-                    instance,
+                    department,
                     &admin,
                     CreateKeyInput {
                         user_id: None,
@@ -210,7 +210,7 @@ impl LegacyUpgrade {
 
     async fn admin(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         username: Option<&str>,
     ) -> DomainResult<(Caller, String)> {
         let filter = UserFilter {
@@ -224,7 +224,7 @@ impl LegacyUpgrade {
         };
         let mut admins = self
             .meta
-            .list_users_internal(instance, filter, page)
+            .list_users_internal(department, filter, page)
             .await?
             .items;
         admins.retain(|u| username.is_none_or(|n| u.username == n));
@@ -243,14 +243,18 @@ impl LegacyUpgrade {
     }
 
     /// Store name filters are substring matches; the upgrade wants exact.
-    async fn find_team(&self, instance: &InstanceId, name: &str) -> DomainResult<Option<String>> {
+    async fn find_team(
+        &self,
+        department: &DepartmentId,
+        name: &str,
+    ) -> DomainResult<Option<String>> {
         let page = Pagination {
             limit: Some(100),
             offset: None,
         };
         let teams = self
             .meta
-            .list_teams(instance, None, Some(name), page)
+            .list_teams(department, None, Some(name), page)
             .await?
             .items;
         Ok(teams
@@ -261,14 +265,14 @@ impl LegacyUpgrade {
 
     async fn find_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         name: &str,
     ) -> DomainResult<Option<String>> {
         let agents = self
             .meta
             .list_agents(
-                instance,
+                department,
                 ListAgentsInput {
                     team_id: Some(team_id.to_owned()),
                     owner_user_id: None,

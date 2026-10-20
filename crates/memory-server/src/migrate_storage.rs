@@ -1,5 +1,5 @@
 //! `memory-server migrate-storage`: copies the SQLite data of every
-//! instance into the Postgres database named by `AGENT_MEMORY_POSTGRES_URL`.
+//! department into the Postgres database named by `AGENT_MEMORY_POSTGRES_URL`.
 //! Run it with memory-core stopped, then switch
 //! `AGENT_MEMORY_STORAGE_BACKEND` to `postgres`. `migrate-to-postgres.sh`
 //! does all of that; docs/MIGRATE-TO-POSTGRES.md has the manual steps.
@@ -14,7 +14,7 @@ use crate::wiring;
 const USAGE: &str = "\
 usage: memory-server migrate-storage [--dry-run] [--json]
 
-Copies every SQLite instance under the data directory into the Postgres
+Copies every SQLite department under the data directory into the Postgres
 database at AGENT_MEMORY_POSTGRES_URL. Stop memory-core first.
 
   --dry-run  report what would be copied; write nothing
@@ -40,6 +40,7 @@ pub async fn run(args: impl Iterator<Item = String>) -> Result<()> {
         bail!("set AGENT_MEMORY_POSTGRES_URL (storage.postgres.url) to the target database");
     }
     let data_dir = expand_home(&config.data.base_dir);
+    memory_infrastructure::fs::migrate_data_dir(&data_dir)?;
     // The same dimension the server will use, so the embedding column
     // matches and stored vectors carry over.
     let dims = wiring::vector_dims(&config);
@@ -49,7 +50,7 @@ pub async fn run(args: impl Iterator<Item = String>) -> Result<()> {
     let report = sqlite_to_postgres::migrate(&data_dir, &pg, dry_run)
         .await
         .context(
-        "migration stopped; instances copied before the error stay in Postgres and a re-run skips them",
+        "migration stopped; departments copied before the error stay in Postgres and a re-run skips them",
     )?;
 
     if json {
@@ -61,17 +62,17 @@ pub async fn run(args: impl Iterator<Item = String>) -> Result<()> {
 }
 
 fn print_summary(report: &MigrationReport, data_dir: &str) {
-    if report.instances.is_empty() {
-        println!("No SQLite instances under {data_dir}/instances; nothing to copy.");
+    if report.departments.is_empty() {
+        println!("No SQLite departments under {data_dir}/departments; nothing to copy.");
         return;
     }
-    for i in &report.instances {
+    for i in &report.departments {
         let state = match (i.outcome, report.dry_run) {
             (Outcome::AlreadyMigrated, _) => "already migrated, skipped",
             (Outcome::Copied, true) => "would be copied",
             (Outcome::Copied, false) => "copied and verified",
         };
-        println!("instance {}: {state}", i.instance);
+        println!("department {}: {state}", i.department);
         for t in i.tables.iter().filter(|t| t.source > 0) {
             println!("  {:<24} {:>9}", t.table, t.source);
         }

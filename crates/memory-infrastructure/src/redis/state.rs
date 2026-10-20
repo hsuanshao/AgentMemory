@@ -1,5 +1,5 @@
 //! `PipelineStateRepository` over Redis: one JSON string per state, plus
-//! sorted-set indexes so "what is due" is a range query and per-instance
+//! sorted-set indexes so "what is due" is a range query and per-department
 //! listing/deletion never scans the keyspace.
 
 use ::redis::aio::ConnectionManager;
@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use memory_application::ports::pipeline::{PipelineStateRepository, ProfileState, SessionState};
 use memory_domain::error::DomainResult;
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::de::DeserializeOwned;
 
 use super::{from_json, to_json, unavailable, KeySpace};
@@ -61,8 +61,9 @@ impl RedisPipelineState {
         self.keys.key(&format!("due:{}", kind.plural()))
     }
 
-    fn instance_key(&self, kind: Kind, instance: &InstanceId) -> String {
-        self.keys.key(&format!("inst:{instance}:{}", kind.plural()))
+    fn department_key(&self, kind: Kind, department: &DepartmentId) -> String {
+        self.keys
+            .key(&format!("department:{department}:{}", kind.plural()))
     }
 
     /// Writes the document and its index entries in one MULTI, so readers
@@ -70,7 +71,7 @@ impl RedisPipelineState {
     async fn put(
         &self,
         kind: Kind,
-        instance: &InstanceId,
+        department: &DepartmentId,
         id: &str,
         doc: String,
         due_ms: Option<i64>,
@@ -86,7 +87,7 @@ impl RedisPipelineState {
         }
         .ignore();
         p.cmd("ZADD")
-            .arg(self.instance_key(kind, instance))
+            .arg(self.department_key(kind, department))
             .arg(order_ms)
             .arg(id)
             .ignore();
@@ -142,27 +143,27 @@ impl RedisPipelineState {
     async fn list<T: DeserializeOwned>(
         &self,
         kind: Kind,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<Vec<T>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
         let ids = self
-            .instance_ids(kind, instance, limit as isize - 1)
+            .department_ids(kind, department, limit as isize - 1)
             .await?;
         self.load(kind, &ids).await
     }
 
-    /// Ids of an instance, newest first, up to index `stop` (-1 = all).
-    async fn instance_ids(
+    /// Ids of a department, newest first, up to index `stop` (-1 = all).
+    async fn department_ids(
         &self,
         kind: Kind,
-        instance: &InstanceId,
+        department: &DepartmentId,
         stop: isize,
     ) -> DomainResult<Vec<String>> {
         cmd("ZRANGE")
-            .arg(self.instance_key(kind, instance))
+            .arg(self.department_key(kind, department))
             .arg(0)
             .arg(stop)
             .arg("REV")
@@ -172,7 +173,7 @@ impl RedisPipelineState {
     }
 
     /// Queues removal of the documents and all their index entries.
-    fn remove(&self, p: &mut Pipeline, kind: Kind, instance: &InstanceId, ids: &[String]) {
+    fn remove(&self, p: &mut Pipeline, kind: Kind, department: &DepartmentId, ids: &[String]) {
         if ids.is_empty() {
             return;
         }
@@ -180,7 +181,7 @@ impl RedisPipelineState {
         p.cmd("DEL").arg(docs).ignore();
         p.cmd("ZREM").arg(self.due_key(kind)).arg(ids).ignore();
         p.cmd("ZREM")
-            .arg(self.instance_key(kind, instance))
+            .arg(self.department_key(kind, department))
             .arg(ids)
             .ignore();
     }
@@ -188,31 +189,31 @@ impl RedisPipelineState {
 
 /// `/` never occurs inside a segment, so ids split unambiguously and a
 /// team + agent prefix selects exactly that profile's sessions.
-fn session_id(instance: &InstanceId, scope: &MemoryScope, session_id: &str) -> String {
-    format!("{instance}/{}/{session_id}", scope.key())
+fn session_id(department: &DepartmentId, scope: &MemoryScope, session_id: &str) -> String {
+    format!("{department}/{}/{session_id}", scope.key())
 }
 
-fn profile_id(instance: &InstanceId, profile: &ProfileScope) -> String {
-    format!("{instance}/{}/{}", profile.team_id, profile.agent_id)
+fn profile_id(department: &DepartmentId, profile: &ProfileScope) -> String {
+    format!("{department}/{}/{}", profile.team_id, profile.agent_id)
 }
 
 #[async_trait]
 impl PipelineStateRepository for RedisPipelineState {
     async fn get_session(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session: &str,
     ) -> DomainResult<Option<SessionState>> {
-        self.get(Kind::Session, &session_id(instance, scope, session))
+        self.get(Kind::Session, &session_id(department, scope, session))
             .await
     }
 
     async fn put_session(&self, state: &SessionState) -> DomainResult<()> {
         self.put(
             Kind::Session,
-            &state.instance,
-            &session_id(&state.instance, &state.scope, &state.session_id),
+            &state.department,
+            &session_id(&state.department, &state.scope, &state.session_id),
             to_json(state)?,
             state.l1_due_at.map(|t| t.timestamp_millis()),
             state.last_active_at.timestamp_millis(),
@@ -222,18 +223,18 @@ impl PipelineStateRepository for RedisPipelineState {
 
     async fn get_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<Option<ProfileState>> {
-        self.get(Kind::Profile, &profile_id(instance, profile))
+        self.get(Kind::Profile, &profile_id(department, profile))
             .await
     }
 
     async fn put_profile(&self, state: &ProfileState) -> DomainResult<()> {
         self.put(
             Kind::Profile,
-            &state.instance,
-            &profile_id(&state.instance, &state.profile),
+            &state.department,
+            &profile_id(&state.department, &state.profile),
             to_json(state)?,
             state.l2_due_at.map(|t| t.timestamp_millis()),
             Utc::now().timestamp_millis(),
@@ -251,54 +252,54 @@ impl PipelineStateRepository for RedisPipelineState {
 
     async fn list_sessions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<Vec<SessionState>> {
-        self.list(Kind::Session, instance, limit).await
+        self.list(Kind::Session, department, limit).await
     }
 
     async fn list_profiles(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<Vec<ProfileState>> {
-        self.list(Kind::Profile, instance, limit).await
+        self.list(Kind::Profile, department, limit).await
     }
 
     /// Also drops the sessions of that team + agent (any user), like the
     /// SQLite store.
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<()> {
-        let id = profile_id(instance, profile);
+        let id = profile_id(department, profile);
         let session_prefix = format!("{id}/");
         let sessions: Vec<String> = self
-            .instance_ids(Kind::Session, instance, -1)
+            .department_ids(Kind::Session, department, -1)
             .await?
             .into_iter()
             .filter(|s| s.starts_with(&session_prefix))
             .collect();
         let mut p = pipe();
         p.atomic();
-        self.remove(&mut p, Kind::Profile, instance, &[id]);
-        self.remove(&mut p, Kind::Session, instance, &sessions);
+        self.remove(&mut p, Kind::Profile, department, &[id]);
+        self.remove(&mut p, Kind::Session, department, &sessions);
         p.exec_async(&mut self.conn.clone())
             .await
             .map_err(unavailable)
     }
 
-    async fn delete_instance(&self, instance: &InstanceId) -> DomainResult<()> {
-        let sessions = self.instance_ids(Kind::Session, instance, -1).await?;
-        let profiles = self.instance_ids(Kind::Profile, instance, -1).await?;
+    async fn delete_department(&self, department: &DepartmentId) -> DomainResult<()> {
+        let sessions = self.department_ids(Kind::Session, department, -1).await?;
+        let profiles = self.department_ids(Kind::Profile, department, -1).await?;
         let mut p = pipe();
         p.atomic();
-        self.remove(&mut p, Kind::Session, instance, &sessions);
-        self.remove(&mut p, Kind::Profile, instance, &profiles);
+        self.remove(&mut p, Kind::Session, department, &sessions);
+        self.remove(&mut p, Kind::Profile, department, &profiles);
         p.cmd("DEL")
-            .arg(self.instance_key(Kind::Session, instance))
-            .arg(self.instance_key(Kind::Profile, instance))
+            .arg(self.department_key(Kind::Session, department))
+            .arg(self.department_key(Kind::Profile, department))
             .ignore();
         p.exec_async(&mut self.conn.clone())
             .await

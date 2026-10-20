@@ -19,7 +19,7 @@ use memory_domain::meta::{
     chat_memory_asset_id, AclEntry, Agent, AgentBinding, Asset, ParticipationLog, Task, TaskAgent,
     Team, TeamMember, User, UserKey,
 };
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::de::DeserializeOwned;
 use sqlx::postgres::PgConnection;
 
@@ -196,11 +196,11 @@ async fn insert_binding(
 impl UserRepository for PostgresMetaStore {
     async fn create_user(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user: &User,
         default_key: &UserKey,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         execute(
             &mut tx,
@@ -219,8 +219,12 @@ impl UserRepository for PostgresMetaStore {
         tx.commit().await.map_err(pg_err)
     }
 
-    async fn get_user(&self, instance: &InstanceId, user_id: &str) -> DomainResult<Option<User>> {
-        let s = self.db.schema(instance).await?;
+    async fn get_user(
+        &self,
+        department: &DepartmentId,
+        user_id: &str,
+    ) -> DomainResult<Option<User>> {
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_users WHERE user_id = ?"),
@@ -231,10 +235,10 @@ impl UserRepository for PostgresMetaStore {
 
     async fn find_user_by_name(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         username: &str,
     ) -> DomainResult<Option<User>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_users WHERE username = ?"),
@@ -245,11 +249,11 @@ impl UserRepository for PostgresMetaStore {
 
     async fn list_users(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &UserFilter,
         page: Page,
     ) -> DomainResult<(Vec<User>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         if let Some(team) = &filter.team_id {
             w.raw(
@@ -275,8 +279,8 @@ impl UserRepository for PostgresMetaStore {
         .await
     }
 
-    async fn count_users(&self, instance: &InstanceId) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+    async fn count_users(&self, department: &DepartmentId) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
         count(
             &mut *self.db.conn().await?,
             &format!("SELECT COUNT(*) FROM {s}.meta_users"),
@@ -287,10 +291,10 @@ impl UserRepository for PostgresMetaStore {
 
     async fn delete_users(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let mut result = BatchDeleteResult::default();
         for id in ids {
@@ -336,8 +340,8 @@ impl UserRepository for PostgresMetaStore {
 
 #[async_trait]
 impl UserKeyRepository for PostgresMetaStore {
-    async fn insert_key(&self, instance: &InstanceId, key: &UserKey) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn insert_key(&self, department: &DepartmentId, key: &UserKey) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         insert_key(&mut *self.db.conn().await?, &s, key)
             .await
             .map(|_| ())
@@ -345,10 +349,10 @@ impl UserKeyRepository for PostgresMetaStore {
 
     async fn find_key_by_value(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         value: &str,
     ) -> DomainResult<Option<UserKey>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_user_keys WHERE key_value = ?"),
@@ -357,8 +361,12 @@ impl UserKeyRepository for PostgresMetaStore {
         .await
     }
 
-    async fn get_key(&self, instance: &InstanceId, key_id: &str) -> DomainResult<Option<UserKey>> {
-        let s = self.db.schema(instance).await?;
+    async fn get_key(
+        &self,
+        department: &DepartmentId,
+        key_id: &str,
+    ) -> DomainResult<Option<UserKey>> {
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_user_keys WHERE key_id = ?"),
@@ -369,11 +377,11 @@ impl UserKeyRepository for PostgresMetaStore {
 
     async fn list_keys(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: &str,
         page: Page,
     ) -> DomainResult<(Vec<UserKey>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq("user_id", user_id);
         paged(
@@ -386,8 +394,8 @@ impl UserKeyRepository for PostgresMetaStore {
         .await
     }
 
-    async fn update_key(&self, instance: &InstanceId, key: &UserKey) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn update_key(&self, department: &DepartmentId, key: &UserKey) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("UPDATE {s}.meta_user_keys SET doc = ? WHERE key_id = ?"),
@@ -397,8 +405,8 @@ impl UserKeyRepository for PostgresMetaStore {
         .map(|_| ())
     }
 
-    async fn delete_key(&self, instance: &InstanceId, key_id: &str) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn delete_key(&self, department: &DepartmentId, key_id: &str) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let removed: Option<UserKey> = one(
             &mut tx,
@@ -432,8 +440,13 @@ impl UserKeyRepository for PostgresMetaStore {
         tx.commit().await.map_err(pg_err)
     }
 
-    async fn touch_key(&self, instance: &InstanceId, key_id: &str, at: &str) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn touch_key(
+        &self,
+        department: &DepartmentId,
+        key_id: &str,
+        at: &str,
+    ) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("UPDATE {s}.meta_user_keys SET doc = jsonb_set(doc, '{{last_used_at}}', to_jsonb(?::text)) WHERE key_id = ?"),
@@ -448,11 +461,11 @@ impl UserKeyRepository for PostgresMetaStore {
 impl TeamRepository for PostgresMetaStore {
     async fn create_team(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team: &Team,
         owner: &TeamMember,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         execute(
             &mut tx,
@@ -471,8 +484,12 @@ impl TeamRepository for PostgresMetaStore {
         tx.commit().await.map_err(pg_err)
     }
 
-    async fn get_team(&self, instance: &InstanceId, team_id: &str) -> DomainResult<Option<Team>> {
-        let s = self.db.schema(instance).await?;
+    async fn get_team(
+        &self,
+        department: &DepartmentId,
+        team_id: &str,
+    ) -> DomainResult<Option<Team>> {
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_teams WHERE team_id = ?"),
@@ -481,8 +498,8 @@ impl TeamRepository for PostgresMetaStore {
         .await
     }
 
-    async fn update_team(&self, instance: &InstanceId, team: &Team) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn update_team(&self, department: &DepartmentId, team: &Team) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("UPDATE {s}.meta_teams SET name = ?, doc = ? WHERE team_id = ?"),
@@ -498,12 +515,12 @@ impl TeamRepository for PostgresMetaStore {
 
     async fn list_teams_of_user(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: Option<&str>,
         name: Option<&str>,
         page: Page,
     ) -> DomainResult<(Vec<Team>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         if let Some(user_id) = user_id {
             w.raw(
@@ -524,8 +541,8 @@ impl TeamRepository for PostgresMetaStore {
         .await
     }
 
-    async fn count_teams(&self, instance: &InstanceId) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+    async fn count_teams(&self, department: &DepartmentId) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
         count(
             &mut *self.db.conn().await?,
             &format!("SELECT COUNT(*) FROM {s}.meta_teams"),
@@ -536,10 +553,10 @@ impl TeamRepository for PostgresMetaStore {
 
     async fn delete_teams(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let mut result = BatchDeleteResult::default();
         for id in ids {
@@ -599,8 +616,12 @@ impl TeamRepository for PostgresMetaStore {
 
 #[async_trait]
 impl MemberRepository for PostgresMetaStore {
-    async fn upsert_member(&self, instance: &InstanceId, member: &TeamMember) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn upsert_member(
+        &self,
+        department: &DepartmentId,
+        member: &TeamMember,
+    ) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         insert_member(&mut *self.db.conn().await?, &s, member)
             .await
             .map(|_| ())
@@ -608,11 +629,11 @@ impl MemberRepository for PostgresMetaStore {
 
     async fn get_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         user_id: &str,
     ) -> DomainResult<Option<TeamMember>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_team_members WHERE team_id = ? AND user_id = ?"),
@@ -623,11 +644,11 @@ impl MemberRepository for PostgresMetaStore {
 
     async fn list_members(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         page: Page,
     ) -> DomainResult<(Vec<TeamMember>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq("team_id", team_id).eq("status", "active");
         paged(
@@ -642,10 +663,10 @@ impl MemberRepository for PostgresMetaStore {
 
     async fn list_memberships(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: &str,
     ) -> DomainResult<Vec<TeamMember>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         // SQLite leaves this order unspecified; make it deterministic.
         many(
             &mut *self.db.conn().await?,
@@ -657,11 +678,11 @@ impl MemberRepository for PostgresMetaStore {
 
     async fn remove_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         user_id: &str,
     ) -> DomainResult<bool> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("DELETE FROM {s}.meta_team_members WHERE team_id = ? AND user_id = ?"),
@@ -674,8 +695,8 @@ impl MemberRepository for PostgresMetaStore {
 
 #[async_trait]
 impl AgentRepository for PostgresMetaStore {
-    async fn insert_agent(&self, instance: &InstanceId, a: &Agent) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn insert_agent(&self, department: &DepartmentId, a: &Agent) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("INSERT INTO {s}.meta_agents (agent_id, team_id, owner_user_id, status, name, created_at, doc) VALUES (?,?,?,?,?,?,?)"),
@@ -695,10 +716,10 @@ impl AgentRepository for PostgresMetaStore {
 
     async fn get_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_id: &str,
     ) -> DomainResult<Option<Agent>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_agents WHERE agent_id = ?"),
@@ -707,8 +728,8 @@ impl AgentRepository for PostgresMetaStore {
         .await
     }
 
-    async fn update_agent(&self, instance: &InstanceId, a: &Agent) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn update_agent(&self, department: &DepartmentId, a: &Agent) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("UPDATE {s}.meta_agents SET status = ?, name = ?, doc = ? WHERE agent_id = ?"),
@@ -725,11 +746,11 @@ impl AgentRepository for PostgresMetaStore {
 
     async fn list_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &AgentFilter,
         page: Page,
     ) -> DomainResult<(Vec<Agent>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq_opt("team_id", filter.team_id.clone())
             .eq_opt("owner_user_id", filter.owner_user_id.clone())
@@ -749,10 +770,10 @@ impl AgentRepository for PostgresMetaStore {
 
     async fn delete_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let mut result = BatchDeleteResult::default();
         for id in ids {
@@ -796,11 +817,11 @@ impl AgentRepository for PostgresMetaStore {
 impl TaskRepository for PostgresMetaStore {
     async fn insert_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         t: &Task,
         links: &[TaskAgent],
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         execute(
             &mut tx,
@@ -821,8 +842,12 @@ impl TaskRepository for PostgresMetaStore {
         tx.commit().await.map_err(pg_err)
     }
 
-    async fn get_task(&self, instance: &InstanceId, task_id: &str) -> DomainResult<Option<Task>> {
-        let s = self.db.schema(instance).await?;
+    async fn get_task(
+        &self,
+        department: &DepartmentId,
+        task_id: &str,
+    ) -> DomainResult<Option<Task>> {
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_tasks WHERE task_id = ?"),
@@ -831,8 +856,8 @@ impl TaskRepository for PostgresMetaStore {
         .await
     }
 
-    async fn update_task(&self, instance: &InstanceId, t: &Task) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn update_task(&self, department: &DepartmentId, t: &Task) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("UPDATE {s}.meta_tasks SET status = ?, doc = ? WHERE task_id = ?"),
@@ -848,11 +873,11 @@ impl TaskRepository for PostgresMetaStore {
 
     async fn list_tasks(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &TaskFilter,
         page: Page,
     ) -> DomainResult<(Vec<Task>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq_opt("team_id", filter.team_id.clone())
             .eq_opt("creator_user_id", filter.creator_user_id.clone())
@@ -869,10 +894,10 @@ impl TaskRepository for PostgresMetaStore {
 
     async fn delete_tasks(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let mut result = BatchDeleteResult::default();
         for id in ids {
@@ -895,8 +920,8 @@ impl TaskRepository for PostgresMetaStore {
         Ok(result)
     }
 
-    async fn link_agent(&self, instance: &InstanceId, link: &TaskAgent) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn link_agent(&self, department: &DepartmentId, link: &TaskAgent) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         insert_link(&mut *self.db.conn().await?, &s, link)
             .await
             .map(|_| ())
@@ -904,11 +929,11 @@ impl TaskRepository for PostgresMetaStore {
 
     async fn unlink_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task_id: &str,
         agent_id: &str,
     ) -> DomainResult<bool> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("DELETE FROM {s}.meta_task_agents WHERE task_id = ? AND agent_id = ?"),
@@ -920,11 +945,11 @@ impl TaskRepository for PostgresMetaStore {
 
     async fn list_task_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task_id: &str,
         page: Page,
     ) -> DomainResult<(Vec<TaskAgent>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq("task_id", task_id);
         paged(
@@ -939,10 +964,10 @@ impl TaskRepository for PostgresMetaStore {
 
     async fn append_participation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         l: &ParticipationLog,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("INSERT INTO {s}.meta_participation_logs (id, team_id, task_id, agent_id, user_id, created_at, doc) VALUES (?,?,?,?,?,?,?)"),
@@ -962,11 +987,11 @@ impl TaskRepository for PostgresMetaStore {
 
     async fn list_participation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &ParticipationFilter,
         page: Page,
     ) -> DomainResult<(Vec<ParticipationLog>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq("team_id", filter.team_id.as_str())
             .eq_opt("task_id", filter.task_id.clone())
@@ -991,8 +1016,8 @@ impl TaskRepository for PostgresMetaStore {
 
 #[async_trait]
 impl AssetRepository for PostgresMetaStore {
-    async fn insert_asset(&self, instance: &InstanceId, a: &Asset) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn insert_asset(&self, department: &DepartmentId, a: &Asset) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("INSERT INTO {s}.meta_assets (asset_id, team_id, asset_type, status, owner_user_id, visibility, created_at, doc) VALUES (?,?,?,?,?,?,?,?)"),
@@ -1013,10 +1038,10 @@ impl AssetRepository for PostgresMetaStore {
 
     async fn get_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset_id: &str,
     ) -> DomainResult<Option<Asset>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_assets WHERE asset_id = ?"),
@@ -1025,8 +1050,8 @@ impl AssetRepository for PostgresMetaStore {
         .await
     }
 
-    async fn update_asset(&self, instance: &InstanceId, a: &Asset) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn update_asset(&self, department: &DepartmentId, a: &Asset) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!(
@@ -1045,10 +1070,10 @@ impl AssetRepository for PostgresMetaStore {
 
     async fn list_assets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &AssetFilter,
     ) -> DomainResult<Vec<Asset>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq_opt("team_id", filter.team_id.clone())
             .eq_opt(
@@ -1074,10 +1099,10 @@ impl AssetRepository for PostgresMetaStore {
 
     async fn delete_assets(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         for id in ids {
             delete_asset_rows(&mut tx, &s, id).await?;
@@ -1091,11 +1116,11 @@ impl AssetRepository for PostgresMetaStore {
 
     async fn touch_asset(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         asset_id: &str,
         at: &str,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         // A missing counter stays JSON null, as `json_extract(…) + 1` does.
         execute(
             &mut *self.db.conn().await?,
@@ -1114,11 +1139,11 @@ impl AssetRepository for PostgresMetaStore {
 impl BindingRepository for PostgresMetaStore {
     async fn replace_bindings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_id: &str,
         bindings: &[AgentBinding],
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         execute(
             &mut tx,
@@ -1134,10 +1159,10 @@ impl BindingRepository for PostgresMetaStore {
 
     async fn ensure_binding(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         binding: &AgentBinding,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         insert_binding(&mut *self.db.conn().await?, &s, binding, false)
             .await
             .map(|_| ())
@@ -1145,10 +1170,10 @@ impl BindingRepository for PostgresMetaStore {
 
     async fn list_bindings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         agent_id: &str,
     ) -> DomainResult<Vec<AgentBinding>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         many(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_agent_bindings WHERE agent_id = ? ORDER BY priority DESC, asset_id"),
@@ -1160,8 +1185,8 @@ impl BindingRepository for PostgresMetaStore {
 
 #[async_trait]
 impl AclRepository for PostgresMetaStore {
-    async fn grant(&self, instance: &InstanceId, e: &AclEntry) -> DomainResult<AclEntry> {
-        let s = self.db.schema(instance).await?;
+    async fn grant(&self, department: &DepartmentId, e: &AclEntry) -> DomainResult<AclEntry> {
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let existing: Option<AclEntry> = one(
             &mut tx,
@@ -1204,8 +1229,8 @@ impl AclRepository for PostgresMetaStore {
         Ok(stored)
     }
 
-    async fn revoke(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<AclEntry>> {
-        let s = self.db.schema(instance).await?;
+    async fn revoke(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AclEntry>> {
+        let s = self.db.schema(department).await?;
         let row = fetch_optional(
             &mut *self.db.conn().await?,
             &format!("DELETE FROM {s}.meta_asset_acl WHERE id = ? RETURNING doc"),
@@ -1215,8 +1240,8 @@ impl AclRepository for PostgresMetaStore {
         row.map(|r| super::sql::doc(&r, "doc")).transpose()
     }
 
-    async fn get_acl(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<AclEntry>> {
-        let s = self.db.schema(instance).await?;
+    async fn get_acl(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AclEntry>> {
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_asset_acl WHERE id = ?"),
@@ -1225,8 +1250,12 @@ impl AclRepository for PostgresMetaStore {
         .await
     }
 
-    async fn list_acl(&self, instance: &InstanceId, asset_id: &str) -> DomainResult<Vec<AclEntry>> {
-        let s = self.db.schema(instance).await?;
+    async fn list_acl(
+        &self,
+        department: &DepartmentId,
+        asset_id: &str,
+    ) -> DomainResult<Vec<AclEntry>> {
+        let s = self.db.schema(department).await?;
         many(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.meta_asset_acl WHERE asset_id = ? ORDER BY id"),
@@ -1240,11 +1269,11 @@ impl AclRepository for PostgresMetaStore {
 impl ConfigRepository for PostgresMetaStore {
     async fn get_params(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: Option<&str>,
         module: &str,
     ) -> DomainResult<Vec<ConfigParam>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         // User values shadow globals: the `user` scope sorts after `global`.
         let rows = fetch_all(
             &mut *self.db.conn().await?,
@@ -1273,12 +1302,12 @@ impl ConfigRepository for PostgresMetaStore {
 
     async fn set_user_params(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: &str,
         module: &str,
         params_in: &[(String, String)],
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         for (name, value) in params_in {
             execute(
@@ -1299,10 +1328,10 @@ impl ConfigRepository for PostgresMetaStore {
 impl KnowledgeRepository for PostgresMetaStore {
     async fn upsert_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         e: &KnowledgeEntity,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!(
@@ -1324,10 +1353,10 @@ impl KnowledgeRepository for PostgresMetaStore {
 
     async fn get_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         id: &str,
     ) -> DomainResult<Option<KnowledgeEntity>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         one(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.knowledge WHERE id = ?"),
@@ -1338,10 +1367,10 @@ impl KnowledgeRepository for PostgresMetaStore {
 
     async fn delete_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let mut result = BatchDeleteResult::default();
         for id in ids {
@@ -1359,13 +1388,13 @@ impl KnowledgeRepository for PostgresMetaStore {
 
     async fn list_knowledge(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         kind: Option<&str>,
         ids: Option<&[String]>,
         page: Page,
     ) -> DomainResult<(Vec<KnowledgeEntity>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq("team_id", team_id).eq_opt("kind", kind);
         if let Some(ids) = ids {

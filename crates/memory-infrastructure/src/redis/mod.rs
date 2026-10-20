@@ -8,8 +8,8 @@
 //! | `{p}:pipe:session:{id}`               | string | `SessionState` JSON            |
 //! | `{p}:pipe:profile:{id}`               | string | `ProfileState` JSON            |
 //! | `{p}:pipe:due:sessions` / `:profiles` | zset   | id → due ms (only when due)    |
-//! | `{p}:pipe:inst:{instance}:sessions`   | zset   | id → last active ms            |
-//! | `{p}:pipe:inst:{instance}:profiles`   | zset   | id → updated ms                |
+//! | `{p}:pipe:department:{id}:sessions`   | zset   | id → last active ms            |
+//! | `{p}:pipe:department:{id}:profiles`   | zset   | id → updated ms                |
 //! | `{p}:queue:ready`                     | list   | jobs ready to run              |
 //! | `{p}:queue:delayed`                   | zset   | job → not-before ms            |
 //! | `{p}:queue:processing`                | zset   | receipt → lease deadline ms    |
@@ -17,11 +17,14 @@
 //! | `{p}:queue:dedupe:{dedupe_key}`       | string | item id of a waiting first try |
 //! | `{p}:queue:dead`                      | list   | newest 10,000 dead letters     |
 //! | `{p}:lock:state:{key}` / `:job:{key}` | string | lock owner token (with PX TTL) |
+//! | `{p}:lock:migrate`                    | string | held while migrating           |
+//! | `{p}:schema_version`                  | string | version reached, see `migrate` |
 //!
 //! Scripts touch keys they derive from arguments, so Redis Cluster is not
 //! supported; use a single primary (with replicas/Sentinel for failover).
 
 mod lock;
+pub mod migrate;
 mod queue;
 mod state;
 

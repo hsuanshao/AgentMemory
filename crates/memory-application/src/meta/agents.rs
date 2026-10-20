@@ -5,7 +5,7 @@ use memory_domain::meta::{
     chat_memory_asset_id, Agent, AgentStatus, ParticipationLog, Task, TaskAgent, TaskStatus,
     Visibility,
 };
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
@@ -116,16 +116,16 @@ pub struct ListParticipationInput {
 impl MetaService {
     pub async fn create_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: CreateAgentInput,
     ) -> DomainResult<Agent> {
         require_non_empty("name", &input.name)?;
         if caller.is_system_admin {
-            self.get_team(instance, &input.team_id).await?;
+            self.get_team(department, &input.team_id).await?;
         } else {
             let member = self
-                .require_member(instance, &input.team_id, caller)
+                .require_member(department, &input.team_id, caller)
                 .await?;
             if input.owner_user_id != caller.user_id && !member.is_admin() {
                 return Err(denied("only team admins create agents for others"));
@@ -150,9 +150,9 @@ impl MetaService {
             updated_at: now,
             metadata_json: input.metadata_json.unwrap_or_else(|| json!({})),
         };
-        self.store.insert_agent(instance, &agent).await?;
+        self.store.insert_agent(department, &agent).await?;
         if let Err(err) = self
-            .ensure_chat_memory_asset(instance, &agent.team_id, &agent.agent_id)
+            .ensure_chat_memory_asset(department, &agent.team_id, &agent.agent_id)
             .await
         {
             warn!(error = %err, agent = %agent.agent_id, "could not register chat-memory asset");
@@ -160,20 +160,24 @@ impl MetaService {
         Ok(agent)
     }
 
-    pub async fn get_agent(&self, instance: &InstanceId, agent_id: &str) -> DomainResult<Agent> {
+    pub async fn get_agent(
+        &self,
+        department: &DepartmentId,
+        agent_id: &str,
+    ) -> DomainResult<Agent> {
         self.store
-            .get_agent(instance, agent_id)
+            .get_agent(department, agent_id)
             .await?
             .ok_or_else(|| DomainError::not_found("agent", agent_id))
     }
 
     async fn owned_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         agent_id: &str,
     ) -> DomainResult<Agent> {
-        let agent = self.get_agent(instance, agent_id).await?;
+        let agent = self.get_agent(department, agent_id).await?;
         if agent.owner_user_id != caller.user_id && !caller.is_system_admin {
             return Err(denied("only the agent owner can do this"));
         }
@@ -182,11 +186,13 @@ impl MetaService {
 
     pub async fn update_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: UpdateAgentInput,
     ) -> DomainResult<Agent> {
-        let mut agent = self.owned_agent(instance, caller, &input.agent_id).await?;
+        let mut agent = self
+            .owned_agent(department, caller, &input.agent_id)
+            .await?;
         if let Some(name) = input.name {
             require_non_empty("name", &name)?;
             agent.name = name;
@@ -207,20 +213,20 @@ impl MetaService {
             agent.metadata_json = m;
         }
         agent.updated_at = self.now();
-        self.store.update_agent(instance, &agent).await?;
+        self.store.update_agent(department, &agent).await?;
         Ok(agent)
     }
 
     pub async fn delete_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let mut allowed = Vec::new();
         let mut failed = Vec::new();
         for id in ids {
-            match self.owned_agent(instance, caller, id).await {
+            match self.owned_agent(department, caller, id).await {
                 Ok(_) => allowed.push(id.clone()),
                 Err(e) => failed.push(FailedId {
                     id: id.clone(),
@@ -228,7 +234,7 @@ impl MetaService {
                 }),
             }
         }
-        let mut result = self.store.delete_agents(instance, &allowed).await?;
+        let mut result = self.store.delete_agents(department, &allowed).await?;
         result.failed.extend(failed);
         Ok(result)
     }
@@ -237,27 +243,27 @@ impl MetaService {
     /// chat-memory asset (with its bindings and ACL rows).
     pub async fn archive_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         agent_id: &str,
     ) -> DomainResult<Agent> {
-        let mut agent = self.owned_agent(instance, caller, agent_id).await?;
+        let mut agent = self.owned_agent(department, caller, agent_id).await?;
         agent.status = AgentStatus::Inactive;
         agent.updated_at = self.now();
-        self.store.update_agent(instance, &agent).await?;
+        self.store.update_agent(department, &agent).await?;
         let memory_id = chat_memory_asset_id(&agent.team_id, &agent.agent_id);
         if let Some(cleaner) = self.chat_memory_cleaner() {
             cleaner
-                .clear_chat_memory(instance, &agent.team_id, &agent.agent_id)
+                .clear_chat_memory(department, &agent.team_id, &agent.agent_id)
                 .await?;
         }
-        self.store.delete_assets(instance, &[memory_id]).await?;
+        self.store.delete_assets(department, &[memory_id]).await?;
         Ok(agent)
     }
 
     pub async fn list_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         input: ListAgentsInput,
     ) -> DomainResult<MetaPage<Agent>> {
         if input.team_id.is_none() && input.owner_user_id.is_none() {
@@ -274,13 +280,13 @@ impl MetaService {
                 .transpose()?,
             name: input.name,
         };
-        let (agents, total) = self.store.list_agents(instance, &filter, page).await?;
+        let (agents, total) = self.store.list_agents(department, &filter, page).await?;
         Ok(page_of(agents, total, page))
     }
 
     pub async fn create_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: CreateTaskInput,
     ) -> DomainResult<Task> {
@@ -288,7 +294,7 @@ impl MetaService {
         if input.creator_user_id != caller.user_id {
             return Err(denied("creator must be the caller"));
         }
-        self.require_member(instance, &input.team_id, caller)
+        self.require_member(department, &input.team_id, caller)
             .await?;
         let now = self.now();
         let task = Task {
@@ -313,7 +319,7 @@ impl MetaService {
         };
         let mut links = Vec::new();
         for linked in input.linked_agents {
-            let agent = self.get_agent(instance, &linked.agent_id).await?;
+            let agent = self.get_agent(department, &linked.agent_id).await?;
             if agent.team_id != task.team_id {
                 return Err(DomainError::permission_denied("agent_team_mismatch"));
             }
@@ -326,24 +332,24 @@ impl MetaService {
                 created_at: now.clone(),
             });
         }
-        self.store.insert_task(instance, &task, &links).await?;
+        self.store.insert_task(department, &task, &links).await?;
         Ok(task)
     }
 
-    pub async fn get_task(&self, instance: &InstanceId, task_id: &str) -> DomainResult<Task> {
+    pub async fn get_task(&self, department: &DepartmentId, task_id: &str) -> DomainResult<Task> {
         self.store
-            .get_task(instance, task_id)
+            .get_task(department, task_id)
             .await?
             .ok_or_else(|| DomainError::not_found("task", task_id))
     }
 
     async fn created_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         task_id: &str,
     ) -> DomainResult<Task> {
-        let task = self.get_task(instance, task_id).await?;
+        let task = self.get_task(department, task_id).await?;
         if task.creator_user_id != caller.user_id && !caller.is_system_admin {
             return Err(denied("only the task creator can do this"));
         }
@@ -352,11 +358,13 @@ impl MetaService {
 
     pub async fn update_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: UpdateTaskInput,
     ) -> DomainResult<Task> {
-        let mut task = self.created_task(instance, caller, &input.task_id).await?;
+        let mut task = self
+            .created_task(department, caller, &input.task_id)
+            .await?;
         if let Some(t) = input.title {
             require_non_empty("title", &t)?;
             task.title = t;
@@ -377,33 +385,33 @@ impl MetaService {
             task.metadata_json = m;
         }
         task.updated_at = self.now();
-        self.store.update_task(instance, &task).await?;
+        self.store.update_task(department, &task).await?;
         Ok(task)
     }
 
     pub async fn archive_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         task_id: &str,
     ) -> DomainResult<Task> {
-        let mut task = self.created_task(instance, caller, task_id).await?;
+        let mut task = self.created_task(department, caller, task_id).await?;
         task.status = TaskStatus::Completed;
         task.updated_at = self.now();
-        self.store.update_task(instance, &task).await?;
+        self.store.update_task(department, &task).await?;
         Ok(task)
     }
 
     pub async fn delete_tasks(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let mut allowed = Vec::new();
         let mut failed = Vec::new();
         for id in ids {
-            match self.created_task(instance, caller, id).await {
+            match self.created_task(department, caller, id).await {
                 Ok(_) => allowed.push(id.clone()),
                 Err(e) => failed.push(FailedId {
                     id: id.clone(),
@@ -411,14 +419,14 @@ impl MetaService {
                 }),
             }
         }
-        let mut result = self.store.delete_tasks(instance, &allowed).await?;
+        let mut result = self.store.delete_tasks(department, &allowed).await?;
         result.failed.extend(failed);
         Ok(result)
     }
 
     pub async fn list_tasks(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         input: ListTasksInput,
     ) -> DomainResult<MetaPage<Task>> {
         if input.team_id.is_none() && input.creator_user_id.is_none() {
@@ -432,20 +440,20 @@ impl MetaService {
             creator_user_id: input.creator_user_id,
             status: input.status.as_deref().map(TaskStatus::parse).transpose()?,
         };
-        let (tasks, total) = self.store.list_tasks(instance, &filter, page).await?;
+        let (tasks, total) = self.store.list_tasks(department, &filter, page).await?;
         Ok(page_of(tasks, total, page))
     }
 
     pub async fn link_task_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         task_id: &str,
         agent_id: &str,
         role: Option<String>,
     ) -> DomainResult<TaskAgent> {
-        let task = self.created_task(instance, caller, task_id).await?;
-        let agent = self.get_agent(instance, agent_id).await?;
+        let task = self.created_task(department, caller, task_id).await?;
+        let agent = self.get_agent(department, agent_id).await?;
         if agent.team_id != task.team_id {
             return Err(DomainError::permission_denied("agent_team_mismatch"));
         }
@@ -457,19 +465,23 @@ impl MetaService {
             status: "active".into(),
             created_at: self.now(),
         };
-        self.store.link_agent(instance, &link).await?;
+        self.store.link_agent(department, &link).await?;
         Ok(link)
     }
 
     pub async fn unlink_task_agent(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         task_id: &str,
         agent_id: &str,
     ) -> DomainResult<bool> {
-        self.created_task(instance, caller, task_id).await?;
-        if !self.store.unlink_agent(instance, task_id, agent_id).await? {
+        self.created_task(department, caller, task_id).await?;
+        if !self
+            .store
+            .unlink_agent(department, task_id, agent_id)
+            .await?
+        {
             return Err(DomainError::not_found("task_agent", agent_id));
         }
         Ok(true)
@@ -477,23 +489,26 @@ impl MetaService {
 
     pub async fn list_task_agents(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task_id: &str,
         pagination: Pagination,
     ) -> DomainResult<MetaPage<TaskAgent>> {
         let page = pagination.page();
-        let (links, total) = self.store.list_task_agents(instance, task_id, page).await?;
+        let (links, total) = self
+            .store
+            .list_task_agents(department, task_id, page)
+            .await?;
         Ok(page_of(links, total, page))
     }
 
     pub async fn append_participation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: AppendParticipationInput,
     ) -> DomainResult<ParticipationLog> {
         let member = self
-            .require_member(instance, &input.team_id, caller)
+            .require_member(department, &input.team_id, caller)
             .await?;
         if input.user_id != caller.user_id && !member.is_admin() {
             return Err(denied("can only log your own participation"));
@@ -509,17 +524,17 @@ impl MetaService {
             created_at: input.created_at.unwrap_or(now),
             metadata_json: input.metadata_json.unwrap_or_else(|| json!({})),
         };
-        self.store.append_participation(instance, &log).await?;
+        self.store.append_participation(department, &log).await?;
         Ok(log)
     }
 
     pub async fn list_participation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: ListParticipationInput,
     ) -> DomainResult<MetaPage<ParticipationLog>> {
-        self.require_member(instance, &input.team_id, caller)
+        self.require_member(department, &input.team_id, caller)
             .await?;
         let page = input.pagination.page();
         let filter = ParticipationFilter {
@@ -532,7 +547,7 @@ impl MetaService {
         };
         let (mut logs, total) = self
             .store
-            .list_participation(instance, &filter, page)
+            .list_participation(department, &filter, page)
             .await?;
         if input.dedupe {
             let mut seen = std::collections::HashSet::new();

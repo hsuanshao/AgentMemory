@@ -15,7 +15,7 @@ use memory_domain::pipeline::{
     next_l2_due, persona_trigger, PersonaState, PipelineSettings, Warmup,
 };
 use memory_domain::profile::{strip_scene_navigation, ProfileScope};
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
@@ -41,7 +41,7 @@ const L2_ATOM_BATCH: usize = 100;
 /// Runs skill-extraction jobs; registered by the skill module.
 #[async_trait]
 pub trait SkillJobRunner: Send + Sync {
-    async fn run_skill_task(&self, instance: &InstanceId, task_id: &str) -> DomainResult<()>;
+    async fn run_skill_task(&self, department: &DepartmentId, task_id: &str) -> DomainResult<()>;
 }
 
 /// What `record_failure` needs about a generation that did not finish.
@@ -96,12 +96,12 @@ pub struct PipelineService {
     skill_runner: OnceLock<Arc<dyn SkillJobRunner>>,
 }
 
-fn session_key(instance: &InstanceId, scope: &MemoryScope, session_id: &str) -> String {
-    format!("s:{instance}/{}/{session_id}", scope.key())
+fn session_key(department: &DepartmentId, scope: &MemoryScope, session_id: &str) -> String {
+    format!("s:{department}/{}/{session_id}", scope.key())
 }
 
-fn profile_key(instance: &InstanceId, profile: &ProfileScope) -> String {
-    format!("p:{instance}/{}", profile.key())
+fn profile_key(department: &DepartmentId, profile: &ProfileScope) -> String {
+    format!("p:{department}/{}", profile.key())
 }
 
 fn max_seq(current: Option<i64>, seen: Option<i64>) -> Option<i64> {
@@ -172,7 +172,7 @@ impl PipelineService {
 
     async fn load_session(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
     ) -> DomainResult<SessionState> {
@@ -180,12 +180,12 @@ impl PipelineService {
             match self
                 .deps
                 .state
-                .get_session(instance, scope, session_id)
+                .get_session(department, scope, session_id)
                 .await?
             {
                 Some(s) => s,
                 None => SessionState {
-                    instance: instance.clone(),
+                    department: department.clone(),
                     scope: scope.clone(),
                     session_id: session_id.to_owned(),
                     conversation_count: 0,
@@ -202,22 +202,22 @@ impl PipelineService {
 
     async fn load_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<ProfileState> {
         Ok(self
             .deps
             .state
-            .get_profile(instance, profile)
+            .get_profile(department, profile)
             .await?
-            .unwrap_or_else(|| ProfileState::new(instance.clone(), profile.clone())))
+            .unwrap_or_else(|| ProfileState::new(department.clone(), profile.clone())))
     }
 
     /// Counts user rounds; triggers L1 at the warm-up threshold, otherwise
     /// (re)arms the idle debounce.
     async fn record_rounds(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         rounds: u32,
@@ -226,9 +226,9 @@ impl PipelineService {
             let _guard = self
                 .deps
                 .locks
-                .lock(&session_key(instance, scope, session_id))
+                .lock(&session_key(department, scope, session_id))
                 .await?;
-            let mut state = self.load_session(instance, scope, session_id).await?;
+            let mut state = self.load_session(department, scope, session_id).await?;
             let now = self.now();
             state.conversation_count += rounds;
             state.last_active_at = now;
@@ -247,7 +247,7 @@ impl PipelineService {
         };
         if triggered {
             self.enqueue_job(PipelineJob::L1 {
-                instance: instance.clone(),
+                department: department.clone(),
                 scope: scope.clone(),
                 session_id: session_id.to_owned(),
             })
@@ -264,10 +264,10 @@ impl PipelineService {
                 let _guard = self
                     .deps
                     .locks
-                    .lock(&session_key(&due.instance, &due.scope, &due.session_id))
+                    .lock(&session_key(&due.department, &due.scope, &due.session_id))
                     .await?;
                 let mut state = self
-                    .load_session(&due.instance, &due.scope, &due.session_id)
+                    .load_session(&due.department, &due.scope, &due.session_id)
                     .await?;
                 if state.l1_due_at.is_none_or(|t| t > now) {
                     continue;
@@ -280,7 +280,7 @@ impl PipelineService {
             };
             if fire {
                 self.enqueue_job(PipelineJob::L1 {
-                    instance: due.instance,
+                    department: due.department,
                     scope: due.scope,
                     session_id: due.session_id,
                 })
@@ -292,9 +292,9 @@ impl PipelineService {
                 let _guard = self
                     .deps
                     .locks
-                    .lock(&profile_key(&due.instance, &due.profile))
+                    .lock(&profile_key(&due.department, &due.profile))
                     .await?;
-                let mut state = self.load_profile(&due.instance, &due.profile).await?;
+                let mut state = self.load_profile(&due.department, &due.profile).await?;
                 if state.l2_due_at.is_none_or(|t| t > now) {
                     continue;
                 }
@@ -302,7 +302,7 @@ impl PipelineService {
                 self.deps.state.put_profile(&state).await?;
             }
             self.enqueue_job(PipelineJob::L2 {
-                instance: due.instance,
+                department: due.department,
                 profile: due.profile,
             })
             .await?;
@@ -314,14 +314,23 @@ impl PipelineService {
     pub async fn run(&self, job: &PipelineJob) -> DomainResult<()> {
         match job {
             PipelineJob::L1 {
-                instance,
+                department,
                 scope,
                 session_id,
-            } => self.run_l1(instance, scope, session_id).await,
-            PipelineJob::L2 { instance, profile } => self.run_l2(instance, profile).await,
-            PipelineJob::L3 { instance, profile } => self.run_l3(instance, profile).await,
-            PipelineJob::SkillExtract { instance, task_id } => match self.skill_runner.get() {
-                Some(runner) => runner.run_skill_task(instance, task_id).await,
+            } => self.run_l1(department, scope, session_id).await,
+            PipelineJob::L2 {
+                department,
+                profile,
+            } => self.run_l2(department, profile).await,
+            PipelineJob::L3 {
+                department,
+                profile,
+            } => self.run_l3(department, profile).await,
+            PipelineJob::SkillExtract {
+                department,
+                task_id,
+            } => match self.skill_runner.get() {
+                Some(runner) => runner.run_skill_task(department, task_id).await,
                 None => Ok(()),
             },
         }
@@ -329,7 +338,7 @@ impl PipelineService {
 
     async fn run_l1(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
     ) -> DomainResult<()> {
@@ -337,12 +346,12 @@ impl PipelineService {
             warn!("LLM not configured; skipping L1 extraction");
             return Ok(());
         }
-        let snapshot = self.load_session(instance, scope, session_id).await?;
+        let snapshot = self.load_session(department, scope, session_id).await?;
         let mut fetched = self
             .deps
             .conversations
             .after_seq(
-                instance,
+                department,
                 scope,
                 session_id,
                 snapshot.l1_cursor,
@@ -361,7 +370,7 @@ impl PipelineService {
             .deps
             .prompts
             .resolve(
-                instance,
+                department,
                 scope.team_id.as_str(),
                 scope.agent_id.as_str(),
                 Layer::L1,
@@ -371,7 +380,7 @@ impl PipelineService {
             .deps
             .l1
             .extract(
-                instance,
+                department,
                 scope,
                 session_id,
                 &batch,
@@ -383,7 +392,7 @@ impl PipelineService {
             Ok(outcome) => outcome,
             Err(err) => {
                 self.record_failure(
-                    instance,
+                    department,
                     Failure {
                         layer: Layer::L1,
                         team_id: scope.team_id.as_str(),
@@ -405,9 +414,9 @@ impl PipelineService {
             let _guard = self
                 .deps
                 .locks
-                .lock(&session_key(instance, scope, session_id))
+                .lock(&session_key(department, scope, session_id))
                 .await?;
-            let mut state = self.load_session(instance, scope, session_id).await?;
+            let mut state = self.load_session(department, scope, session_id).await?;
             state.l1_cursor = max_seq(state.l1_cursor, Some(last_seq));
             state.last_scene_name = outcome.last_scene.clone();
             state.last_l1_at = Some(self.now());
@@ -423,7 +432,7 @@ impl PipelineService {
             self.deps
                 .logs
                 .record(
-                    instance,
+                    department,
                     GenerationRecord {
                         layer: Layer::L1,
                         team_id: scope.team_id.as_str(),
@@ -456,7 +465,7 @@ impl PipelineService {
         }
         if !outcome.written.is_empty() {
             self.schedule_l2(
-                instance,
+                department,
                 &ProfileScope::from(scope),
                 outcome.written.len() as u32,
             )
@@ -464,7 +473,7 @@ impl PipelineService {
         }
         if has_more {
             self.enqueue_job(PipelineJob::L1 {
-                instance: instance.clone(),
+                department: department.clone(),
                 scope: scope.clone(),
                 session_id: session_id.to_owned(),
             })
@@ -476,16 +485,16 @@ impl PipelineService {
     /// Moves the L2 deadline earlier (never later) after new atoms.
     async fn schedule_l2(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         new_atoms: u32,
     ) -> DomainResult<()> {
         let _guard = self
             .deps
             .locks
-            .lock(&profile_key(instance, profile))
+            .lock(&profile_key(department, profile))
             .await?;
-        let mut state = self.load_profile(instance, profile).await?;
+        let mut state = self.load_profile(department, profile).await?;
         let now = self.now();
         let due_secs = next_l2_due(
             now.timestamp(),
@@ -499,15 +508,15 @@ impl PipelineService {
         self.deps.state.put_profile(&state).await
     }
 
-    async fn run_l2(&self, instance: &InstanceId, profile: &ProfileScope) -> DomainResult<()> {
+    async fn run_l2(&self, department: &DepartmentId, profile: &ProfileScope) -> DomainResult<()> {
         if !self.deps.llm.is_configured() {
             return Ok(());
         }
-        let snapshot = self.load_profile(instance, profile).await?;
+        let snapshot = self.load_profile(department, profile).await?;
         let mut fetched = self
             .deps
             .atoms
-            .after_seq(instance, profile, snapshot.l2_cursor, L2_ATOM_BATCH + 1)
+            .after_seq(department, profile, snapshot.l2_cursor, L2_ATOM_BATCH + 1)
             .await?;
         let has_more = fetched.len() > L2_ATOM_BATCH;
         fetched.truncate(L2_ATOM_BATCH);
@@ -515,9 +524,9 @@ impl PipelineService {
             let _guard = self
                 .deps
                 .locks
-                .lock(&profile_key(instance, profile))
+                .lock(&profile_key(department, profile))
                 .await?;
-            let mut state = self.load_profile(instance, profile).await?;
+            let mut state = self.load_profile(department, profile).await?;
             state.l2_pending = false;
             return self.deps.state.put_profile(&state).await;
         };
@@ -528,7 +537,7 @@ impl PipelineService {
             .deps
             .prompts
             .resolve(
-                instance,
+                department,
                 profile.team_id.as_str(),
                 profile.agent_id.as_str(),
                 Layer::L2,
@@ -537,13 +546,13 @@ impl PipelineService {
         let consolidated = self
             .deps
             .l2
-            .consolidate(instance, profile, &atoms, strategy.as_ref())
+            .consolidate(department, profile, &atoms, strategy.as_ref())
             .await;
         let outcome = match consolidated {
             Ok(outcome) => outcome,
             Err(err) => {
                 self.record_failure(
-                    instance,
+                    department,
                     Failure {
                         layer: Layer::L2,
                         team_id: profile.team_id.as_str(),
@@ -565,9 +574,9 @@ impl PipelineService {
             let _guard = self
                 .deps
                 .locks
-                .lock(&profile_key(instance, profile))
+                .lock(&profile_key(department, profile))
                 .await?;
-            let mut state = self.load_profile(instance, profile).await?;
+            let mut state = self.load_profile(department, profile).await?;
             let now = self.now();
             state.l2_cursor = max_seq(state.l2_cursor, Some(last_seq));
             state.last_l2_at = Some(now);
@@ -592,7 +601,7 @@ impl PipelineService {
             self.deps
                 .logs
                 .record(
-                    instance,
+                    department,
                     GenerationRecord {
                         layer: Layer::L2,
                         team_id: profile.team_id.as_str(),
@@ -623,9 +632,13 @@ impl PipelineService {
                 )
                 .await;
         }
-        if self.persona_due(instance, profile, &state).await?.is_some() {
+        if self
+            .persona_due(department, profile, &state)
+            .await?
+            .is_some()
+        {
             self.enqueue_job(PipelineJob::L3 {
-                instance: instance.clone(),
+                department: department.clone(),
                 profile: profile.clone(),
             })
             .await?;
@@ -635,19 +648,23 @@ impl PipelineService {
 
     async fn persona_due(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         state: &ProfileState,
     ) -> DomainResult<Option<String>> {
         let has_persona = self
             .deps
             .memory
-            .read_persona(instance, profile, None)
+            .read_persona(department, profile, None)
             .await?
             .is_some_and(|p| !strip_scene_navigation(&p.content).is_empty());
         let persona_state = PersonaState {
             has_persona,
-            scene_count: self.deps.memory.count_scenes(instance, profile, "").await?,
+            scene_count: self
+                .deps
+                .memory
+                .count_scenes(department, profile, "")
+                .await?,
             scenes_processed: state.scenes_processed,
             memories_since_last_persona: state.memories_since_persona,
             update_requested: state.persona_update_request.clone(),
@@ -658,12 +675,12 @@ impl PipelineService {
         ))
     }
 
-    async fn run_l3(&self, instance: &InstanceId, profile: &ProfileScope) -> DomainResult<()> {
+    async fn run_l3(&self, department: &DepartmentId, profile: &ProfileScope) -> DomainResult<()> {
         if !self.deps.llm.is_configured() {
             return Ok(());
         }
-        let snapshot = self.load_profile(instance, profile).await?;
-        let Some(trigger) = self.persona_due(instance, profile, &snapshot).await? else {
+        let snapshot = self.load_profile(department, profile).await?;
+        let Some(trigger) = self.persona_due(department, profile, &snapshot).await? else {
             return Ok(());
         };
         let started = self.now().timestamp_millis();
@@ -671,7 +688,7 @@ impl PipelineService {
             .deps
             .prompts
             .resolve(
-                instance,
+                department,
                 profile.team_id.as_str(),
                 profile.agent_id.as_str(),
                 Layer::L3,
@@ -681,7 +698,7 @@ impl PipelineService {
             .deps
             .l3
             .generate(
-                instance,
+                department,
                 profile,
                 snapshot.last_l3_at,
                 &trigger,
@@ -692,7 +709,7 @@ impl PipelineService {
             Ok(outcome) => outcome,
             Err(err) => {
                 self.record_failure(
-                    instance,
+                    department,
                     Failure {
                         layer: Layer::L3,
                         team_id: profile.team_id.as_str(),
@@ -720,9 +737,9 @@ impl PipelineService {
             let _guard = self
                 .deps
                 .locks
-                .lock(&profile_key(instance, profile))
+                .lock(&profile_key(department, profile))
                 .await?;
-            let mut state = self.load_profile(instance, profile).await?;
+            let mut state = self.load_profile(department, profile).await?;
             // Memories that arrived during generation still count.
             state.memories_since_persona = state
                 .memories_since_persona
@@ -737,7 +754,7 @@ impl PipelineService {
         self.deps
             .logs
             .record(
-                instance,
+                department,
                 GenerationRecord {
                     layer: Layer::L3,
                     team_id: profile.team_id.as_str(),
@@ -768,12 +785,12 @@ impl PipelineService {
 
     /// Records a generation whose LLM call (or parsing its answer) failed,
     /// so failures show up next to successes in the generation logs.
-    async fn record_failure(&self, instance: &InstanceId, f: Failure<'_>, err: &DomainError) {
+    async fn record_failure(&self, department: &DepartmentId, f: Failure<'_>, err: &DomainError) {
         let system_prompt = prompts::compose(f.layer, f.strategy);
         self.deps
             .logs
             .record(
-                instance,
+                department,
                 GenerationRecord {
                     layer: f.layer,
                     team_id: f.team_id,
@@ -794,29 +811,29 @@ impl PipelineService {
 
     pub async fn status(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<PipelineStatus> {
         Ok(PipelineStatus {
             worker: self.deps.metrics.snapshot(),
             queue: self.deps.queue.stats().await?,
-            sessions: self.deps.state.list_sessions(instance, limit).await?,
-            profiles: self.deps.state.list_profiles(instance, limit).await?,
+            sessions: self.deps.state.list_sessions(department, limit).await?,
+            profiles: self.deps.state.list_profiles(department, limit).await?,
         })
     }
 
     /// Forgets L2/L3 progress of a profile (used when its memory is cleared).
     pub async fn reset_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<()> {
         let _guard = self
             .deps
             .locks
-            .lock(&profile_key(instance, profile))
+            .lock(&profile_key(department, profile))
             .await?;
-        self.deps.state.delete_profile(instance, profile).await
+        self.deps.state.delete_profile(department, profile).await
     }
 }
 
@@ -824,13 +841,13 @@ impl PipelineService {
 impl ConversationObserver for PipelineService {
     async fn on_conversation(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         user_rounds: u32,
     ) {
         if let Err(err) = self
-            .record_rounds(instance, scope, session_id, user_rounds)
+            .record_rounds(department, scope, session_id, user_rounds)
             .await
         {
             warn!(error = %err, "failed to update pipeline state");

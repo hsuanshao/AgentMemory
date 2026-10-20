@@ -1,5 +1,5 @@
 //! HTTP calls to Core's user-scoped data plane. Only the user key is sent;
-//! the client never holds the instance API key.
+//! the client never holds the department API key.
 
 use std::time::Duration;
 
@@ -60,7 +60,7 @@ impl Api {
             .http
             .post(format!("{}/v3/{path}", self.cfg.server_url))
             .header("x-memory-user-key", &self.cfg.user_key)
-            .header("x-memory-service-id", &self.cfg.service_id)
+            .header("x-memory-department-id", &self.cfg.department_id)
             .json(body)
             .send()
             .map_err(|e| ApiError::Retryable(format!("{path}: {e}")))?;

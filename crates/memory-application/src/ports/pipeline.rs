@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use memory_domain::error::DomainResult;
 use memory_domain::memory::Layer;
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::{Deserialize, Serialize};
 
 use crate::common::Page;
@@ -14,7 +14,7 @@ use crate::common::Page;
 /// Per-session L1 scheduling state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
-    pub instance: InstanceId,
+    pub department: DepartmentId,
     pub scope: MemoryScope,
     pub session_id: String,
     pub conversation_count: u32,
@@ -31,7 +31,7 @@ pub struct SessionState {
 /// Per team + agent L2/L3 state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileState {
-    pub instance: InstanceId,
+    pub department: DepartmentId,
     pub profile: ProfileScope,
     pub l2_pending: bool,
     pub l2_due_at: Option<DateTime<Utc>>,
@@ -45,9 +45,9 @@ pub struct ProfileState {
 }
 
 impl ProfileState {
-    pub fn new(instance: InstanceId, profile: ProfileScope) -> Self {
+    pub fn new(department: DepartmentId, profile: ProfileScope) -> Self {
         Self {
-            instance,
+            department,
             profile,
             l2_pending: false,
             l2_due_at: None,
@@ -66,57 +66,57 @@ impl ProfileState {
 pub trait PipelineStateRepository: Send + Sync {
     async fn get_session(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
     ) -> DomainResult<Option<SessionState>>;
     async fn put_session(&self, state: &SessionState) -> DomainResult<()>;
     async fn get_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<Option<ProfileState>>;
     async fn put_profile(&self, state: &ProfileState) -> DomainResult<()>;
     /// Sessions / profiles whose deadline is at or before `now`, across
-    /// every known instance.
+    /// every known department.
     async fn due_sessions(&self, now: DateTime<Utc>) -> DomainResult<Vec<SessionState>>;
     async fn due_profiles(&self, now: DateTime<Utc>) -> DomainResult<Vec<ProfileState>>;
     async fn list_sessions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<Vec<SessionState>>;
     async fn list_profiles(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<Vec<ProfileState>>;
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<()>;
-    /// Drops all scheduling state of an instance.
-    async fn delete_instance(&self, instance: &InstanceId) -> DomainResult<()>;
+    /// Drops all scheduling state of a department.
+    async fn delete_department(&self, department: &DepartmentId) -> DomainResult<()>;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PipelineJob {
     L1 {
-        instance: InstanceId,
+        department: DepartmentId,
         scope: MemoryScope,
         session_id: String,
     },
     L2 {
-        instance: InstanceId,
+        department: DepartmentId,
         profile: ProfileScope,
     },
     L3 {
-        instance: InstanceId,
+        department: DepartmentId,
         profile: ProfileScope,
     },
     SkillExtract {
-        instance: InstanceId,
+        department: DepartmentId,
         task_id: String,
     },
 }
@@ -126,14 +126,24 @@ impl PipelineJob {
     pub fn serial_key(&self) -> String {
         match self {
             Self::L1 {
-                instance,
+                department,
                 scope,
                 session_id,
-            } => format!("{instance}/{}/s:{session_id}", scope.key()),
-            Self::L2 { instance, profile } | Self::L3 { instance, profile } => {
-                format!("{instance}/{}", profile.key())
+            } => format!("{department}/{}/s:{session_id}", scope.key()),
+            Self::L2 {
+                department,
+                profile,
             }
-            Self::SkillExtract { instance, task_id } => format!("{instance}/skill/{task_id}"),
+            | Self::L3 {
+                department,
+                profile,
+            } => {
+                format!("{department}/{}", profile.key())
+            }
+            Self::SkillExtract {
+                department,
+                task_id,
+            } => format!("{department}/skill/{task_id}"),
         }
     }
 
@@ -146,12 +156,12 @@ impl PipelineJob {
         }
     }
 
-    pub fn instance(&self) -> &InstanceId {
+    pub fn department(&self) -> &DepartmentId {
         match self {
-            Self::L1 { instance, .. }
-            | Self::L2 { instance, .. }
-            | Self::L3 { instance, .. }
-            | Self::SkillExtract { instance, .. } => instance,
+            Self::L1 { department, .. }
+            | Self::L2 { department, .. }
+            | Self::L3 { department, .. }
+            | Self::SkillExtract { department, .. } => department,
         }
     }
 }
@@ -175,16 +185,16 @@ pub struct DeadLetter {
 /// Which dead letters to list or redrive.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DeadLetterFilter {
-    pub instance: Option<InstanceId>,
+    pub department: Option<DepartmentId>,
     /// A job kind (`PipelineJob::kind`).
     pub kind: Option<String>,
 }
 
 impl DeadLetterFilter {
     pub fn matches(&self, letter: &DeadLetter) -> bool {
-        self.instance
+        self.department
             .as_ref()
-            .is_none_or(|i| i == letter.job.instance())
+            .is_none_or(|i| i == letter.job.department())
             && self.kind.as_deref().is_none_or(|k| k == letter.job.kind())
     }
 }
@@ -214,7 +224,7 @@ pub trait JobQueue: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PromptTarget {
-    Instance,
+    Department,
     Team,
     Agent,
 }
@@ -264,23 +274,26 @@ pub struct PromptSettingFilter {
 
 #[async_trait]
 pub trait MemoryPromptRepository: Send + Sync {
-    async fn insert(&self, instance: &InstanceId, prompt: &MemoryPrompt) -> DomainResult<()>;
-    async fn get(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<MemoryPrompt>>;
-    async fn update(&self, instance: &InstanceId, prompt: &MemoryPrompt) -> DomainResult<()>;
-    async fn delete(&self, instance: &InstanceId, ids: &[String]) -> DomainResult<usize>;
+    async fn insert(&self, department: &DepartmentId, prompt: &MemoryPrompt) -> DomainResult<()>;
+    async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<MemoryPrompt>>;
+    async fn update(&self, department: &DepartmentId, prompt: &MemoryPrompt) -> DomainResult<()>;
+    async fn delete(&self, department: &DepartmentId, ids: &[String]) -> DomainResult<usize>;
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Option<Layer>,
         page: Page,
         newest_first: bool,
     ) -> DomainResult<Vec<MemoryPrompt>>;
-    async fn count(&self, instance: &InstanceId) -> DomainResult<usize>;
-    async fn put_setting(&self, instance: &InstanceId, setting: &PromptSetting)
-        -> DomainResult<()>;
+    async fn count(&self, department: &DepartmentId) -> DomainResult<usize>;
+    async fn put_setting(
+        &self,
+        department: &DepartmentId,
+        setting: &PromptSetting,
+    ) -> DomainResult<()>;
     async fn clear_setting(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         target: PromptTarget,
         team_id: Option<&str>,
         agent_id: Option<&str>,
@@ -288,14 +301,18 @@ pub trait MemoryPromptRepository: Send + Sync {
     ) -> DomainResult<usize>;
     async fn list_settings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         page: Page,
     ) -> DomainResult<Vec<PromptSetting>>;
-    async fn append_log(&self, instance: &InstanceId, entry: &PromptLogEntry) -> DomainResult<()>;
+    async fn append_log(
+        &self,
+        department: &DepartmentId,
+        entry: &PromptLogEntry,
+    ) -> DomainResult<()>;
     async fn list_logs(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         action: Option<&str>,
         from_ms: i64,
@@ -343,26 +360,29 @@ pub struct GenerationLogFilter {
 
 #[async_trait]
 pub trait GenerationLogRepository: Send + Sync {
-    async fn append(&self, instance: &InstanceId, log: &GenerationLog) -> DomainResult<()>;
-    async fn get(&self, instance: &InstanceId, log_id: &str)
-        -> DomainResult<Option<GenerationLog>>;
+    async fn append(&self, department: &DepartmentId, log: &GenerationLog) -> DomainResult<()>;
+    async fn get(
+        &self,
+        department: &DepartmentId,
+        log_id: &str,
+    ) -> DomainResult<Option<GenerationLog>>;
     async fn find_by_output(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Layer,
         memory_id: &str,
     ) -> DomainResult<Option<GenerationLog>>;
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &GenerationLogFilter,
         limit: usize,
     ) -> DomainResult<Vec<GenerationLog>>;
-    async fn count(&self, instance: &InstanceId) -> DomainResult<usize>;
+    async fn count(&self, department: &DepartmentId) -> DomainResult<usize>;
     /// How many generations started since `from_ms`, per layer and status.
     async fn summarize(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         from_ms: i64,
     ) -> DomainResult<Vec<GenerationCount>>;
 }

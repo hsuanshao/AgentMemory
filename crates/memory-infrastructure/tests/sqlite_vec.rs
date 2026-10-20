@@ -8,25 +8,25 @@ use memory_application::common::TimeRange;
 use memory_application::ports::memory::{AtomFilter, AtomRepository};
 use memory_domain::memory::{AtomType, AtomicMemory};
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
-use memory_infrastructure::sqlite::db::InstancePool;
+use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
+use memory_infrastructure::sqlite::db::DepartmentPool;
 use memory_infrastructure::sqlite::memory_store::SqliteMemoryStore;
 use memory_infrastructure::sqlite::vec_index;
 use rusqlite::{Connection, OptionalExtension};
 
 struct Fixture {
     _dir: tempfile::TempDir,
-    pool: Arc<InstancePool>,
-    instance: InstanceId,
+    pool: Arc<DepartmentPool>,
+    department: DepartmentId,
 }
 
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         Self {
-            pool: Arc::new(InstancePool::new(dir.path().to_path_buf(), 4)),
+            pool: Arc::new(DepartmentPool::new(dir.path().to_path_buf(), 4)),
             _dir: dir,
-            instance: SegmentId::parse("instance", "ins-vec").unwrap(),
+            department: SegmentId::parse("department", "ins-vec").unwrap(),
         }
     }
 
@@ -36,7 +36,7 @@ impl Fixture {
 
     /// A side connection to inspect the index directly.
     fn inspect(&self) -> Connection {
-        open_db(&self.pool.instance_dir(&self.instance).join("memory.db"))
+        open_db(&self.pool.department_dir(&self.department).join("memory.db"))
     }
 }
 
@@ -82,7 +82,7 @@ fn atom(id: &str, scope: MemoryScope) -> AtomicMemory {
 }
 
 async fn put(store: &SqliteMemoryStore, f: &Fixture, a: &AtomicMemory, e: Option<&[f32]>) {
-    store.upsert(&f.instance, a, e).await.unwrap();
+    store.upsert(&f.department, a, e).await.unwrap();
 }
 
 async fn search(
@@ -94,7 +94,7 @@ async fn search(
     limit: usize,
 ) -> Vec<(String, f64)> {
     store
-        .vector_search(&f.instance, scope, q, filter, limit)
+        .vector_search(&f.department, scope, q, filter, limit)
         .await
         .unwrap()
         .into_iter()
@@ -270,7 +270,7 @@ async fn index_follows_replace_delete_and_delete_profile() {
 
     assert_eq!(
         store
-            .delete(&f.instance, &alice, &["a2".into()])
+            .delete(&f.department, &alice, &["a2".into()])
             .await
             .unwrap(),
         1
@@ -283,7 +283,7 @@ async fn index_follows_replace_delete_and_delete_profile() {
     );
 
     let profile = ProfileScope::from(&bob);
-    AtomRepository::delete_profile(&store, &f.instance, &profile)
+    AtomRepository::delete_profile(&store, &f.department, &profile)
         .await
         .unwrap();
     assert_eq!(indexed_rows(&conn), 0);

@@ -15,16 +15,20 @@ use memory_domain::meta::{
     UserStatus, UserType, Visibility,
 };
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
-use memory_infrastructure::sqlite::db::InstancePool;
+use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
+use memory_infrastructure::sqlite::db::DepartmentPool;
 use memory_infrastructure::sqlite::memory_store::SqliteMemoryStore;
 use memory_infrastructure::sqlite::meta_store::SqliteMetaStore;
 use serde_json::json;
 
-fn setup() -> (tempfile::TempDir, Arc<InstancePool>, InstanceId) {
+fn setup() -> (tempfile::TempDir, Arc<DepartmentPool>, DepartmentId) {
     let dir = tempfile::tempdir().unwrap();
-    let pool = Arc::new(InstancePool::new(dir.path().to_path_buf(), 4));
-    (dir, pool, SegmentId::parse("instance", "ins-test").unwrap())
+    let pool = Arc::new(DepartmentPool::new(dir.path().to_path_buf(), 4));
+    (
+        dir,
+        pool,
+        SegmentId::parse("department", "ins-test").unwrap(),
+    )
 }
 
 fn scope(user: &str) -> MemoryScope {
@@ -64,11 +68,11 @@ fn atom(id: &str, content: &str, user: &str) -> AtomicMemory {
 
 #[tokio::test]
 async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
-    let (_dir, pool, instance) = setup();
+    let (_dir, pool, department) = setup();
     let store = SqliteMemoryStore::new(pool, None);
     store
         .append(
-            &instance,
+            &department,
             &[
                 message("m1", "下週一要發布新版本", "alice", 0),
                 message("m2", "下週一要發布新版本", "bob", 1),
@@ -79,9 +83,9 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
 
     // Equal or back-dated recorded_at must not hide rows from the cursor.
     let old = message("m3", "older but stored later", "alice", -60_000);
-    store.append(&instance, &[old]).await.unwrap();
+    store.append(&department, &[old]).await.unwrap();
     let tail =
-        ConversationRepository::after_seq(&store, &instance, &scope("alice"), "s1", None, 10)
+        ConversationRepository::after_seq(&store, &department, &scope("alice"), "s1", None, 10)
             .await
             .unwrap();
     assert_eq!(
@@ -91,7 +95,7 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
 
     let hits = store
         .search(
-            &instance,
+            &department,
             &scope("alice"),
             "發布",
             &ConversationFilter::default(),
@@ -104,7 +108,7 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
 
     let after_first = ConversationRepository::after_seq(
         &store,
-        &instance,
+        &department,
         &scope("alice"),
         "s1",
         Some(tail[0].seq),
@@ -115,7 +119,7 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
     assert_eq!(after_first.len(), 1);
     let none_left = ConversationRepository::after_seq(
         &store,
-        &instance,
+        &department,
         &scope("alice"),
         "s1",
         Some(after_first[0].seq),
@@ -128,11 +132,11 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
 
 #[tokio::test]
 async fn atoms_support_keyword_vector_and_profile_queries() {
-    let (_dir, pool, instance) = setup();
+    let (_dir, pool, department) = setup();
     let store = SqliteMemoryStore::new(pool, None);
     store
         .upsert(
-            &instance,
+            &department,
             &atom("a1", "prefers Rust for backend services", "alice"),
             Some(&[1.0, 0.0]),
         )
@@ -140,7 +144,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
         .unwrap();
     store
         .upsert(
-            &instance,
+            &department,
             &atom("a2", "likes hiking on weekends", "bob"),
             Some(&[0.0, 1.0]),
         )
@@ -149,7 +153,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
 
     let kw = store
         .keyword_search(
-            &instance,
+            &department,
             &scope("alice"),
             "rust backend",
             &AtomFilter::default(),
@@ -160,7 +164,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
     assert_eq!(kw.len(), 1);
     let vec = store
         .vector_search(
-            &instance,
+            &department,
             &scope("alice"),
             &[1.0, 0.0],
             &AtomFilter::default(),
@@ -173,7 +177,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
     let profile = ProfileScope::from(&scope("alice"));
     let (all, total) = AtomRepository::query(
         &store,
-        &instance,
+        &department,
         AtomSelector::Profile(&profile),
         &AtomFilter::default(),
         Page {
@@ -186,14 +190,14 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
     assert_eq!((all.len(), total), (2, 2), "profile scope spans users");
 
     assert_eq!(
-        AtomRepository::delete_profile(&store, &instance, &profile)
+        AtomRepository::delete_profile(&store, &department, &profile)
             .await
             .unwrap(),
         2
     );
     assert!(store
         .keyword_search(
-            &instance,
+            &department,
             &scope("alice"),
             "rust",
             &AtomFilter::default(),
@@ -206,12 +210,12 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
 
 #[tokio::test]
 async fn profile_files_are_versioned() {
-    let (_dir, pool, instance) = setup();
+    let (_dir, pool, department) = setup();
     let store = SqliteMemoryStore::new(pool, None);
     let profile = ProfileScope::from(&scope("alice"));
     assert_eq!(
         store
-            .write(&instance, &profile, "persona.md", "v1")
+            .write(&department, &profile, "persona.md", "v1")
             .await
             .unwrap()
             .version,
@@ -219,7 +223,7 @@ async fn profile_files_are_versioned() {
     );
     assert_eq!(
         store
-            .write(&instance, &profile, "persona.md", "v1")
+            .write(&department, &profile, "persona.md", "v1")
             .await
             .unwrap()
             .version,
@@ -228,30 +232,30 @@ async fn profile_files_are_versioned() {
     );
     assert_eq!(
         store
-            .write(&instance, &profile, "persona.md", "v2")
+            .write(&department, &profile, "persona.md", "v2")
             .await
             .unwrap()
             .version,
         2
     );
     let old = store
-        .read(&instance, &profile, "persona.md", Some(1))
+        .read(&department, &profile, "persona.md", Some(1))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(old.content, "v1");
 
     store
-        .write(&instance, &profile, "scene_blocks/a.md", "a")
+        .write(&department, &profile, "scene_blocks/a.md", "a")
         .await
         .unwrap();
     store
-        .write(&instance, &profile, "scene_blocks/b.md", "b")
+        .write(&department, &profile, "scene_blocks/b.md", "b")
         .await
         .unwrap();
     assert_eq!(
         store
-            .list(&instance, &profile, "scene_blocks/")
+            .list(&department, &profile, "scene_blocks/")
             .await
             .unwrap()
             .len(),
@@ -259,13 +263,13 @@ async fn profile_files_are_versioned() {
     );
     assert_eq!(
         store
-            .remove(&instance, &profile, "scene_blocks/")
+            .remove(&department, &profile, "scene_blocks/")
             .await
             .unwrap(),
         2
     );
     assert_eq!(
-        ProfileFileRepository::count(&store, &instance, None, "persona.md")
+        ProfileFileRepository::count(&store, &department, None, "persona.md")
             .await
             .unwrap(),
         1
@@ -300,29 +304,29 @@ fn key(id: &str, user: &str, value: &str, default: bool, created: &str) -> UserK
 
 #[tokio::test]
 async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
-    let (_dir, pool, instance) = setup();
+    let (_dir, pool, department) = setup();
     let store = SqliteMetaStore::new(pool);
     store
         .create_user(
-            &instance,
+            &department,
             &user("usr-1", "alice"),
             &key("k1", "usr-1", "sk-mem-a", true, "1"),
         )
         .await
         .unwrap();
     store
-        .insert_key(&instance, &key("k2", "usr-1", "sk-mem-b", false, "2"))
+        .insert_key(&department, &key("k2", "usr-1", "sk-mem-b", false, "2"))
         .await
         .unwrap();
     store
-        .insert_key(&instance, &key("k3", "usr-1", "sk-mem-c", false, "3"))
+        .insert_key(&department, &key("k3", "usr-1", "sk-mem-c", false, "3"))
         .await
         .unwrap();
 
-    store.delete_key(&instance, "k1").await.unwrap();
+    store.delete_key(&department, "k1").await.unwrap();
     assert!(
         store
-            .get_key(&instance, "k2")
+            .get_key(&department, "k2")
             .await
             .unwrap()
             .unwrap()
@@ -330,7 +334,7 @@ async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
     );
     assert!(
         !store
-            .get_key(&instance, "k3")
+            .get_key(&department, "k3")
             .await
             .unwrap()
             .unwrap()
@@ -339,7 +343,7 @@ async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
     assert!(
         store
             .create_user(
-                &instance,
+                &department,
                 &user("usr-2", "alice"),
                 &key("k4", "usr-2", "sk-mem-d", true, "4")
             )
@@ -351,7 +355,7 @@ async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
 
 #[tokio::test]
 async fn deleting_an_asset_cascades_bindings() {
-    let (_dir, pool, instance) = setup();
+    let (_dir, pool, department) = setup();
     let store = SqliteMetaStore::new(pool);
     let asset = Asset {
         asset_id: "ast-1".into(),
@@ -374,7 +378,7 @@ async fn deleting_an_asset_cascades_bindings() {
         updated_at: "1".into(),
         metadata_json: json!({}),
     };
-    store.insert_asset(&instance, &asset).await.unwrap();
+    store.insert_asset(&department, &asset).await.unwrap();
     let binding = AgentBinding {
         id: "b".into(),
         agent_id: "agt-1".into(),
@@ -385,11 +389,11 @@ async fn deleting_an_asset_cascades_bindings() {
         created_by: "usr-1".into(),
         created_at: "1".into(),
     };
-    store.ensure_binding(&instance, &binding).await.unwrap();
-    store.touch_asset(&instance, "ast-1", "2").await.unwrap();
+    store.ensure_binding(&department, &binding).await.unwrap();
+    store.touch_asset(&department, "ast-1", "2").await.unwrap();
     assert_eq!(
         store
-            .get_asset(&instance, "ast-1")
+            .get_asset(&department, "ast-1")
             .await
             .unwrap()
             .unwrap()
@@ -398,11 +402,11 @@ async fn deleting_an_asset_cascades_bindings() {
     );
 
     store
-        .delete_assets(&instance, &["ast-1".into()])
+        .delete_assets(&department, &["ast-1".into()])
         .await
         .unwrap();
     assert!(store
-        .list_bindings(&instance, "agt-1")
+        .list_bindings(&department, "agt-1")
         .await
         .unwrap()
         .is_empty());

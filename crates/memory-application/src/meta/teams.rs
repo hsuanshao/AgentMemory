@@ -2,7 +2,7 @@
 
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::meta::{MemberStatus, Team, TeamMember, TeamRole, TeamStatus};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -45,7 +45,7 @@ pub struct TeamMemberView {
 impl MetaService {
     pub async fn create_team(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: CreateTeamInput,
     ) -> DomainResult<Team> {
@@ -54,13 +54,13 @@ impl MetaService {
             return Err(denied("owner must be the caller"));
         }
         self.store
-            .get_user(instance, &input.owner_user_id)
+            .get_user(department, &input.owner_user_id)
             .await?
             .ok_or_else(|| DomainError::not_found("user", &input.owner_user_id))?;
-        if self.store.count_teams(instance).await? >= self.settings.max_teams_per_instance {
+        if self.store.count_teams(department).await? >= self.settings.max_teams_per_department {
             return Err(limit_exceeded(
                 "team_limit_exceeded",
-                "team limit reached for this instance",
+                "team limit reached for this department",
             ));
         }
         let now = self.now();
@@ -82,27 +82,27 @@ impl MetaService {
             status: MemberStatus::Active,
             joined_at: now,
         };
-        self.store.create_team(instance, &team, &owner).await?;
+        self.store.create_team(department, &team, &owner).await?;
         Ok(team)
     }
 
-    pub async fn get_team(&self, instance: &InstanceId, team_id: &str) -> DomainResult<Team> {
+    pub async fn get_team(&self, department: &DepartmentId, team_id: &str) -> DomainResult<Team> {
         self.store
-            .get_team(instance, team_id)
+            .get_team(department, team_id)
             .await?
             .ok_or_else(|| DomainError::not_found("team", team_id))
     }
 
     async fn require_team_manager(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team: &Team,
         caller: &Caller,
     ) -> DomainResult<()> {
         if team.owner_user_id == caller.user_id || caller.is_system_admin {
             return Ok(());
         }
-        self.require_team_admin(instance, &team.team_id, caller)
+        self.require_team_admin(department, &team.team_id, caller)
             .await
             .map(|_| ())
     }
@@ -110,12 +110,12 @@ impl MetaService {
     /// The owner cannot be changed through update.
     pub async fn update_team(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: UpdateTeamInput,
     ) -> DomainResult<Team> {
-        let mut team = self.get_team(instance, &input.team_id).await?;
-        self.require_team_manager(instance, &team, caller).await?;
+        let mut team = self.get_team(department, &input.team_id).await?;
+        self.require_team_manager(department, &team, caller).await?;
         if let Some(name) = input.name {
             require_non_empty("name", &name)?;
             team.name = name;
@@ -130,23 +130,23 @@ impl MetaService {
             team.metadata_json = meta;
         }
         team.updated_at = self.now();
-        self.store.update_team(instance, &team).await?;
+        self.store.update_team(department, &team).await?;
         Ok(team)
     }
 
     pub async fn delete_teams(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         ids: &[String],
     ) -> DomainResult<BatchDeleteResult> {
         let mut allowed = Vec::new();
         let mut result = BatchDeleteResult::default();
         for id in ids {
-            match self.store.get_team(instance, id).await? {
+            match self.store.get_team(department, id).await? {
                 Some(team)
                     if self
-                        .require_team_manager(instance, &team, caller)
+                        .require_team_manager(department, &team, caller)
                         .await
                         .is_ok() =>
                 {
@@ -162,7 +162,7 @@ impl MetaService {
                 }),
             }
         }
-        let deleted = self.store.delete_teams(instance, &allowed).await?;
+        let deleted = self.store.delete_teams(department, &allowed).await?;
         result.deleted_ids = deleted.deleted_ids;
         result.failed.extend(deleted.failed);
         Ok(result)
@@ -172,7 +172,7 @@ impl MetaService {
     /// system admins.
     pub async fn list_teams(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_id: Option<&str>,
         name: Option<&str>,
         pagination: Pagination,
@@ -180,7 +180,7 @@ impl MetaService {
         let page = pagination.page();
         let (teams, total) = self
             .store
-            .list_teams_of_user(instance, user_id, name, page)
+            .list_teams_of_user(department, user_id, name, page)
             .await?;
         Ok(page_of(teams, total, page))
     }
@@ -189,20 +189,20 @@ impl MetaService {
     /// cannot be demoted.
     pub async fn add_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         input: AddMemberInput,
     ) -> DomainResult<TeamMember> {
-        let team = self.get_team(instance, &input.team_id).await?;
+        let team = self.get_team(department, &input.team_id).await?;
         if !caller.is_system_admin {
-            self.require_team_admin(instance, &team.team_id, caller)
+            self.require_team_admin(department, &team.team_id, caller)
                 .await?;
         }
         if input.user_id == caller.user_id {
             return Err(denied("cannot add yourself"));
         }
         self.store
-            .get_user(instance, &input.user_id)
+            .get_user(department, &input.user_id)
             .await?
             .ok_or_else(|| DomainError::not_found("user", &input.user_id))?;
         let role = input
@@ -216,7 +216,7 @@ impl MetaService {
         }
         let existing = self
             .store
-            .get_member(instance, &team.team_id, &input.user_id)
+            .get_member(department, &team.team_id, &input.user_id)
             .await?;
         if existing
             .as_ref()
@@ -237,25 +237,29 @@ impl MetaService {
             status: MemberStatus::Active,
             joined_at: self.now(),
         };
-        self.store.upsert_member(instance, &member).await?;
+        self.store.upsert_member(department, &member).await?;
         Ok(member)
     }
 
     pub async fn remove_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         team_id: &str,
         user_id: &str,
     ) -> DomainResult<bool> {
-        let team = self.get_team(instance, team_id).await?;
+        let team = self.get_team(department, team_id).await?;
         if !caller.is_system_admin {
-            self.require_team_admin(instance, team_id, caller).await?;
+            self.require_team_admin(department, team_id, caller).await?;
         }
         if team.owner_user_id == user_id {
             return Err(denied("the team owner cannot be removed"));
         }
-        if !self.store.remove_member(instance, team_id, user_id).await? {
+        if !self
+            .store
+            .remove_member(department, team_id, user_id)
+            .await?
+        {
             return Err(DomainError::not_found("member", user_id));
         }
         Ok(true)
@@ -263,12 +267,12 @@ impl MetaService {
 
     async fn with_username(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         member: TeamMember,
     ) -> DomainResult<TeamMemberView> {
         let username = self
             .store
-            .get_user(instance, &member.user_id)
+            .get_user(department, &member.user_id)
             .await?
             .map(|u| u.username);
         Ok(TeamMemberView { member, username })
@@ -276,38 +280,38 @@ impl MetaService {
 
     pub async fn list_members(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         team_id: &str,
         pagination: Pagination,
     ) -> DomainResult<MetaPage<TeamMemberView>> {
         if !caller.is_system_admin {
-            self.require_member(instance, team_id, caller).await?;
+            self.require_member(department, team_id, caller).await?;
         }
         let page = pagination.page();
-        let (members, total) = self.store.list_members(instance, team_id, page).await?;
+        let (members, total) = self.store.list_members(department, team_id, page).await?;
         let mut views = Vec::with_capacity(members.len());
         for m in members {
-            views.push(self.with_username(instance, m).await?);
+            views.push(self.with_username(department, m).await?);
         }
         Ok(page_of(views, total, page))
     }
 
     pub async fn get_member(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         caller: &Caller,
         team_id: &str,
         user_id: &str,
     ) -> DomainResult<TeamMemberView> {
         if !caller.is_system_admin {
-            self.require_member(instance, team_id, caller).await?;
+            self.require_member(department, team_id, caller).await?;
         }
         let member = self
             .store
-            .get_member(instance, team_id, user_id)
+            .get_member(department, team_id, user_id)
             .await?
             .ok_or_else(|| DomainError::not_found("member", user_id))?;
-        self.with_username(instance, member).await
+        self.with_username(department, member).await
     }
 }

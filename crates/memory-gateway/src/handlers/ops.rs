@@ -1,5 +1,5 @@
 //! Health, monitoring, prompts, generation logs, knowledge metadata,
-//! chat-memory clearing, instance destruction and legacy v1 endpoints.
+//! chat-memory clearing, department destruction and legacy v1 endpoints.
 
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ use memory_application::ports::pipeline::{
     DeadLetterFilter, ProfileState, PromptSettingFilter, PromptTarget, SessionState,
 };
 use memory_domain::memory::Layer;
-use memory_domain::scope::{InstanceId, SegmentId};
+use memory_domain::scope::{DepartmentId, SegmentId};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -92,7 +92,7 @@ pub async fn pipeline_status(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let limit = body
         .get("limit")
         .and_then(Value::as_u64)
@@ -101,7 +101,7 @@ pub async fn pipeline_status(
     let status = s
         .services
         .pipeline
-        .status(&instance, limit)
+        .status(&department, limit)
         .await
         .map_err(|e| ctx.err(e))?;
     let every_n = memory_domain::pipeline::PipelineSettings::default().every_n_conversations;
@@ -115,10 +115,10 @@ pub async fn pipeline_status(
     ))
 }
 
-/// `{kind?, limit?}` → the job filter for this instance's dead letters.
+/// `{kind?, limit?}` → the job filter for this department's dead letters.
 fn dead_letter_filter(
     ctx: &Ctx,
-    instance: InstanceId,
+    department: DepartmentId,
     body: &Value,
 ) -> Result<DeadLetterFilter, ApiError> {
     let kind = match body.get("kind").and_then(Value::as_str) {
@@ -132,7 +132,7 @@ fn dead_letter_filter(
         }
     };
     Ok(DeadLetterFilter {
-        instance: Some(instance),
+        department: Some(department),
         kind,
     })
 }
@@ -149,7 +149,7 @@ pub async fn dead_letter_list(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let filter = dead_letter_filter(&ctx, ctx.instance()?, &body)?;
+    let filter = dead_letter_filter(&ctx, ctx.department()?, &body)?;
     let items = s
         .services
         .pipeline
@@ -176,7 +176,7 @@ pub async fn dead_letter_redrive(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let filter = dead_letter_filter(&ctx, ctx.instance()?, &body)?;
+    let filter = dead_letter_filter(&ctx, ctx.department()?, &body)?;
     let requeued = s
         .services
         .pipeline
@@ -191,7 +191,7 @@ pub async fn generation_log_summary(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let hours = body
         .get("hours")
         .and_then(Value::as_i64)
@@ -200,7 +200,7 @@ pub async fn generation_log_summary(
     let (from_ms, items) = s
         .services
         .generation_logs
-        .summary(&instance, hours)
+        .summary(&department, hours)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -218,12 +218,12 @@ pub async fn generation_log_summary(
 }
 
 pub async fn stats_overview(State(s): State<SharedState>, ctx: Ctx) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     Ok(ok(
         &ctx.request_id,
         s.services
             .stats
-            .overview(&instance)
+            .overview(&department)
             .await
             .map_err(|e| ctx.err(e))?,
     ))
@@ -254,7 +254,7 @@ pub async fn generation_log_list(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let status = body
         .get("status")
         .and_then(Value::as_str)
@@ -264,7 +264,7 @@ pub async fn generation_log_list(
         .services
         .generation_logs
         .list(
-            &instance,
+            &department,
             layer_of(&ctx, &body)?,
             status,
             ms_range(&body),
@@ -284,15 +284,15 @@ pub async fn generation_log_get(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let logs = &s.services.generation_logs;
     let log = match (
         body.get("log_id").and_then(Value::as_str),
         body.get("memory_id").and_then(Value::as_str),
         layer_of(&ctx, &body)?,
     ) {
-        (Some(id), None, _) => logs.get(&instance, id).await,
-        (None, Some(memory), Some(layer)) => logs.find_by_memory(&instance, layer, memory).await,
+        (Some(id), None, _) => logs.get(&department, id).await,
+        (None, Some(memory), Some(layer)) => logs.find_by_memory(&department, layer, memory).await,
         _ => {
             return Err(ApiError::bad_request(
                 &ctx.request_id,
@@ -318,13 +318,13 @@ pub async fn prompt_create(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let input: PromptCreate = ctx.parse(&body)?;
     let layer = Layer::parse(&input.layer).map_err(|e| ctx.err(e))?;
     let p = s
         .services
         .prompts
-        .create(&instance, &input.name, layer, &input.prompt)
+        .create(&department, &input.name, layer, &input.prompt)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -347,13 +347,13 @@ pub async fn prompt_get(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let prompts = &s.services.prompts;
     let str_of = |k: &str| body.get(k).and_then(Value::as_str);
     if let Some(id) = str_of("memory_prompt_id") {
         return Ok(ok(
             &ctx.request_id,
-            prompts.get(&instance, id).await.map_err(|e| ctx.err(e))?,
+            prompts.get(&department, id).await.map_err(|e| ctx.err(e))?,
         ));
     }
     let layer = layer_of(&ctx, &body)?.ok_or_else(|| {
@@ -362,7 +362,7 @@ pub async fn prompt_get(
     if str_of("team_id").is_some() || str_of("agent_id").is_some() {
         let resolved = prompts
             .resolve(
-                &instance,
+                &department,
                 str_of("team_id").unwrap_or(""),
                 str_of("agent_id").unwrap_or(""),
                 layer,
@@ -381,7 +381,7 @@ pub async fn prompt_get(
     }
     let items = prompts
         .list(
-            &instance,
+            &department,
             Some(layer),
             list_page(&body),
             order_newest(&body),
@@ -396,7 +396,7 @@ pub async fn prompt_update(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let id = body
         .get("memory_prompt_id")
         .and_then(Value::as_str)
@@ -405,7 +405,7 @@ pub async fn prompt_update(
         .services
         .prompts
         .update(
-            &instance,
+            &department,
             id,
             body.get("name").and_then(Value::as_str),
             body.get("prompt").and_then(Value::as_str),
@@ -423,7 +423,7 @@ pub async fn prompt_delete(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let mut ids: Vec<String> = ctx.parse(body.get("memory_prompt_ids").unwrap_or(&Value::Null))?;
     ids.sort();
     ids.dedup();
@@ -436,7 +436,7 @@ pub async fn prompt_delete(
     let deleted = s
         .services
         .prompts
-        .delete(&instance, &ids)
+        .delete(&department, &ids)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -460,7 +460,7 @@ pub async fn prompt_set(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let input: PromptSet = ctx.parse(&body)?;
     let layer = Layer::parse(&input.layer).map_err(|e| ctx.err(e))?;
     let action = match (input.action.as_str(), input.memory_prompt_id) {
@@ -485,7 +485,7 @@ pub async fn prompt_set(
         .services
         .prompts
         .set(
-            &instance,
+            &department,
             layer,
             action,
             ApplyTarget {
@@ -502,7 +502,7 @@ fn setting_filter(ctx: &Ctx, body: &Value) -> Result<PromptSettingFilter, ApiErr
     let s = |k: &str| body.get(k).and_then(Value::as_str).map(str::to_owned);
     let target_type = match s("target_type").as_deref() {
         None => None,
-        Some("instance") => Some(PromptTarget::Instance),
+        Some("department") => Some(PromptTarget::Department),
         Some("team") => Some(PromptTarget::Team),
         Some("agent") => Some(PromptTarget::Agent),
         Some(other) => {
@@ -526,11 +526,11 @@ pub async fn prompt_settings(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let items = s
         .services
         .prompts
-        .list_settings(&instance, &setting_filter(&ctx, &body)?, list_page(&body))
+        .list_settings(&department, &setting_filter(&ctx, &body)?, list_page(&body))
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"items": items})))
@@ -541,12 +541,12 @@ pub async fn prompt_log(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let items = s
         .services
         .prompts
         .logs(
-            &instance,
+            &department,
             &setting_filter(&ctx, &body)?,
             body.get("action").and_then(Value::as_str),
             ms_range(&body),
@@ -557,20 +557,20 @@ pub async fn prompt_log(
     Ok(ok(&ctx.request_id, json!({"items": items})))
 }
 
-// ── Knowledge, chat memory, instance ────────────────────────────────────
+// ── Knowledge, chat memory, department ────────────────────────────────────
 
 pub async fn knowledge_create(
     State(s): State<SharedState>,
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let input: KnowledgeInput = ctx.parse(&body)?;
     Ok(ok(
         &ctx.request_id,
         s.services
             .knowledge
-            .create(&instance, input)
+            .create(&department, input)
             .await
             .map_err(|e| ctx.err(e))?,
     ))
@@ -581,7 +581,7 @@ pub async fn knowledge_get(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let id = body
         .get("knowledge_id")
         .and_then(Value::as_str)
@@ -591,7 +591,7 @@ pub async fn knowledge_get(
         &ctx.request_id,
         s.services
             .knowledge
-            .get(&instance, id, team)
+            .get(&department, id, team)
             .await
             .map_err(|e| ctx.err(e))?,
     ))
@@ -602,13 +602,13 @@ pub async fn knowledge_update(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let input: KnowledgeInput = ctx.parse(&body)?;
     Ok(ok(
         &ctx.request_id,
         s.services
             .knowledge
-            .update(&instance, input)
+            .update(&department, input)
             .await
             .map_err(|e| ctx.err(e))?,
     ))
@@ -619,14 +619,14 @@ pub async fn knowledge_delete(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let ids: Vec<String> = ctx.parse(body.get("knowledge_ids").unwrap_or(&Value::Null))?;
     let team = body.get("team_id").and_then(Value::as_str);
     Ok(ok(
         &ctx.request_id,
         s.services
             .knowledge
-            .delete(&instance, &ids, team)
+            .delete(&department, &ids, team)
             .await
             .map_err(|e| ctx.err(e))?,
     ))
@@ -637,7 +637,7 @@ pub async fn knowledge_list(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let team = body
         .get("team_id")
         .and_then(Value::as_str)
@@ -657,7 +657,7 @@ pub async fn knowledge_list(
         .services
         .knowledge
         .list(
-            &instance,
+            &department,
             team,
             body.get("type").and_then(Value::as_str),
             ids.as_deref(),
@@ -676,12 +676,12 @@ pub async fn chat_memory_clear(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let ids: Vec<String> = ctx.parse(body.get("memory_ids").unwrap_or(&Value::Null))?;
     let items = s
         .services
         .chat_memory
-        .clear(&instance, &ids)
+        .clear(&department, &ids)
         .await
         .map_err(|e| ctx.err(e))?;
     let all_cleared = items.iter().all(|i| i.cleared);
@@ -691,24 +691,25 @@ pub async fn chat_memory_clear(
     ))
 }
 
-pub async fn instance_destroy(
+pub async fn department_destroy(
     State(s): State<SharedState>,
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
     let raw = body
-        .get("instance_id")
+        .get("department_id")
         .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::bad_request(&ctx.request_id, "instance_id is required"))?;
-    let instance: InstanceId = SegmentId::parse("instance_id", raw).map_err(|e| ctx.err(e))?;
+        .ok_or_else(|| ApiError::bad_request(&ctx.request_id, "department_id is required"))?;
+    let department: DepartmentId =
+        SegmentId::parse("department_id", raw).map_err(|e| ctx.err(e))?;
     let cleaned = s
         .services
         .lifecycle
-        .destroy(&instance)
+        .destroy(&department)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
         &ctx.request_id,
-        json!({"instance_id": raw, "cleaned": cleaned}),
+        json!({"department_id": raw, "cleaned": cleaned}),
     ))
 }

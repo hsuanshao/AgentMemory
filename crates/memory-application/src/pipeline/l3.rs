@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::Layer;
 use memory_domain::profile::{parse_scene, strip_scene_navigation, ProfileScope};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 
 use super::llm_json::strip_think;
 use super::prompts::{self, CustomStrategy};
@@ -37,19 +37,19 @@ impl PersonaGenerator {
 
     pub async fn generate(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         last_persona_at: Option<DateTime<Utc>>,
         trigger: &str,
         strategy: Option<&CustomStrategy>,
     ) -> DomainResult<L3Outcome> {
-        let scenes = self.memory.list_scenes(instance, profile, "").await?;
+        let scenes = self.memory.list_scenes(department, profile, "").await?;
         if scenes.is_empty() {
             return Ok(L3Outcome::NoScenes);
         }
         let existing = self
             .memory
-            .read_persona(instance, profile, None)
+            .read_persona(department, profile, None)
             .await?
             .map(|p| strip_scene_navigation(&p.content))
             .filter(|p| !p.is_empty());
@@ -93,7 +93,7 @@ impl PersonaGenerator {
         }
         let persona: String = persona.chars().take(MAX_PERSONA_CHARS).collect();
         self.memory
-            .write_persona(instance, profile, &escape_injection_tags(&persona))
+            .write_persona(department, profile, &escape_injection_tags(&persona))
             .await?;
         Ok(L3Outcome::Generated {
             scene_files: changed.iter().map(|s| s.relative_path.clone()).collect(),

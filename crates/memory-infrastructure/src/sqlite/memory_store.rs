@@ -13,17 +13,17 @@ use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{ProfileFile, ProfileScope};
 use memory_domain::retrieval::cosine;
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
-use super::db::InstancePool;
+use super::db::DepartmentPool;
 use super::sql::{blob_to_embedding, embedding_to_blob, from_ms, like_prefix, to_ms, Where};
 use super::vec_index::{self, KnnFilter, VecIndex};
 use crate::text::{bm25_to_score, index_text, match_query};
 
 pub struct SqliteMemoryStore {
-    pool: Arc<InstancePool>,
+    pool: Arc<DepartmentPool>,
     /// `None` when embedding dims are unknown or sqlite-vec did not load;
     /// vector search is then brute-force cosine over the BLOBs.
     vec: Option<VecIndex>,
@@ -32,7 +32,7 @@ pub struct SqliteMemoryStore {
 impl SqliteMemoryStore {
     /// `vector_dims` is the embedding provider's dimension; with it (and the
     /// extension available) atoms are also indexed in sqlite-vec.
-    pub fn new(pool: Arc<InstancePool>, vector_dims: Option<usize>) -> Self {
+    pub fn new(pool: Arc<DepartmentPool>, vector_dims: Option<usize>) -> Self {
         Self {
             pool,
             vec: VecIndex::new(vector_dims),
@@ -144,12 +144,12 @@ fn conversation_where(
 impl ConversationRepository for SqliteMemoryStore {
     async fn append(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         messages: &[ConversationMessage],
     ) -> DomainResult<()> {
         let messages = messages.to_vec();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let tx = conn.transaction()?;
                 for m in &messages {
@@ -179,14 +179,14 @@ impl ConversationRepository for SqliteMemoryStore {
 
     async fn query(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         filter: &ConversationFilter,
         page: Page,
     ) -> DomainResult<(Vec<ConversationMessage>, usize)> {
         let w = conversation_where(Some(scope), filter, "");
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let total: usize = conn.query_row(&format!("SELECT COUNT(*) FROM conversations {}", w.sql()), params_from_iter(w.params.iter()), |r| r.get(0))?;
                 let sql = format!("SELECT {CONV_COLUMNS} FROM conversations {} ORDER BY timestamp_ms DESC, id LIMIT ? OFFSET ?", w.sql());
@@ -201,7 +201,7 @@ impl ConversationRepository for SqliteMemoryStore {
 
     async fn search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &ConversationFilter,
@@ -213,7 +213,7 @@ impl ConversationRepository for SqliteMemoryStore {
         let mut w = conversation_where(Some(scope), filter, "c.");
         w.raw("conversations_fts MATCH ?", [Value::from(fts)]);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let cols: Vec<String> = CONV_COLUMNS.split(", ").map(|c| format!("c.{c}")).collect();
                 let sql = format!(
@@ -234,13 +234,13 @@ impl ConversationRepository for SqliteMemoryStore {
 
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: Option<&MemoryScope>,
         filter: &ConversationFilter,
     ) -> DomainResult<usize> {
         let w = conversation_where(scope, filter, "");
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 conn.query_row(
                     &format!("SELECT COUNT(*) FROM conversations {}", w.sql()),
@@ -253,41 +253,41 @@ impl ConversationRepository for SqliteMemoryStore {
 
     async fn delete_by_ids(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("id", ids);
-        delete_conversations(&self.pool, instance, w).await
+        delete_conversations(&self.pool, department, w).await
     }
 
     async fn delete_by_sessions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         sessions: &[String],
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("session_id", sessions);
-        delete_conversations(&self.pool, instance, w).await
+        delete_conversations(&self.pool, department, w).await
     }
 
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         profile_where(&mut w, profile);
-        delete_conversations(&self.pool, instance, w).await
+        delete_conversations(&self.pool, department, w).await
     }
 
     async fn after_seq(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         after: Option<i64>,
@@ -298,7 +298,7 @@ impl ConversationRepository for SqliteMemoryStore {
         w.eq("session_id", session_id.to_owned())
             .raw("seq > ?", [Value::from(after.unwrap_or(0))]);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let sql = format!(
                     "SELECT seq, {CONV_COLUMNS} FROM conversations {} ORDER BY seq LIMIT ?",
@@ -323,11 +323,11 @@ impl ConversationRepository for SqliteMemoryStore {
 }
 
 async fn delete_conversations(
-    pool: &InstancePool,
-    instance: &InstanceId,
+    pool: &DepartmentPool,
+    department: &DepartmentId,
     w: Where,
 ) -> DomainResult<usize> {
-    pool.get(instance)?
+    pool.get(department)?
         .call(move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
@@ -401,7 +401,7 @@ fn atom_where(selector: Option<AtomSelector<'_>>, filter: &AtomFilter, prefix: &
 impl AtomRepository for SqliteMemoryStore {
     async fn upsert(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         atom: &AtomicMemory,
         embedding: Option<&[f32]>,
     ) -> DomainResult<()> {
@@ -409,7 +409,7 @@ impl AtomRepository for SqliteMemoryStore {
         let blob = embedding.map(embedding_to_blob);
         let vec = self.vec;
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let tx = conn.transaction()?;
                 prepare_index(&tx, vec)?;
@@ -452,10 +452,10 @@ impl AtomRepository for SqliteMemoryStore {
             .await
     }
 
-    async fn get(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<AtomicMemory>> {
+    async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AtomicMemory>> {
         let id = id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let mut stmt =
                     conn.prepare(&format!("SELECT {ATOM_COLUMNS} FROM atoms WHERE id = ?"))?;
@@ -467,14 +467,14 @@ impl AtomRepository for SqliteMemoryStore {
 
     async fn query(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         selector: AtomSelector<'_>,
         filter: &AtomFilter,
         page: Page,
     ) -> DomainResult<(Vec<AtomicMemory>, usize)> {
         let w = atom_where(Some(selector), filter, "");
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let total: usize = conn.query_row(&format!("SELECT COUNT(*) FROM atoms {}", w.sql()), params_from_iter(w.params.iter()), |r| r.get(0))?;
                 let sql = format!("SELECT {ATOM_COLUMNS} FROM atoms {} ORDER BY updated_at_ms DESC, id LIMIT ? OFFSET ?", w.sql());
@@ -489,7 +489,7 @@ impl AtomRepository for SqliteMemoryStore {
 
     async fn after_seq(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         after: Option<i64>,
         limit: usize,
@@ -498,7 +498,7 @@ impl AtomRepository for SqliteMemoryStore {
         profile_where(&mut w, profile);
         w.raw("seq > ?", [Value::from(after.unwrap_or(0))]);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let sql = format!(
                     "SELECT seq, {ATOM_COLUMNS} FROM atoms {} ORDER BY seq LIMIT ?",
@@ -523,7 +523,7 @@ impl AtomRepository for SqliteMemoryStore {
 
     async fn keyword_search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &AtomFilter,
@@ -535,7 +535,7 @@ impl AtomRepository for SqliteMemoryStore {
         let mut w = atom_where(Some(AtomSelector::Scope(scope)), filter, "a.");
         w.raw("atoms_fts MATCH ?", [Value::from(fts)]);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let cols: Vec<String> = ATOM_COLUMNS.split(", ").map(|c| format!("a.{c}")).collect();
                 let sql = format!(
@@ -559,7 +559,7 @@ impl AtomRepository for SqliteMemoryStore {
     /// atoms, which is adequate for small standalone deployments.
     async fn vector_search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         embedding: &[f32],
         filter: &AtomFilter,
@@ -567,14 +567,14 @@ impl AtomRepository for SqliteMemoryStore {
     ) -> DomainResult<Vec<Scored<AtomicMemory>>> {
         if let Some(v) = self.vec.filter(|v| v.dims() == embedding.len()) {
             return self
-                .knn_search(v, instance, scope, embedding, filter, limit)
+                .knn_search(v, department, scope, embedding, filter, limit)
                 .await;
         }
         let mut w = atom_where(Some(AtomSelector::Scope(scope)), filter, "");
         w.raw("embedding IS NOT NULL", []);
         let query = embedding.to_vec();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let mut stmt = conn.prepare(&format!(
                     "SELECT {ATOM_COLUMNS}, embedding FROM atoms {}",
@@ -598,13 +598,13 @@ impl AtomRepository for SqliteMemoryStore {
 
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: Option<&MemoryScope>,
         filter: &AtomFilter,
     ) -> DomainResult<usize> {
         let w = atom_where(scope.map(AtomSelector::Scope), filter, "");
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 conn.query_row(
                     &format!("SELECT COUNT(*) FROM atoms {}", w.sql()),
@@ -617,24 +617,24 @@ impl AtomRepository for SqliteMemoryStore {
 
     async fn delete(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("id", ids);
-        delete_atoms(&self.pool, self.vec, instance, w).await
+        delete_atoms(&self.pool, self.vec, department, w).await
     }
 
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         profile_where(&mut w, profile);
-        delete_atoms(&self.pool, self.vec, instance, w).await
+        delete_atoms(&self.pool, self.vec, department, w).await
     }
 }
 
@@ -645,7 +645,7 @@ impl SqliteMemoryStore {
     async fn knn_search(
         &self,
         vec: VecIndex,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         embedding: &[f32],
         filter: &AtomFilter,
@@ -662,7 +662,7 @@ impl SqliteMemoryStore {
         let w = atom_where(Some(AtomSelector::Scope(scope)), filter, "");
         let query = embedding.to_vec();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let tx = conn.transaction()?;
                 vec.ensure(&tx)?;
@@ -716,12 +716,12 @@ fn load_hits(
 }
 
 async fn delete_atoms(
-    pool: &InstancePool,
+    pool: &DepartmentPool,
     vec: Option<VecIndex>,
-    instance: &InstanceId,
+    department: &DepartmentId,
     w: Where,
 ) -> DomainResult<usize> {
-    pool.get(instance)?
+    pool.get(department)?
         .call(move |conn| {
             let tx = conn.transaction()?;
             prepare_index(&tx, vec)?;
@@ -769,14 +769,14 @@ fn profile_ids(p: &ProfileScope) -> (String, String) {
 impl ProfileFileRepository for SqliteMemoryStore {
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
     ) -> DomainResult<Vec<ProfileFile>> {
         let (team, agent) = profile_ids(profile);
         let like = like_prefix(prefix);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT path, content, version, created_at_ms, updated_at_ms FROM profile_files \
@@ -790,7 +790,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
 
     async fn read(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         version: Option<u32>,
@@ -798,7 +798,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
         let (team, agent) = profile_ids(profile);
         let path = path.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let (cond, v) = match version {
                     Some(v) => ("version = ?", Value::from(v as i64)),
@@ -814,7 +814,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
 
     async fn write(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         content: &str,
@@ -823,7 +823,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
         let (path, content) = (path.to_owned(), content.to_owned());
         let now = to_ms(Utc::now());
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let tx = conn.transaction()?;
                 let head: Option<(u32, String, i64)> = tx
@@ -853,7 +853,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
 
     async fn remove(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
     ) -> DomainResult<usize> {
@@ -864,7 +864,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
             ("path = ?", path.to_owned())
         };
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let heads: usize = conn.query_row(
                     &format!("SELECT COUNT(*) FROM profile_files WHERE team_id = ? AND agent_id = ? AND is_head = 1 AND {cond}"),
@@ -879,7 +879,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
 
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: Option<&ProfileScope>,
         prefix: &str,
     ) -> DomainResult<usize> {
@@ -892,7 +892,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
             [Value::from(like_prefix(prefix))],
         );
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 conn.query_row(
                     &format!("SELECT COUNT(*) FROM profile_files {}", w.sql()),
@@ -908,7 +908,7 @@ impl ProfileFileRepository for SqliteMemoryStore {
 impl ScopeMigrationStore for SqliteMemoryStore {
     async fn reassign_default(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         from: &MemoryScope,
         to: &MemoryScope,
         dry_run: bool,
@@ -924,7 +924,7 @@ impl ScopeMigrationStore for SqliteMemoryStore {
             from.user_id.to_string(),
         );
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |conn| {
                 let tx = conn.transaction()?;
                 let triple = "team_id = ?4 AND agent_id = ?5 AND user_id = ?6";

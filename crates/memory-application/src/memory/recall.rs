@@ -12,7 +12,7 @@ use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::AtomicMemory;
 use memory_domain::profile::{strip_scene_navigation, ProfileScope};
 use memory_domain::retrieval::{apply_budget, RecallBudget, SearchMode};
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::Serialize;
 
 use super::search::AtomSearcher;
@@ -92,13 +92,13 @@ impl RecallService {
 
     pub async fn recall(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         max_results: Option<usize>,
         strategy: Option<SearchMode>,
     ) -> DomainResult<RecallResult> {
-        let work = self.recall_inner(instance, scope, query, max_results, strategy);
+        let work = self.recall_inner(department, scope, query, max_results, strategy);
         tokio::time::timeout(self.settings.timeout, work)
             .await
             .map_err(|_| DomainError::unavailable("recall timed out"))?
@@ -106,7 +106,7 @@ impl RecallService {
 
     async fn recall_inner(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         max_results: Option<usize>,
@@ -120,18 +120,18 @@ impl RecallService {
         let (memories, used) = if query.chars().count() < 2 {
             (Vec::new(), strategy)
         } else {
-            self.search_atoms(instance, scope, &query, max_results, strategy)
+            self.search_atoms(department, scope, &query, max_results, strategy)
                 .await?
         };
 
         let profile = ProfileScope::from(scope);
         let persona = self
             .memory
-            .read_persona(instance, &profile, None)
+            .read_persona(department, &profile, None)
             .await?
             .map(|p| strip_scene_navigation(&p.content))
             .filter(|p| !p.is_empty());
-        let navigation = self.memory.navigation(instance, &profile).await?;
+        let navigation = self.memory.navigation(department, &profile).await?;
 
         Ok(RecallResult {
             strategy: used,
@@ -151,7 +151,7 @@ impl RecallService {
 
     async fn search_atoms(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         max_results: usize,
@@ -160,7 +160,7 @@ impl RecallService {
         let outcome = self
             .searcher
             .search(
-                instance,
+                department,
                 scope,
                 query,
                 &AtomFilter::default(),

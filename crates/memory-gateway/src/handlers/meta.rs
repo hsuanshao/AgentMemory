@@ -12,7 +12,7 @@ use memory_application::meta::{
 use memory_application::ports::meta::UserFilter;
 use memory_domain::error::DomainError;
 use memory_domain::meta::{UserStatus, UserType};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
@@ -22,10 +22,10 @@ use crate::state::SharedState;
 
 type ApiResult = Result<Response, ApiError>;
 
-async fn caller(s: &SharedState, ctx: &Ctx, instance: &InstanceId) -> Result<Caller, ApiError> {
+async fn caller(s: &SharedState, ctx: &Ctx, department: &DepartmentId) -> Result<Caller, ApiError> {
     s.services
         .meta
-        .authenticate(instance, &ctx.user_key()?)
+        .authenticate(department, &ctx.user_key()?)
         .await
         .map_err(|e| ctx.err(e))
 }
@@ -62,7 +62,7 @@ fn pagination(ctx: &Ctx, body: &Value) -> Result<Pagination, ApiError> {
 async fn subject_user(
     s: &SharedState,
     ctx: &Ctx,
-    instance: &InstanceId,
+    department: &DepartmentId,
     body: &Value,
     who: &Caller,
 ) -> Result<String, ApiError> {
@@ -71,7 +71,7 @@ async fn subject_user(
         (None, Some(key)) => {
             s.services
                 .meta
-                .authenticate(instance, key)
+                .authenticate(department, key)
                 .await
                 .map_err(|e| ctx.err(e))?
                 .user_id
@@ -97,21 +97,21 @@ pub async fn dispatch(
     Path((resource, action)): Path<(String, String)>,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     if (resource.as_str(), action.as_str()) == ("auth", "verify") {
         let key = required(&ctx, &body, "user_key")?;
         return Ok(ok(
             &ctx.request_id,
             s.services
                 .meta
-                .verify(&instance, key)
+                .verify(&department, key)
                 .await
                 .map_err(|e| ctx.err(e))?,
         ));
     }
-    let who = caller(&s, &ctx, &instance).await?;
+    let who = caller(&s, &ctx, &department).await?;
     let meta = &s.services.meta;
-    let i = &instance;
+    let i = &department;
     let e = |err| ctx.err(err);
     let data: Value = match (resource.as_str(), action.as_str()) {
         ("user", "create") | ("user", "create-with-key") => json!(meta
@@ -430,7 +430,7 @@ pub async fn dispatch(
                 .map_err(e)?)
         }
 
-        ("instance-quota", "get") => meta.instance_quota(i).await.map_err(e)?,
+        ("department-quota", "get") => meta.department_quota(i).await.map_err(e)?,
         ("config", "user-get") => {
             json!({"items": meta.get_config(i, &who, required(&ctx, &body, "user_id")?, required(&ctx, &body, "module")?, str_of(&body, "param_name")).await.map_err(e)?})
         }
@@ -480,13 +480,13 @@ pub async fn internal_init_admin(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let username = required(&ctx, &body, "username")?;
     let result = s
         .services
         .meta
         .init_admin(
-            &instance,
+            &department,
             username,
             str_of(&body, "user_key").map(str::to_owned),
         )
@@ -500,7 +500,7 @@ pub async fn internal_list_users(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let filter = UserFilter {
         user_ids: body.get("user_ids").map(|v| ctx.parse(v)).transpose()?,
         user_type: str_of(&body, "user_type")
@@ -516,7 +516,7 @@ pub async fn internal_list_users(
     let page = s
         .services
         .meta
-        .list_users_internal(&instance, filter, pagination(&ctx, &body)?)
+        .list_users_internal(&department, filter, pagination(&ctx, &body)?)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, page))
@@ -529,11 +529,11 @@ pub async fn internal_migrate_default_scope(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let report = s
         .services
         .migration
-        .migrate_default(&instance, ctx.parse(&body)?)
+        .migrate_default(&department, ctx.parse(&body)?)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, report))
@@ -546,11 +546,11 @@ pub async fn internal_upgrade(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let report = s
         .services
         .upgrade
-        .run(&instance, ctx.parse(&body)?)
+        .run(&department, ctx.parse(&body)?)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, report))

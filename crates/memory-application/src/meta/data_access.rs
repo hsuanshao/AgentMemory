@@ -5,30 +5,30 @@ use memory_domain::error::DomainResult;
 use memory_domain::meta::memory_access::{
     authorize_memory_scope, MemoryAction, RequestedScope, ScopeFacts,
 };
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 
 use super::MetaService;
 
 impl MetaService {
     pub async fn authorize_memory(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         user_key: &str,
         requested: &RequestedScope,
         action: MemoryAction,
     ) -> DomainResult<MemoryScope> {
-        let caller = self.authenticate(instance, user_key).await?;
+        let caller = self.authenticate(department, user_key).await?;
         let team_id = requested.team_id.as_deref().unwrap_or_default();
         let membership = match team_id {
             "" => None,
             id => {
-                self.active_membership(instance, id, &caller.user_id)
+                self.active_membership(department, id, &caller.user_id)
                     .await?
             }
         };
         let agent = match requested.agent_id.as_deref().unwrap_or_default() {
             "" => None,
-            id => self.store.get_agent(instance, id).await?,
+            id => self.store.get_agent(department, id).await?,
         };
         authorize_memory_scope(
             requested,

@@ -6,12 +6,12 @@
 //! AGENT_MEMORY_TEST_POSTGRES_URL=postgres://postgres:test@127.0.0.1:25432/postgres cargo test
 //! ```
 //!
-//! Each test works in a fresh, randomly named instance and drops it after.
+//! Each test works in a fresh, randomly named department and drops it after.
 
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
-use memory_application::admin::InstanceLifecycle;
+use memory_application::admin::DepartmentLifecycle;
 use memory_application::common::Page;
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
@@ -26,7 +26,7 @@ use memory_domain::meta::{
     UserStatus, UserType, Visibility,
 };
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
+use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
 use memory_infrastructure::postgres::db::{schema_name, PgDb};
 use memory_infrastructure::postgres::lifecycle::PostgresCleanup;
 use memory_infrastructure::postgres::memory_store::PostgresMemoryStore;
@@ -35,9 +35,9 @@ use serde_json::json;
 
 const URL_ENV: &str = "AGENT_MEMORY_TEST_POSTGRES_URL";
 
-/// A pool (2-dimensional embeddings) and a fresh instance, or `None` when
+/// A pool (2-dimensional embeddings) and a fresh department, or `None` when
 /// no test server is configured.
-async fn setup() -> Option<(Arc<PgDb>, InstanceId)> {
+async fn setup() -> Option<(Arc<PgDb>, DepartmentId)> {
     let Ok(url) = std::env::var(URL_ENV) else {
         eprintln!("skipping: set {URL_ENV} to run the Postgres store tests");
         return None;
@@ -46,13 +46,13 @@ async fn setup() -> Option<(Arc<PgDb>, InstanceId)> {
         .await
         .expect("connect to test postgres");
     let id = format!("ins-pg-{}", uuid::Uuid::new_v4().simple());
-    Some((Arc::new(db), SegmentId::parse("instance", &id).unwrap()))
+    Some((Arc::new(db), SegmentId::parse("department", &id).unwrap()))
 }
 
-/// Drops the instance schema.
-async fn teardown(db: &Arc<PgDb>, instance: &InstanceId) {
+/// Drops the department schema.
+async fn teardown(db: &Arc<PgDb>, department: &DepartmentId) {
     PostgresCleanup::new(Arc::clone(db))
-        .destroy(instance)
+        .destroy(department)
         .await
         .unwrap();
 }
@@ -94,13 +94,13 @@ fn atom(id: &str, content: &str, user: &str) -> AtomicMemory {
 
 #[tokio::test]
 async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
-    let Some((db, instance)) = setup().await else {
+    let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMemoryStore::new(Arc::clone(&db));
     store
         .append(
-            &instance,
+            &department,
             &[
                 message("m1", "下週一要發布新版本", "alice", 0),
                 message("m2", "下週一要發布新版本", "bob", 1),
@@ -111,9 +111,9 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
 
     // Equal or back-dated recorded_at must not hide rows from the cursor.
     let old = message("m3", "older but stored later", "alice", -60_000);
-    store.append(&instance, &[old]).await.unwrap();
+    store.append(&department, &[old]).await.unwrap();
     let tail =
-        ConversationRepository::after_seq(&store, &instance, &scope("alice"), "s1", None, 10)
+        ConversationRepository::after_seq(&store, &department, &scope("alice"), "s1", None, 10)
             .await
             .unwrap();
     assert_eq!(
@@ -123,7 +123,7 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
 
     let hits = store
         .search(
-            &instance,
+            &department,
             &scope("alice"),
             "發布",
             &ConversationFilter::default(),
@@ -136,7 +136,7 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
 
     let after_first = ConversationRepository::after_seq(
         &store,
-        &instance,
+        &department,
         &scope("alice"),
         "s1",
         Some(tail[0].seq),
@@ -147,7 +147,7 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
     assert_eq!(after_first.len(), 1);
     let none_left = ConversationRepository::after_seq(
         &store,
-        &instance,
+        &department,
         &scope("alice"),
         "s1",
         Some(after_first[0].seq),
@@ -156,18 +156,18 @@ async fn conversations_are_searchable_in_chinese_and_isolated_by_user() {
     .await
     .unwrap();
     assert!(none_left.is_empty());
-    teardown(&db, &instance).await;
+    teardown(&db, &department).await;
 }
 
 #[tokio::test]
 async fn atoms_support_keyword_vector_and_profile_queries() {
-    let Some((db, instance)) = setup().await else {
+    let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMemoryStore::new(Arc::clone(&db));
     store
         .upsert(
-            &instance,
+            &department,
             &atom("a1", "prefers Rust for backend services", "alice"),
             Some(&[1.0, 0.0]),
         )
@@ -175,7 +175,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
         .unwrap();
     store
         .upsert(
-            &instance,
+            &department,
             &atom("a2", "likes hiking on weekends", "bob"),
             Some(&[0.0, 1.0]),
         )
@@ -184,7 +184,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
 
     let kw = store
         .keyword_search(
-            &instance,
+            &department,
             &scope("alice"),
             "rust backend",
             &AtomFilter::default(),
@@ -195,7 +195,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
     assert_eq!(kw.len(), 1);
     let vec = store
         .vector_search(
-            &instance,
+            &department,
             &scope("alice"),
             &[1.0, 0.0],
             &AtomFilter::default(),
@@ -208,7 +208,7 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
     let profile = ProfileScope::from(&scope("alice"));
     let (all, total) = AtomRepository::query(
         &store,
-        &instance,
+        &department,
         AtomSelector::Profile(&profile),
         &AtomFilter::default(),
         Page {
@@ -221,14 +221,14 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
     assert_eq!((all.len(), total), (2, 2), "profile scope spans users");
 
     assert_eq!(
-        AtomRepository::delete_profile(&store, &instance, &profile)
+        AtomRepository::delete_profile(&store, &department, &profile)
             .await
             .unwrap(),
         2
     );
     assert!(store
         .keyword_search(
-            &instance,
+            &department,
             &scope("alice"),
             "rust",
             &AtomFilter::default(),
@@ -237,19 +237,19 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
         .await
         .unwrap()
         .is_empty());
-    teardown(&db, &instance).await;
+    teardown(&db, &department).await;
 }
 
 #[tokio::test]
 async fn profile_files_are_versioned() {
-    let Some((db, instance)) = setup().await else {
+    let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMemoryStore::new(Arc::clone(&db));
     let profile = ProfileScope::from(&scope("alice"));
     assert_eq!(
         store
-            .write(&instance, &profile, "persona.md", "v1")
+            .write(&department, &profile, "persona.md", "v1")
             .await
             .unwrap()
             .version,
@@ -257,7 +257,7 @@ async fn profile_files_are_versioned() {
     );
     assert_eq!(
         store
-            .write(&instance, &profile, "persona.md", "v1")
+            .write(&department, &profile, "persona.md", "v1")
             .await
             .unwrap()
             .version,
@@ -266,30 +266,30 @@ async fn profile_files_are_versioned() {
     );
     assert_eq!(
         store
-            .write(&instance, &profile, "persona.md", "v2")
+            .write(&department, &profile, "persona.md", "v2")
             .await
             .unwrap()
             .version,
         2
     );
     let old = store
-        .read(&instance, &profile, "persona.md", Some(1))
+        .read(&department, &profile, "persona.md", Some(1))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(old.content, "v1");
 
     store
-        .write(&instance, &profile, "scene_blocks/a.md", "a")
+        .write(&department, &profile, "scene_blocks/a.md", "a")
         .await
         .unwrap();
     store
-        .write(&instance, &profile, "scene_blocks/b.md", "b")
+        .write(&department, &profile, "scene_blocks/b.md", "b")
         .await
         .unwrap();
     assert_eq!(
         store
-            .list(&instance, &profile, "scene_blocks/")
+            .list(&department, &profile, "scene_blocks/")
             .await
             .unwrap()
             .len(),
@@ -297,18 +297,18 @@ async fn profile_files_are_versioned() {
     );
     assert_eq!(
         store
-            .remove(&instance, &profile, "scene_blocks/")
+            .remove(&department, &profile, "scene_blocks/")
             .await
             .unwrap(),
         2
     );
     assert_eq!(
-        ProfileFileRepository::count(&store, &instance, None, "persona.md")
+        ProfileFileRepository::count(&store, &department, None, "persona.md")
             .await
             .unwrap(),
         1
     );
-    teardown(&db, &instance).await;
+    teardown(&db, &department).await;
 }
 
 fn user(id: &str, name: &str) -> User {
@@ -339,31 +339,31 @@ fn key(id: &str, user: &str, value: &str, default: bool, created: &str) -> UserK
 
 #[tokio::test]
 async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
-    let Some((db, instance)) = setup().await else {
+    let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMetaStore::new(Arc::clone(&db));
     store
         .create_user(
-            &instance,
+            &department,
             &user("usr-1", "alice"),
             &key("k1", "usr-1", "sk-mem-a", true, "1"),
         )
         .await
         .unwrap();
     store
-        .insert_key(&instance, &key("k2", "usr-1", "sk-mem-b", false, "2"))
+        .insert_key(&department, &key("k2", "usr-1", "sk-mem-b", false, "2"))
         .await
         .unwrap();
     store
-        .insert_key(&instance, &key("k3", "usr-1", "sk-mem-c", false, "3"))
+        .insert_key(&department, &key("k3", "usr-1", "sk-mem-c", false, "3"))
         .await
         .unwrap();
 
-    store.delete_key(&instance, "k1").await.unwrap();
+    store.delete_key(&department, "k1").await.unwrap();
     assert!(
         store
-            .get_key(&instance, "k2")
+            .get_key(&department, "k2")
             .await
             .unwrap()
             .unwrap()
@@ -371,7 +371,7 @@ async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
     );
     assert!(
         !store
-            .get_key(&instance, "k3")
+            .get_key(&department, "k3")
             .await
             .unwrap()
             .unwrap()
@@ -380,7 +380,7 @@ async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
     assert!(
         store
             .create_user(
-                &instance,
+                &department,
                 &user("usr-2", "alice"),
                 &key("k4", "usr-2", "sk-mem-d", true, "4")
             )
@@ -388,12 +388,12 @@ async fn revoking_the_default_key_promotes_the_oldest_remaining_key() {
             .is_err(),
         "usernames are unique"
     );
-    teardown(&db, &instance).await;
+    teardown(&db, &department).await;
 }
 
 #[tokio::test]
 async fn deleting_an_asset_cascades_bindings() {
-    let Some((db, instance)) = setup().await else {
+    let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMetaStore::new(Arc::clone(&db));
@@ -418,7 +418,7 @@ async fn deleting_an_asset_cascades_bindings() {
         updated_at: "1".into(),
         metadata_json: json!({}),
     };
-    store.insert_asset(&instance, &asset).await.unwrap();
+    store.insert_asset(&department, &asset).await.unwrap();
     let binding = AgentBinding {
         id: "b".into(),
         agent_id: "agt-1".into(),
@@ -429,11 +429,11 @@ async fn deleting_an_asset_cascades_bindings() {
         created_by: "usr-1".into(),
         created_at: "1".into(),
     };
-    store.ensure_binding(&instance, &binding).await.unwrap();
-    store.touch_asset(&instance, "ast-1", "2").await.unwrap();
+    store.ensure_binding(&department, &binding).await.unwrap();
+    store.touch_asset(&department, "ast-1", "2").await.unwrap();
     assert_eq!(
         store
-            .get_asset(&instance, "ast-1")
+            .get_asset(&department, "ast-1")
             .await
             .unwrap()
             .unwrap()
@@ -442,26 +442,26 @@ async fn deleting_an_asset_cascades_bindings() {
     );
 
     store
-        .delete_assets(&instance, &["ast-1".into()])
+        .delete_assets(&department, &["ast-1".into()])
         .await
         .unwrap();
     assert!(store
-        .list_bindings(&instance, "agt-1")
+        .list_bindings(&department, "agt-1")
         .await
         .unwrap()
         .is_empty());
-    teardown(&db, &instance).await;
+    teardown(&db, &department).await;
 }
 
 #[tokio::test]
 async fn rewriting_a_row_takes_a_fresh_sequence() {
-    let Some((db, instance)) = setup().await else {
+    let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMemoryStore::new(Arc::clone(&db));
     store
         .append(
-            &instance,
+            &department,
             &[
                 message("m1", "first", "alice", 0),
                 message("m2", "second", "alice", 1),
@@ -470,11 +470,11 @@ async fn rewriting_a_row_takes_a_fresh_sequence() {
         .await
         .unwrap();
     store
-        .append(&instance, &[message("m1", "first, edited", "alice", 0)])
+        .append(&department, &[message("m1", "first, edited", "alice", 0)])
         .await
         .unwrap();
     let tail =
-        ConversationRepository::after_seq(&store, &instance, &scope("alice"), "s1", None, 10)
+        ConversationRepository::after_seq(&store, &department, &scope("alice"), "s1", None, 10)
             .await
             .unwrap();
     assert_eq!(
@@ -487,44 +487,54 @@ async fn rewriting_a_row_takes_a_fresh_sequence() {
 
     let profile = ProfileScope::from(&scope("alice"));
     store
-        .upsert(&instance, &atom("a1", "one", "alice"), None)
+        .upsert(&department, &atom("a1", "one", "alice"), None)
         .await
         .unwrap();
     store
-        .upsert(&instance, &atom("a2", "two", "alice"), None)
+        .upsert(&department, &atom("a2", "two", "alice"), None)
         .await
         .unwrap();
-    let first = AtomRepository::after_seq(&store, &instance, &profile, None, 10)
+    let first = AtomRepository::after_seq(&store, &department, &profile, None, 10)
         .await
         .unwrap();
     store
-        .upsert(&instance, &atom("a1", "one again", "alice"), None)
+        .upsert(&department, &atom("a1", "one again", "alice"), None)
         .await
         .unwrap();
-    let rest = AtomRepository::after_seq(&store, &instance, &profile, Some(first[1].seq), 10)
+    let rest = AtomRepository::after_seq(&store, &department, &profile, Some(first[1].seq), 10)
         .await
         .unwrap();
     assert_eq!(rest.len(), 1);
     assert_eq!(rest[0].item.content, "one again");
-    teardown(&db, &instance).await;
+    teardown(&db, &department).await;
 }
 
 #[tokio::test]
 async fn keyword_search_matches_underscored_and_cjk_tokens_verbatim() {
-    let Some((db, instance)) = setup().await else {
+    let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMemoryStore::new(Arc::clone(&db));
     let mut a = atom("a1", "部署腳本叫 deploy_prod", "alice");
     a.background = Some("記憶體不足時重試".into());
-    store.upsert(&instance, &a, None).await.unwrap();
+    store.upsert(&department, &a, None).await.unwrap();
     store
-        .upsert(&instance, &atom("a2", "deploy staging only", "alice"), None)
+        .upsert(
+            &department,
+            &atom("a2", "deploy staging only", "alice"),
+            None,
+        )
         .await
         .unwrap();
     for query in ["deploy_prod", "記憶體", "部署"] {
         let hits = store
-            .keyword_search(&instance, &scope("alice"), query, &AtomFilter::default(), 5)
+            .keyword_search(
+                &department,
+                &scope("alice"),
+                query,
+                &AtomFilter::default(),
+                5,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -537,7 +547,7 @@ async fn keyword_search_matches_underscored_and_cjk_tokens_verbatim() {
     assert!(
         store
             .keyword_search(
-                &instance,
+                &department,
                 &scope("alice"),
                 "the 'a' | !",
                 &AtomFilter::default(),
@@ -548,15 +558,15 @@ async fn keyword_search_matches_underscored_and_cjk_tokens_verbatim() {
             .is_empty(),
         "operators and quotes are escaped"
     );
-    teardown(&db, &instance).await;
+    teardown(&db, &department).await;
 }
 
 #[tokio::test]
-async fn instances_live_in_separate_schemas_and_cleanup_drops_them() {
+async fn departments_live_in_separate_schemas_and_cleanup_drops_them() {
     let Some((db, a)) = setup().await else {
         return;
     };
-    let b = SegmentId::parse("instance", &format!("{}-other", a.as_str())).unwrap();
+    let b = SegmentId::parse("department", &format!("{}-other", a.as_str())).unwrap();
     let store = PostgresMemoryStore::new(Arc::clone(&db));
     store
         .append(&a, &[message("m1", "只在 A 實例", "alice", 0)])
@@ -594,18 +604,26 @@ async fn instances_live_in_separate_schemas_and_cleanup_drops_them() {
         }
     };
     assert!(schema_exists(schema_name(&a)).await);
-    assert!(db.known_instances().await.unwrap().contains(&a.to_string()));
+    assert!(db
+        .known_departments()
+        .await
+        .unwrap()
+        .contains(&a.to_string()));
 
     let cleanup = PostgresCleanup::new(Arc::clone(&db));
     assert_eq!(cleanup.destroy(&a).await.unwrap(), json!({"removed": true}));
     assert!(!schema_exists(schema_name(&a)).await);
-    assert!(!db.known_instances().await.unwrap().contains(&a.to_string()));
+    assert!(!db
+        .known_departments()
+        .await
+        .unwrap()
+        .contains(&a.to_string()));
     assert_eq!(
         cleanup.destroy(&a).await.unwrap(),
         json!({"removed": false})
     );
 
-    // The instance comes back empty on next use.
+    // The department comes back empty on next use.
     assert_eq!(
         ConversationRepository::count(&store, &a, None, &filter)
             .await

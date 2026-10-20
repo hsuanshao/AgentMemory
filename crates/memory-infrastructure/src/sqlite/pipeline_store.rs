@@ -1,5 +1,5 @@
 //! Pipeline state (global `system.db`), memory prompts and generation logs
-//! (per-instance databases).
+//! (per-department databases).
 
 use std::sync::Arc;
 
@@ -14,11 +14,11 @@ use memory_application::ports::pipeline::{
 use memory_domain::error::DomainResult;
 use memory_domain::memory::Layer;
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, OptionalExtension};
 
-use super::db::{Db, InstancePool};
+use super::db::{Db, DepartmentPool};
 use super::sql::{from_doc, like_prefix, to_doc, to_ms, Where};
 
 pub struct SqlitePipelineState {
@@ -51,15 +51,15 @@ fn query_docs(
 impl PipelineStateRepository for SqlitePipelineState {
     async fn get_session(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
     ) -> DomainResult<Option<SessionState>> {
-        let (i, k, s) = (instance.to_string(), scope.key(), session_id.to_owned());
+        let (i, k, s) = (department.to_string(), scope.key(), session_id.to_owned());
         self.db
             .call(move |c| {
                 let doc: Option<String> = c
-                    .query_row("SELECT doc FROM session_states WHERE instance = ? AND scope_key = ? AND session_id = ?", [i, k, s], |r| r.get(0))
+                    .query_row("SELECT doc FROM session_states WHERE department = ? AND scope_key = ? AND session_id = ?", [i, k, s], |r| r.get(0))
                     .optional()?;
                 doc.map(|d| from_doc(&d)).transpose()
             })
@@ -71,8 +71,8 @@ impl PipelineStateRepository for SqlitePipelineState {
         self.db
             .call(move |c| {
                 c.execute(
-                    "INSERT OR REPLACE INTO session_states (instance, scope_key, session_id, l1_due_ms, last_active_ms, doc) VALUES (?,?,?,?,?,?)",
-                    params![st.instance.as_str(), st.scope.key(), st.session_id, st.l1_due_at.map(to_ms), to_ms(st.last_active_at), to_doc(&st)?],
+                    "INSERT OR REPLACE INTO session_states (department, scope_key, session_id, l1_due_ms, last_active_ms, doc) VALUES (?,?,?,?,?,?)",
+                    params![st.department.as_str(), st.scope.key(), st.session_id, st.l1_due_at.map(to_ms), to_ms(st.last_active_at), to_doc(&st)?],
                 )
                 .map(|_| ())
             })
@@ -81,15 +81,15 @@ impl PipelineStateRepository for SqlitePipelineState {
 
     async fn get_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<Option<ProfileState>> {
-        let (i, k) = (instance.to_string(), profile.key());
+        let (i, k) = (department.to_string(), profile.key());
         self.db
             .call(move |c| {
                 let doc: Option<String> = c
                     .query_row(
-                        "SELECT doc FROM profile_states WHERE instance = ? AND profile_key = ?",
+                        "SELECT doc FROM profile_states WHERE department = ? AND profile_key = ?",
                         [i, k],
                         |r| r.get(0),
                     )
@@ -104,8 +104,8 @@ impl PipelineStateRepository for SqlitePipelineState {
         self.db
             .call(move |c| {
                 c.execute(
-                    "INSERT OR REPLACE INTO profile_states (instance, profile_key, l2_due_ms, updated_ms, doc) VALUES (?,?,?,?,?)",
-                    params![st.instance.as_str(), st.profile.key(), st.l2_due_at.map(to_ms), to_ms(Utc::now()), to_doc(&st)?],
+                    "INSERT OR REPLACE INTO profile_states (department, profile_key, l2_due_ms, updated_ms, doc) VALUES (?,?,?,?,?)",
+                    params![st.department.as_str(), st.profile.key(), st.l2_due_at.map(to_ms), to_ms(Utc::now()), to_doc(&st)?],
                 )
                 .map(|_| ())
             })
@@ -126,41 +126,41 @@ impl PipelineStateRepository for SqlitePipelineState {
 
     async fn list_sessions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<Vec<SessionState>> {
-        let i = instance.to_string();
+        let i = department.to_string();
         self.db
-            .call(move |c| docs(query_docs(c, "SELECT doc FROM session_states WHERE instance = ? ORDER BY last_active_ms DESC LIMIT ?", &[Value::from(i), Value::from(limit as i64)])?))
+            .call(move |c| docs(query_docs(c, "SELECT doc FROM session_states WHERE department = ? ORDER BY last_active_ms DESC LIMIT ?", &[Value::from(i), Value::from(limit as i64)])?))
             .await
     }
 
     async fn list_profiles(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         limit: usize,
     ) -> DomainResult<Vec<ProfileState>> {
-        let i = instance.to_string();
+        let i = department.to_string();
         self.db
-            .call(move |c| docs(query_docs(c, "SELECT doc FROM profile_states WHERE instance = ? ORDER BY updated_ms DESC LIMIT ?", &[Value::from(i), Value::from(limit as i64)])?))
+            .call(move |c| docs(query_docs(c, "SELECT doc FROM profile_states WHERE department = ? ORDER BY updated_ms DESC LIMIT ?", &[Value::from(i), Value::from(limit as i64)])?))
             .await
     }
 
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<()> {
-        let (i, k) = (instance.to_string(), profile.key());
+        let (i, k) = (department.to_string(), profile.key());
         let team_prefix = like_prefix(&format!("{}/{}/", profile.team_id, profile.agent_id));
         self.db
             .call(move |c| {
                 c.execute(
-                    "DELETE FROM profile_states WHERE instance = ? AND profile_key = ?",
+                    "DELETE FROM profile_states WHERE department = ? AND profile_key = ?",
                     [&i, &k],
                 )?;
                 c.execute(
-                    "DELETE FROM session_states WHERE instance = ? AND scope_key LIKE ? ESCAPE '\\'",
+                    "DELETE FROM session_states WHERE department = ? AND scope_key LIKE ? ESCAPE '\\'",
                     [&i, &team_prefix],
                 )?;
                 Ok(())
@@ -168,12 +168,12 @@ impl PipelineStateRepository for SqlitePipelineState {
             .await
     }
 
-    async fn delete_instance(&self, instance: &InstanceId) -> DomainResult<()> {
-        let i = instance.to_string();
+    async fn delete_department(&self, department: &DepartmentId) -> DomainResult<()> {
+        let i = department.to_string();
         self.db
             .call(move |c| {
-                c.execute("DELETE FROM session_states WHERE instance = ?", [&i])?;
-                c.execute("DELETE FROM profile_states WHERE instance = ?", [&i])?;
+                c.execute("DELETE FROM session_states WHERE department = ?", [&i])?;
+                c.execute("DELETE FROM profile_states WHERE department = ?", [&i])?;
                 Ok(())
             })
             .await
@@ -181,18 +181,18 @@ impl PipelineStateRepository for SqlitePipelineState {
 }
 
 pub struct SqlitePromptStore {
-    pool: Arc<InstancePool>,
+    pool: Arc<DepartmentPool>,
 }
 
 impl SqlitePromptStore {
-    pub fn new(pool: Arc<InstancePool>) -> Self {
+    pub fn new(pool: Arc<DepartmentPool>) -> Self {
         Self { pool }
     }
 }
 
 fn target_str(t: PromptTarget) -> &'static str {
     match t {
-        PromptTarget::Instance => "instance",
+        PromptTarget::Department => "department",
         PromptTarget::Team => "team",
         PromptTarget::Agent => "agent",
     }
@@ -202,7 +202,7 @@ fn parse_target(s: &str) -> PromptTarget {
     match s {
         "team" => PromptTarget::Team,
         "agent" => PromptTarget::Agent,
-        _ => PromptTarget::Instance,
+        _ => PromptTarget::Department,
     }
 }
 
@@ -221,10 +221,10 @@ fn setting_where(f: &PromptSettingFilter) -> Where {
 
 #[async_trait]
 impl MemoryPromptRepository for SqlitePromptStore {
-    async fn insert(&self, instance: &InstanceId, p: &MemoryPrompt) -> DomainResult<()> {
+    async fn insert(&self, department: &DepartmentId, p: &MemoryPrompt) -> DomainResult<()> {
         let p = p.clone();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.execute(
                     "INSERT INTO memory_prompts (id, layer, status, created_at_ms, doc) VALUES (?,?,?,?,?)",
@@ -235,10 +235,10 @@ impl MemoryPromptRepository for SqlitePromptStore {
             .await
     }
 
-    async fn get(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<MemoryPrompt>> {
+    async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<MemoryPrompt>> {
         let id = id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let doc: Option<String> = c
                     .query_row("SELECT doc FROM memory_prompts WHERE id = ?", [id], |r| {
@@ -250,10 +250,10 @@ impl MemoryPromptRepository for SqlitePromptStore {
             .await
     }
 
-    async fn update(&self, instance: &InstanceId, p: &MemoryPrompt) -> DomainResult<()> {
+    async fn update(&self, department: &DepartmentId, p: &MemoryPrompt) -> DomainResult<()> {
         let p = p.clone();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.execute(
                     "UPDATE memory_prompts SET status = ?, doc = ? WHERE id = ?",
@@ -264,10 +264,10 @@ impl MemoryPromptRepository for SqlitePromptStore {
             .await
     }
 
-    async fn delete(&self, instance: &InstanceId, ids: &[String]) -> DomainResult<usize> {
+    async fn delete(&self, department: &DepartmentId, ids: &[String]) -> DomainResult<usize> {
         let ids = ids.to_vec();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let tx = c.transaction()?;
                 let mut n = 0;
@@ -286,7 +286,7 @@ impl MemoryPromptRepository for SqlitePromptStore {
 
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Option<Layer>,
         page: Page,
         newest_first: bool,
@@ -296,7 +296,7 @@ impl MemoryPromptRepository for SqlitePromptStore {
             .eq_opt("layer", layer.map(|l| l.as_str().to_owned()));
         let order = if newest_first { "DESC" } else { "ASC" };
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let sql = format!("SELECT doc FROM memory_prompts {} ORDER BY created_at_ms {order} LIMIT ? OFFSET ?", w.sql());
                 docs(query_docs(c, &sql, &w.with([Value::from(page.limit as i64), Value::from(page.offset as i64)]))?)
@@ -304,17 +304,17 @@ impl MemoryPromptRepository for SqlitePromptStore {
             .await
     }
 
-    async fn count(&self, instance: &InstanceId) -> DomainResult<usize> {
+    async fn count(&self, department: &DepartmentId) -> DomainResult<usize> {
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(|c| c.query_row("SELECT COUNT(*) FROM memory_prompts", [], |r| r.get(0)))
             .await
     }
 
-    async fn put_setting(&self, instance: &InstanceId, s: &PromptSetting) -> DomainResult<()> {
+    async fn put_setting(&self, department: &DepartmentId, s: &PromptSetting) -> DomainResult<()> {
         let s = s.clone();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.execute(
                     "INSERT OR REPLACE INTO prompt_settings VALUES (?,?,?,?,?,?)",
@@ -334,7 +334,7 @@ impl MemoryPromptRepository for SqlitePromptStore {
 
     async fn clear_setting(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         target: PromptTarget,
         team_id: Option<&str>,
         agent_id: Option<&str>,
@@ -347,20 +347,20 @@ impl MemoryPromptRepository for SqlitePromptStore {
             layer.as_str(),
         );
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| c.execute("DELETE FROM prompt_settings WHERE target_type = ? AND team_id = ? AND agent_id = ? AND layer = ?", params![t, team, agent, l]))
             .await
     }
 
     async fn list_settings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         page: Page,
     ) -> DomainResult<Vec<PromptSetting>> {
         let w = setting_where(filter);
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let sql = format!(
                     "SELECT target_type, team_id, agent_id, layer, memory_prompt_id, updated_at_ms FROM prompt_settings {} ORDER BY updated_at_ms DESC LIMIT ? OFFSET ?",
@@ -387,10 +387,10 @@ impl MemoryPromptRepository for SqlitePromptStore {
             .await
     }
 
-    async fn append_log(&self, instance: &InstanceId, e: &PromptLogEntry) -> DomainResult<()> {
+    async fn append_log(&self, department: &DepartmentId, e: &PromptLogEntry) -> DomainResult<()> {
         let e = e.clone();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 c.execute(
                     "INSERT INTO prompt_logs VALUES (?,?,?,?,?,?,?,?,?)",
@@ -413,7 +413,7 @@ impl MemoryPromptRepository for SqlitePromptStore {
 
     async fn list_logs(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         action: Option<&str>,
         from_ms: i64,
@@ -426,7 +426,7 @@ impl MemoryPromptRepository for SqlitePromptStore {
             [Value::from(from_ms), Value::from(to_ms)],
         );
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let sql = format!(
                     "SELECT doc FROM prompt_logs {} ORDER BY created_at_ms DESC LIMIT ? OFFSET ?",
@@ -446,21 +446,21 @@ impl MemoryPromptRepository for SqlitePromptStore {
 }
 
 pub struct SqliteGenerationLogStore {
-    pool: Arc<InstancePool>,
+    pool: Arc<DepartmentPool>,
 }
 
 impl SqliteGenerationLogStore {
-    pub fn new(pool: Arc<InstancePool>) -> Self {
+    pub fn new(pool: Arc<DepartmentPool>) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
 impl GenerationLogRepository for SqliteGenerationLogStore {
-    async fn append(&self, instance: &InstanceId, log: &GenerationLog) -> DomainResult<()> {
+    async fn append(&self, department: &DepartmentId, log: &GenerationLog) -> DomainResult<()> {
         let log = log.clone();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let tx = c.transaction()?;
                 tx.execute(
@@ -477,12 +477,12 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
 
     async fn get(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         log_id: &str,
     ) -> DomainResult<Option<GenerationLog>> {
         let id = log_id.to_owned();
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let doc: Option<String> = c
                     .query_row(
@@ -498,13 +498,13 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
 
     async fn find_by_output(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Layer,
         memory_id: &str,
     ) -> DomainResult<Option<GenerationLog>> {
         let (l, id) = (layer.as_str(), memory_id.to_owned());
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let doc: Option<String> = c
                     .query_row(
@@ -521,7 +521,7 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
 
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &GenerationLogFilter,
         limit: usize,
     ) -> DomainResult<Vec<GenerationLog>> {
@@ -539,7 +539,7 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
             );
         }
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let sql = format!("SELECT doc FROM generation_logs {} ORDER BY started_at_ms DESC, log_id DESC LIMIT ?", w.sql());
                 docs(query_docs(c, &sql, &w.with([Value::from(limit as i64)]))?)
@@ -547,20 +547,20 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
             .await
     }
 
-    async fn count(&self, instance: &InstanceId) -> DomainResult<usize> {
+    async fn count(&self, department: &DepartmentId) -> DomainResult<usize> {
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(|c| c.query_row("SELECT COUNT(*) FROM generation_logs", [], |r| r.get(0)))
             .await
     }
 
     async fn summarize(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         from_ms: i64,
     ) -> DomainResult<Vec<GenerationCount>> {
         self.pool
-            .get(instance)?
+            .get(department)?
             .call(move |c| {
                 let mut stmt = c.prepare(
                     "SELECT layer, status, COUNT(*) FROM generation_logs \

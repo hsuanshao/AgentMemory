@@ -9,7 +9,7 @@ use memory_application::ports::skill::{
     SkillTask,
 };
 use memory_domain::error::DomainResult;
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use memory_domain::skill::{SkillStatus, SkillVersion};
 
 use super::db::{pg_err, PgDb};
@@ -72,8 +72,12 @@ pub(crate) fn index_source(v: &SkillVersion) -> String {
 
 #[async_trait]
 impl SkillRepository for PostgresSkillStore {
-    async fn skill_id_exists(&self, instance: &InstanceId, skill_id: &str) -> DomainResult<bool> {
-        let s = self.db.schema(instance).await?;
+    async fn skill_id_exists(
+        &self,
+        department: &DepartmentId,
+        skill_id: &str,
+    ) -> DomainResult<bool> {
+        let s = self.db.schema(department).await?;
         let row = fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT 1::bigint AS one FROM {s}.skills WHERE skill_id = ? LIMIT 1"),
@@ -85,10 +89,10 @@ impl SkillRepository for PostgresSkillStore {
 
     async fn head(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
     ) -> DomainResult<Option<SkillVersion>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.skills WHERE skill_id = ? AND is_head"),
@@ -101,11 +105,11 @@ impl SkillRepository for PostgresSkillStore {
 
     async fn version(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         version: u32,
     ) -> DomainResult<Option<SkillVersion>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.skills WHERE skill_id = ? AND version = ?"),
@@ -118,12 +122,12 @@ impl SkillRepository for PostgresSkillStore {
 
     async fn find_head_by_name(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         agent_id: &str,
         name: &str,
     ) -> DomainResult<Option<SkillVersion>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.skills WHERE is_head AND status = 'active' AND team_id = ? AND owner_agent_id = ? AND name = ? LIMIT 1"),
@@ -134,8 +138,12 @@ impl SkillRepository for PostgresSkillStore {
         .transpose()
     }
 
-    async fn append_version(&self, instance: &InstanceId, v: &SkillVersion) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn append_version(
+        &self,
+        department: &DepartmentId,
+        v: &SkillVersion,
+    ) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         execute(
             &mut tx,
@@ -169,12 +177,12 @@ impl SkillRepository for PostgresSkillStore {
 
     async fn list_heads(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &SkillFilter,
         limit: usize,
         offset: usize,
     ) -> DomainResult<(Vec<SkillVersion>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let w = head_where(filter);
         let mut c = self.db.conn().await?;
         let total = count(
@@ -197,7 +205,7 @@ impl SkillRepository for PostgresSkillStore {
 
     async fn search_heads(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &SkillFilter,
         query: &str,
         limit: usize,
@@ -205,7 +213,7 @@ impl SkillRepository for PostgresSkillStore {
         let Some(q) = tsquery_literal(query) else {
             return Ok(Vec::new());
         };
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = head_where(filter);
         w.raw("tokens @@ q", []);
         let sql = format!(
@@ -226,12 +234,12 @@ impl SkillRepository for PostgresSkillStore {
 
     async fn list_versions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         limit: usize,
         offset: usize,
     ) -> DomainResult<(Vec<SkillVersion>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut c = self.db.conn().await?;
         let total = count(
             &mut c,
@@ -248,8 +256,8 @@ impl SkillRepository for PostgresSkillStore {
         Ok((docs(&rows)?, total))
     }
 
-    async fn delete_skill(&self, instance: &InstanceId, skill_id: &str) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+    async fn delete_skill(&self, department: &DepartmentId, skill_id: &str) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
         let n = execute(
             &mut *self.db.conn().await?,
             &format!("DELETE FROM {s}.skills WHERE skill_id = ?"),
@@ -261,11 +269,11 @@ impl SkillRepository for PostgresSkillStore {
 
     async fn delete_versions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         skill_id: &str,
         versions: &[u32],
     ) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let wanted: Vec<i64> = versions.iter().map(|v| i64::from(*v)).collect();
         let mut c = self.db.conn().await?;
         let mut n = 0;
@@ -282,8 +290,8 @@ impl SkillRepository for PostgresSkillStore {
         Ok(usize::try_from(n).unwrap_or(0))
     }
 
-    async fn count_heads(&self, instance: &InstanceId) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+    async fn count_heads(&self, department: &DepartmentId) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
         count(
             &mut *self.db.conn().await?,
             &format!("SELECT COUNT(*) FROM {s}.skills WHERE is_head AND status = 'active'"),
@@ -304,10 +312,10 @@ fn buffer_key(k: &BufferKey) -> String {
 impl SkillBufferStore for PostgresSkillStore {
     async fn load(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: &BufferKey,
     ) -> DomainResult<(Vec<BufferedMessage>, BufferCounters)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let row = fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT messages, tool_call_count, byte_count FROM {s}.skill_buffers WHERE buffer_key = ?"),
@@ -330,12 +338,12 @@ impl SkillBufferStore for PostgresSkillStore {
 
     async fn save(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: &BufferKey,
         messages: &[BufferedMessage],
         counters: &BufferCounters,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!(
@@ -353,8 +361,8 @@ impl SkillBufferStore for PostgresSkillStore {
         .map(|_| ())
     }
 
-    async fn clear(&self, instance: &InstanceId, key: &BufferKey) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn clear(&self, department: &DepartmentId, key: &BufferKey) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("DELETE FROM {s}.skill_buffers WHERE buffer_key = ?"),
@@ -366,12 +374,12 @@ impl SkillBufferStore for PostgresSkillStore {
 
     async fn archive(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: &BufferKey,
         at_ms: i64,
         messages: &[BufferedMessage],
     ) -> DomainResult<String> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let archive_key = format!(
             "skill_buffer/{}/{}/{}/{}/data-{at_ms}.jsonl",
             key.user_id, key.team_id, key.agent_id, key.session_id
@@ -391,10 +399,10 @@ impl SkillBufferStore for PostgresSkillStore {
 
     async fn read_archive(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         archive_key: &str,
     ) -> DomainResult<Option<Vec<BufferedMessage>>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT messages FROM {s}.skill_archives WHERE archive_key = ?"),
@@ -405,8 +413,8 @@ impl SkillBufferStore for PostgresSkillStore {
         .transpose()
     }
 
-    async fn put_task(&self, instance: &InstanceId, task: &SkillTask) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn put_task(&self, department: &DepartmentId, task: &SkillTask) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("INSERT INTO {s}.skill_tasks VALUES (?,?) ON CONFLICT (task_id) DO UPDATE SET doc = EXCLUDED.doc"),
@@ -418,10 +426,10 @@ impl SkillBufferStore for PostgresSkillStore {
 
     async fn get_task(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         task_id: &str,
     ) -> DomainResult<Option<SkillTask>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.skill_tasks WHERE task_id = ?"),

@@ -1,4 +1,4 @@
-//! Postgres adapter for memory prompts and generation logs (per instance
+//! Postgres adapter for memory prompts and generation logs (per department
 //! schema). Pipeline scheduling state belongs to the coordination backend.
 
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use memory_application::ports::pipeline::{
 };
 use memory_domain::error::DomainResult;
 use memory_domain::memory::Layer;
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 
 use super::db::{pg_err, PgDb};
 use super::sql::{
@@ -30,7 +30,7 @@ impl PostgresPromptStore {
 
 fn target_str(t: PromptTarget) -> &'static str {
     match t {
-        PromptTarget::Instance => "instance",
+        PromptTarget::Department => "department",
         PromptTarget::Team => "team",
         PromptTarget::Agent => "agent",
     }
@@ -40,7 +40,7 @@ fn parse_target(s: &str) -> PromptTarget {
     match s {
         "team" => PromptTarget::Team,
         "agent" => PromptTarget::Agent,
-        _ => PromptTarget::Instance,
+        _ => PromptTarget::Department,
     }
 }
 
@@ -56,8 +56,8 @@ fn setting_where(f: &PromptSettingFilter) -> Where {
 
 #[async_trait]
 impl MemoryPromptRepository for PostgresPromptStore {
-    async fn insert(&self, instance: &InstanceId, p: &MemoryPrompt) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn insert(&self, department: &DepartmentId, p: &MemoryPrompt) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("INSERT INTO {s}.memory_prompts (id, layer, status, created_at_ms, doc) VALUES (?,?,?,?,?)"),
@@ -73,8 +73,8 @@ impl MemoryPromptRepository for PostgresPromptStore {
         .map(|_| ())
     }
 
-    async fn get(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<MemoryPrompt>> {
-        let s = self.db.schema(instance).await?;
+    async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<MemoryPrompt>> {
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.memory_prompts WHERE id = ?"),
@@ -85,8 +85,8 @@ impl MemoryPromptRepository for PostgresPromptStore {
         .transpose()
     }
 
-    async fn update(&self, instance: &InstanceId, p: &MemoryPrompt) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn update(&self, department: &DepartmentId, p: &MemoryPrompt) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("UPDATE {s}.memory_prompts SET status = ?, doc = ? WHERE id = ?"),
@@ -100,8 +100,8 @@ impl MemoryPromptRepository for PostgresPromptStore {
         .map(|_| ())
     }
 
-    async fn delete(&self, instance: &InstanceId, ids: &[String]) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+    async fn delete(&self, department: &DepartmentId, ids: &[String]) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         let mut n = 0;
         for id in ids {
@@ -124,12 +124,12 @@ impl MemoryPromptRepository for PostgresPromptStore {
 
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Option<Layer>,
         page: Page,
         newest_first: bool,
     ) -> DomainResult<Vec<MemoryPrompt>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq("status", "active")
             .eq_opt("layer", layer.map(|l| l.as_str()));
@@ -146,8 +146,8 @@ impl MemoryPromptRepository for PostgresPromptStore {
         docs(&rows)
     }
 
-    async fn count(&self, instance: &InstanceId) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+    async fn count(&self, department: &DepartmentId) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
         count(
             &mut *self.db.conn().await?,
             &format!("SELECT COUNT(*) FROM {s}.memory_prompts"),
@@ -156,8 +156,8 @@ impl MemoryPromptRepository for PostgresPromptStore {
         .await
     }
 
-    async fn put_setting(&self, instance: &InstanceId, st: &PromptSetting) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn put_setting(&self, department: &DepartmentId, st: &PromptSetting) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!(
@@ -179,13 +179,13 @@ impl MemoryPromptRepository for PostgresPromptStore {
 
     async fn clear_setting(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         target: PromptTarget,
         team_id: Option<&str>,
         agent_id: Option<&str>,
         layer: Layer,
     ) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let n = execute(
             &mut *self.db.conn().await?,
             &format!("DELETE FROM {s}.prompt_settings WHERE target_type = ? AND team_id = ? AND agent_id = ? AND layer = ?"),
@@ -202,11 +202,11 @@ impl MemoryPromptRepository for PostgresPromptStore {
 
     async fn list_settings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         page: Page,
     ) -> DomainResult<Vec<PromptSetting>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let w = setting_where(filter);
         let rows = fetch_all(
             &mut *self.db.conn().await?,
@@ -236,8 +236,8 @@ impl MemoryPromptRepository for PostgresPromptStore {
             .collect()
     }
 
-    async fn append_log(&self, instance: &InstanceId, e: &PromptLogEntry) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn append_log(&self, department: &DepartmentId, e: &PromptLogEntry) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         execute(
             &mut *self.db.conn().await?,
             &format!("INSERT INTO {s}.prompt_logs VALUES (?,?,?,?,?,?,?,?,?)"),
@@ -259,14 +259,14 @@ impl MemoryPromptRepository for PostgresPromptStore {
 
     async fn list_logs(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         action: Option<&str>,
         from_ms: i64,
         to_ms: i64,
         page: Page,
     ) -> DomainResult<Vec<PromptLogEntry>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = setting_where(filter);
         w.eq_opt("action", action)
             .raw("created_at_ms BETWEEN ? AND ?", args![from_ms, to_ms]);
@@ -295,8 +295,8 @@ impl PostgresGenerationLogStore {
 
 #[async_trait]
 impl GenerationLogRepository for PostgresGenerationLogStore {
-    async fn append(&self, instance: &InstanceId, log: &GenerationLog) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+    async fn append(&self, department: &DepartmentId, log: &GenerationLog) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
         let mut tx = self.db.begin().await?;
         execute(
             &mut tx,
@@ -328,10 +328,10 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
 
     async fn get(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         log_id: &str,
     ) -> DomainResult<Option<GenerationLog>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT doc FROM {s}.generation_logs WHERE log_id = ?"),
@@ -344,11 +344,11 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
 
     async fn find_by_output(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Layer,
         memory_id: &str,
     ) -> DomainResult<Option<GenerationLog>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         // Ties on the start time go to the latest-written reference, which
         // is what SQLite's rowid order yields.
         fetch_optional(
@@ -366,11 +366,11 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
 
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &GenerationLogFilter,
         limit: usize,
     ) -> DomainResult<Vec<GenerationLog>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         w.eq_opt("layer", filter.layer.map(|l| l.as_str()))
             .eq_opt("status", filter.status.clone())
@@ -396,8 +396,8 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
         docs(&rows)
     }
 
-    async fn count(&self, instance: &InstanceId) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+    async fn count(&self, department: &DepartmentId) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
         count(
             &mut *self.db.conn().await?,
             &format!("SELECT COUNT(*) FROM {s}.generation_logs"),
@@ -408,10 +408,10 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
 
     async fn summarize(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         from_ms: i64,
     ) -> DomainResult<Vec<GenerationCount>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let rows = fetch_all(
             &mut *self.db.conn().await?,
             &format!(

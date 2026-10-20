@@ -77,7 +77,7 @@ pub async fn require_user(
 }
 
 async fn authorize(s: &SharedState, ctx: &Ctx, req: Request) -> Result<Request, ApiError> {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let user_key = ctx.user_key()?;
     let path = req
         .extensions()
@@ -110,7 +110,7 @@ async fn authorize(s: &SharedState, ctx: &Ctx, req: Request) -> Result<Request, 
         .services
         .meta
         .authorize_memory(
-            &instance,
+            &department,
             &user_key,
             &requested(ctx, &Value::Object(object.clone())),
             action_for(&path),

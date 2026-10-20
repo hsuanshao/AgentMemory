@@ -63,7 +63,7 @@ fn pagination(body: &Value) -> (Option<usize>, Option<usize>) {
 }
 
 pub async fn create(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let who = identity(&ctx, &body)?;
     let resources: Vec<ResourceInput> = body
         .get("resources")
@@ -74,7 +74,7 @@ pub async fn create(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
         .services
         .skills
         .create(
-            &instance,
+            &department,
             &who,
             required(&ctx, &body, "name")?,
             required(&ctx, &body, "content")?,
@@ -87,12 +87,12 @@ pub async fn create(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
 }
 
 pub async fn update(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let summary = s
         .services
         .skills
         .update(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             expected_version(&ctx, &body)?,
@@ -104,12 +104,12 @@ pub async fn update(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
 }
 
 pub async fn patch(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let summary = s
         .services
         .skills
         .patch(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             expected_version(&ctx, &body)?,
@@ -125,12 +125,12 @@ pub async fn patch(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonB
 }
 
 pub async fn delete(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let data = s
         .services
         .skills
         .delete(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             expected_version(&ctx, &body)?,
@@ -141,12 +141,12 @@ pub async fn delete(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
 }
 
 pub async fn get(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let detail = s
         .services
         .skills
         .get(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             read_options(&body),
@@ -161,12 +161,12 @@ pub async fn get_by_name(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let detail = s
         .services
         .skills
         .get_by_name(
-            &instance,
+            &department,
             required(&ctx, &body, "team_id")?,
             required(&ctx, &body, "agent_id")?,
             required(&ctx, &body, "skill_name")?,
@@ -178,7 +178,7 @@ pub async fn get_by_name(
 }
 
 pub async fn list(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let mut query: ListQuery = body
         .get("filters")
         .map(|v| ctx.parse(v))
@@ -188,14 +188,14 @@ pub async fn list(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBo
     let (items, total) = s
         .services
         .skills
-        .list(&instance, &identity(&ctx, &body)?, query)
+        .list(&department, &identity(&ctx, &body)?, query)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({"items": items, "total": total})))
 }
 
 pub async fn search(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): JsonBody) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let top_k = body
         .get("top_k")
         .and_then(Value::as_u64)
@@ -205,7 +205,7 @@ pub async fn search(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
         .services
         .skills
         .search(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "query")?,
             top_k,
@@ -221,13 +221,13 @@ pub async fn versions(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let (limit, offset) = pagination(&body);
     let (items, total) = s
         .services
         .skills
         .versions(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             limit,
@@ -243,13 +243,13 @@ pub async fn files_write(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let files: Vec<ResourceInput> = ctx.parse(body.get("files").unwrap_or(&Value::Null))?;
     let summary = s
         .services
         .skills
         .write_files(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             expected_version(&ctx, &body)?,
@@ -265,13 +265,13 @@ pub async fn files_remove(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let paths: Vec<String> = ctx.parse(body.get("paths").unwrap_or(&Value::Null))?;
     let summary = s
         .services
         .skills
         .remove_files(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             expected_version(&ctx, &body)?,
@@ -287,12 +287,12 @@ pub async fn files_read(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let file = s
         .services
         .skills
         .read_file(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             required(&ctx, &body, "skill_id")?,
             required(&ctx, &body, "path")?,
@@ -309,7 +309,7 @@ pub async fn listing(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let budget = body
         .get("char_budget")
         .and_then(Value::as_u64)
@@ -318,7 +318,7 @@ pub async fn listing(
         .services
         .skills
         .listing(
-            &instance,
+            &department,
             &identity(&ctx, &body)?,
             str_of(&body, "query"),
             budget,
@@ -356,12 +356,12 @@ pub async fn conversation_add(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let key = buffer_key(&ctx, &body, None)?;
     let result = s
         .services
         .skill_extraction
-        .conversation_add(&instance, key, messages(&ctx, &body)?)
+        .conversation_add(&department, key, messages(&ctx, &body)?)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, result))
@@ -372,14 +372,14 @@ pub async fn force_archive(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let key = buffer_key(&ctx, &body, None)?;
     let reason = str_of(&body, "reason").map(str::to_owned);
     Ok(ok(
         &ctx.request_id,
         s.services
             .skill_extraction
-            .force_archive(&instance, key, reason)
+            .force_archive(&department, key, reason)
             .await
             .map_err(|e| ctx.err(e))?,
     ))
@@ -390,13 +390,13 @@ pub async fn extract(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let instance = ctx.instance()?;
+    let department = ctx.department()?;
     let who = identity(&ctx, &body)?;
     let archived = s
         .services
         .skill_extraction
         .extract(
-            &instance,
+            &department,
             &who,
             str_of(&body, "session_id").map(str::to_owned),
             messages(&ctx, &body)?,

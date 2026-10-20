@@ -24,7 +24,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StorageConfig {
-    /// `sqlite` (one file per instance) or `postgres` (pgvector).
+    /// `sqlite` (one file per department) or `postgres` (pgvector).
     pub backend: String,
     pub postgres: PostgresConfig,
 }
@@ -123,14 +123,14 @@ impl Default for ServerConfig {
 #[serde(default, rename_all = "camelCase")]
 pub struct DataConfig {
     pub base_dir: String,
-    pub max_open_instances: usize,
+    pub max_open_departments: usize,
 }
 
 impl Default for DataConfig {
     fn default() -> Self {
         Self {
             base_dir: "~/.agent-memory".into(),
-            max_open_instances: 100,
+            max_open_departments: 100,
         }
     }
 }
@@ -381,16 +381,16 @@ impl Default for SkillExtractionConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct MetadataConfig {
-    pub max_users_per_instance: usize,
-    pub max_teams_per_instance: usize,
+    pub max_users_per_department: usize,
+    pub max_teams_per_department: usize,
     pub max_active_keys_per_user: usize,
 }
 
 impl Default for MetadataConfig {
     fn default() -> Self {
         Self {
-            max_users_per_instance: 500,
-            max_teams_per_instance: 100,
+            max_users_per_department: 500,
+            max_teams_per_department: 100,
             max_active_keys_per_user: 20,
         }
     }

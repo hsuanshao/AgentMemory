@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::without_nul;
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -157,7 +157,7 @@ impl SkillExtractionService {
     /// Appends a turn; archives the buffer when a threshold is crossed.
     pub async fn conversation_add(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: BufferKey,
         messages: Vec<BufferedMessage>,
     ) -> DomainResult<AddResult> {
@@ -173,7 +173,7 @@ impl SkillExtractionService {
             messages
         };
 
-        let (mut buffer, counters) = self.buffers.load(instance, &key).await?;
+        let (mut buffer, counters) = self.buffers.load(department, &key).await?;
         buffer.extend(incoming);
         let mut oversize = false;
         if compress && byte_size(&buffer) > self.settings.archive_bytes * 2 {
@@ -197,15 +197,17 @@ impl SkillExtractionService {
         };
         match reason {
             Some(reason) => {
-                let archived = self.archive(instance, &key, &buffer, reason, None).await?;
-                self.buffers.clear(instance, &key).await?;
+                let archived = self
+                    .archive(department, &key, &buffer, reason, None)
+                    .await?;
+                self.buffers.clear(department, &key).await?;
                 Ok(AddResult {
                     status: "archived",
                     archived: Some(archived),
                 })
             }
             None => {
-                self.buffers.save(instance, &key, &buffer, &next).await?;
+                self.buffers.save(department, &key, &buffer, &next).await?;
                 Ok(AddResult {
                     status: "ok",
                     archived: None,
@@ -216,20 +218,20 @@ impl SkillExtractionService {
 
     pub async fn force_archive(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: BufferKey,
         reason: Option<String>,
     ) -> DomainResult<Value> {
         self.require_enabled()?;
         validate_key(&key)?;
-        let (buffer, _) = self.buffers.load(instance, &key).await?;
+        let (buffer, _) = self.buffers.load(department, &key).await?;
         if buffer.is_empty() {
             return Ok(json!({"status": "empty", "message": "buffer is empty"}));
         }
         let archived = self
-            .archive(instance, &key, &buffer, "force", reason)
+            .archive(department, &key, &buffer, "force", reason)
             .await?;
-        self.buffers.clear(instance, &key).await?;
+        self.buffers.clear(department, &key).await?;
         Ok(
             json!({"status": "archived", "task_id": archived.task_id, "archived_at_ms": archived.archived_at_ms, "archive_key": archived.archive_key}),
         )
@@ -238,7 +240,7 @@ impl SkillExtractionService {
     /// Archives a one-off conversation slice directly (no buffer).
     pub async fn extract(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         session_id: Option<String>,
         messages: Vec<BufferedMessage>,
@@ -259,20 +261,20 @@ impl SkillExtractionService {
         } else {
             messages
         };
-        self.archive(instance, &key, &messages, "direct", reason)
+        self.archive(department, &key, &messages, "direct", reason)
             .await
     }
 
     async fn archive(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         key: &BufferKey,
         messages: &[BufferedMessage],
         reason: &str,
         hint: Option<String>,
     ) -> DomainResult<Archived> {
         let at = self.clock.now().timestamp_millis();
-        let archive_key = self.buffers.archive(instance, key, at, messages).await?;
+        let archive_key = self.buffers.archive(department, key, at, messages).await?;
         let task = SkillTask {
             task_id: format!("skill-extract-task-{}", self.ids.hex(8)),
             key: key.clone(),
@@ -285,10 +287,10 @@ impl SkillExtractionService {
             error: None,
             candidates: json!([]),
         };
-        self.buffers.put_task(instance, &task).await?;
+        self.buffers.put_task(department, &task).await?;
         self.pipeline
             .enqueue_job(PipelineJob::SkillExtract {
-                instance: instance.clone(),
+                department: department.clone(),
                 task_id: task.task_id.clone(),
             })
             .await?;
@@ -355,10 +357,10 @@ impl SkillExtractionService {
         out
     }
 
-    async fn run(&self, instance: &InstanceId, task: &mut SkillTask) -> DomainResult<()> {
+    async fn run(&self, department: &DepartmentId, task: &mut SkillTask) -> DomainResult<()> {
         let Some(messages) = self
             .buffers
-            .read_archive(instance, &task.archive_key)
+            .read_archive(department, &task.archive_key)
             .await?
         else {
             warn!(task = %task.task_id, "archive missing; dropping ghost task");
@@ -376,7 +378,7 @@ impl SkillExtractionService {
             limit: Some(self.settings.prefix_skills_limit),
             ..Default::default()
         };
-        let (existing, total) = self.skills.list(instance, &who, query).await?;
+        let (existing, total) = self.skills.list(department, &who, query).await?;
         let mut prompt = format!(
             "## Skills this agent already owns ({} of {total})\n",
             existing.len()
@@ -404,7 +406,7 @@ impl SkillExtractionService {
         let plan: ReviewPlan = parse_llm_json(&reply, '{')?;
         let mut applied = Vec::new();
         for action in plan.actions {
-            match self.apply(instance, &who, action).await {
+            match self.apply(department, &who, action).await {
                 Ok(v) => applied.push(v),
                 Err(err) => warn!(error = %err, task = %task.task_id, "skill action rejected"),
             }
@@ -417,7 +419,7 @@ impl SkillExtractionService {
 
     async fn apply(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         who: &SkillIdentity,
         action: ReviewAction,
     ) -> DomainResult<Value> {
@@ -430,7 +432,7 @@ impl SkillExtractionService {
             };
             async move {
                 self.skills
-                    .get(instance, who, &id, read)
+                    .get(department, who, &id, read)
                     .await
                     .map(|d| d.summary.version)
             }
@@ -439,7 +441,7 @@ impl SkillExtractionService {
             ReviewAction::Create { name, content } => {
                 let s = self
                     .skills
-                    .create(instance, who, &name, &content, Vec::new(), None)
+                    .create(department, who, &name, &content, Vec::new(), None)
                     .await?;
                 return Ok(
                     json!({"action": "create", "skill_id": s.skill_id, "version": s.version}),
@@ -448,7 +450,7 @@ impl SkillExtractionService {
             ReviewAction::Update { skill_id, content } => {
                 let v = current(&skill_id).await?;
                 self.skills
-                    .update(instance, who, &skill_id, v, &content)
+                    .update(department, who, &skill_id, v, &content)
                     .await?
             }
             ReviewAction::Patch {
@@ -459,7 +461,7 @@ impl SkillExtractionService {
                 let v = current(&skill_id).await?;
                 self.skills
                     .patch(
-                        instance,
+                        department,
                         who,
                         &skill_id,
                         v,
@@ -478,21 +480,21 @@ impl SkillExtractionService {
 
 #[async_trait]
 impl SkillJobRunner for SkillExtractionService {
-    async fn run_skill_task(&self, instance: &InstanceId, task_id: &str) -> DomainResult<()> {
+    async fn run_skill_task(&self, department: &DepartmentId, task_id: &str) -> DomainResult<()> {
         if !self.llm.is_configured() {
             warn!("LLM not configured; skipping skill extraction");
             return Ok(());
         }
-        let Some(mut task) = self.buffers.get_task(instance, task_id).await? else {
+        let Some(mut task) = self.buffers.get_task(department, task_id).await? else {
             return Ok(());
         };
         task.attempts += 1;
-        let result = self.run(instance, &mut task).await;
+        let result = self.run(department, &mut task).await;
         if let Err(err) = &result {
             task.status = "failed".into();
             task.error = Some(err.to_string());
         }
-        self.buffers.put_task(instance, &task).await?;
+        self.buffers.put_task(department, &task).await?;
         result
     }
 }

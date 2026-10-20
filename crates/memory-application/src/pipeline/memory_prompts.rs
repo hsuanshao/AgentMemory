@@ -1,12 +1,12 @@
 //! Custom L1/L2/L3 prompts: CRUD, apply/clear settings, audit log and the
-//! agent → team → instance resolution used by the pipeline.
+//! agent → team → department resolution used by the pipeline.
 
 use std::sync::Arc;
 
 use chrono::Duration;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use memory_domain::memory::Layer;
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 
 use super::prompts::CustomStrategy;
 use crate::common::Page;
@@ -16,7 +16,7 @@ use crate::ports::pipeline::{
 };
 use crate::ports::system::{Clock, IdGenerator};
 
-pub const MAX_PROMPTS_PER_INSTANCE: usize = 500;
+pub const MAX_PROMPTS_PER_DEPARTMENT: usize = 500;
 const MAX_NAME_CHARS: usize = 100;
 const MAX_PROMPT_CHARS: usize = 10_000;
 const MAX_LOG_RANGE_DAYS: i64 = 90;
@@ -61,16 +61,16 @@ impl MemoryPromptService {
 
     pub async fn create(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         name: &str,
         layer: Layer,
         prompt: &str,
     ) -> DomainResult<MemoryPrompt> {
         validate_text(name, prompt)?;
-        if self.repo.count(instance).await? >= MAX_PROMPTS_PER_INSTANCE {
+        if self.repo.count(department).await? >= MAX_PROMPTS_PER_DEPARTMENT {
             return Err(DomainError::conflict(
                 "PROMPT_LIMIT_EXCEEDED",
-                "at most 500 prompts per instance",
+                "at most 500 prompts per department",
             ));
         }
         let now = self.now_ms();
@@ -84,13 +84,13 @@ impl MemoryPromptService {
             created_at_ms: now,
             updated_at_ms: now,
         };
-        self.repo.insert(instance, &record).await?;
+        self.repo.insert(department, &record).await?;
         Ok(record)
     }
 
-    pub async fn get(&self, instance: &InstanceId, id: &str) -> DomainResult<MemoryPrompt> {
+    pub async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<MemoryPrompt> {
         self.repo
-            .get(instance, id)
+            .get(department, id)
             .await?
             .filter(|p| p.status == "active")
             .ok_or_else(not_found)
@@ -98,17 +98,17 @@ impl MemoryPromptService {
 
     pub async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Option<Layer>,
         page: Page,
         newest_first: bool,
     ) -> DomainResult<Vec<MemoryPrompt>> {
-        self.repo.list(instance, layer, page, newest_first).await
+        self.repo.list(department, layer, page, newest_first).await
     }
 
     pub async fn update(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         id: &str,
         name: Option<&str>,
         prompt: Option<&str>,
@@ -116,7 +116,7 @@ impl MemoryPromptService {
         if name.is_none() && prompt.is_none() {
             return Err(DomainError::invalid("name or prompt is required"));
         }
-        let mut record = self.get(instance, id).await?;
+        let mut record = self.get(department, id).await?;
         if let Some(n) = name {
             record.name = n.to_owned();
         }
@@ -126,22 +126,22 @@ impl MemoryPromptService {
         validate_text(&record.name, &record.prompt)?;
         record.version += 1;
         record.updated_at_ms = self.now_ms();
-        self.repo.update(instance, &record).await?;
+        self.repo.update(department, &record).await?;
         Ok(record)
     }
 
-    pub async fn delete(&self, instance: &InstanceId, ids: &[String]) -> DomainResult<usize> {
+    pub async fn delete(&self, department: &DepartmentId, ids: &[String]) -> DomainResult<usize> {
         for id in ids {
-            self.get(instance, id).await?;
+            self.get(department, id).await?;
         }
-        self.repo.delete(instance, ids).await
+        self.repo.delete(department, ids).await
     }
 
-    /// Applies or clears the effective prompt for the instance, a team, or
+    /// Applies or clears the effective prompt for the department, a team, or
     /// specific agents of a team. Returns the number of targets affected.
     pub async fn set(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         layer: Layer,
         action: PromptAction,
         target: ApplyTarget,
@@ -153,7 +153,7 @@ impl MemoryPromptService {
         let now = self.now_ms();
         let prompt_id = match &action {
             PromptAction::Apply { memory_prompt_id } => {
-                let prompt = self.get(instance, memory_prompt_id).await?;
+                let prompt = self.get(department, memory_prompt_id).await?;
                 if prompt.layer != layer {
                     return Err(DomainError::invalid(
                         "PROMPT_LAYER_MISMATCH: prompt layer does not match",
@@ -175,13 +175,13 @@ impl MemoryPromptService {
                         memory_prompt_id: id.clone(),
                         updated_at_ms: now,
                     };
-                    self.repo.put_setting(instance, &setting).await?;
+                    self.repo.put_setting(department, &setting).await?;
                     affected += 1;
                 }
                 None => {
                     affected += self
                         .repo
-                        .clear_setting(instance, kind, team.as_deref(), agent.as_deref(), layer)
+                        .clear_setting(department, kind, team.as_deref(), agent.as_deref(), layer)
                         .await?
                 }
             }
@@ -200,23 +200,23 @@ impl MemoryPromptService {
                 agent_id: agent,
                 created_at_ms: now,
             };
-            self.repo.append_log(instance, &entry).await?;
+            self.repo.append_log(department, &entry).await?;
         }
         Ok(affected)
     }
 
     pub async fn list_settings(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         page: Page,
     ) -> DomainResult<Vec<PromptSetting>> {
-        self.repo.list_settings(instance, filter, page).await
+        self.repo.list_settings(department, filter, page).await
     }
 
     pub async fn logs(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         filter: &PromptSettingFilter,
         action: Option<&str>,
         range_ms: Option<(i64, i64)>,
@@ -240,15 +240,15 @@ impl MemoryPromptService {
             }
         };
         self.repo
-            .list_logs(instance, filter, action, from, to, page)
+            .list_logs(department, filter, action, from, to, page)
             .await
     }
 
-    /// The effective custom strategy: agent → team → instance; `None`
+    /// The effective custom strategy: agent → team → department; `None`
     /// means "use the built-in prompt unchanged".
     pub async fn resolve(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         team_id: &str,
         agent_id: &str,
         layer: Layer,
@@ -256,7 +256,7 @@ impl MemoryPromptService {
         let candidates = [
             (PromptTarget::Agent, Some(team_id), Some(agent_id)),
             (PromptTarget::Team, Some(team_id), None),
-            (PromptTarget::Instance, None, None),
+            (PromptTarget::Department, None, None),
         ];
         for (kind, team, agent) in candidates {
             let filter = PromptSettingFilter {
@@ -269,7 +269,7 @@ impl MemoryPromptService {
             let settings = self
                 .repo
                 .list_settings(
-                    instance,
+                    department,
                     &filter,
                     Page {
                         limit: 1,
@@ -282,7 +282,7 @@ impl MemoryPromptService {
             };
             if let Some(p) = self
                 .repo
-                .get(instance, &setting.memory_prompt_id)
+                .get(department, &setting.memory_prompt_id)
                 .await?
                 .filter(|p| p.status == "active")
             {
@@ -312,7 +312,7 @@ type Target = (PromptTarget, Option<String>, Option<String>);
 
 fn expand_targets(target: &ApplyTarget) -> Vec<Target> {
     match (&target.team_id, target.agent_ids.is_empty()) {
-        (None, _) => vec![(PromptTarget::Instance, None, None)],
+        (None, _) => vec![(PromptTarget::Department, None, None)],
         (Some(team), true) => vec![(PromptTarget::Team, Some(team.clone()), None)],
         (Some(team), false) => target
             .agent_ids

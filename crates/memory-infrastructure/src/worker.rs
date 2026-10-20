@@ -292,7 +292,7 @@ impl QueueBackend for LocalQueue {
 
 /// Spawns the dispatcher. Jobs sharing a serial key never run concurrently
 /// (across nodes when `locks` is distributed). `locks` must not be the
-/// instance the pipeline uses for its state documents: a job holds its
+/// department the pipeline uses for its state documents: a job holds its
 /// serial key while the pipeline takes state locks inside it.
 pub fn spawn_worker(
     queue: Arc<WorkerQueue>,
@@ -461,7 +461,7 @@ mod tests {
 
     fn job() -> PipelineJob {
         PipelineJob::SkillExtract {
-            instance: SegmentId::default_bucket(),
+            department: SegmentId::default_bucket(),
             task_id: "t".into(),
         }
     }

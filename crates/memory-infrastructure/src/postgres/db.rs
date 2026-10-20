@@ -1,10 +1,10 @@
-//! Connection pool, error mapping and lazily migrated per-instance schemas.
+//! Connection pool, error mapping and lazily migrated per-department schemas.
 //!
-//! Every instance lives in its own schema, `am_<16 hex of sha256(id)>`:
-//! instance ids are arbitrary strings (up to 256 bytes), schema names must
+//! Every department lives in its own schema, `am_<16 hex of sha256(id)>`:
+//! department ids are arbitrary strings (up to 256 bytes), schema names must
 //! be short identifiers, and a hash keeps the mapping deterministic across
-//! nodes. The registry table `agent_memory.instances` records which
-//! instance owns which schema, so a (practically impossible) hash collision
+//! nodes. The registry table `agent_memory.departments` records which
+//! department owns which schema, so a (practically impossible) hash collision
 //! surfaces as a unique violation instead of two tenants sharing tables.
 //! All SQL names tables fully qualified (`"am_…".table`) — `search_path` is
 //! per connection and a pool cannot be trusted to carry it.
@@ -16,7 +16,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use memory_domain::error::{DomainError, DomainResult};
-use memory_domain::scope::InstanceId;
+use memory_domain::scope::DepartmentId;
 use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgConnectOptions, PgConnection, PgPool, PgPoolOptions};
@@ -24,7 +24,7 @@ use sqlx::{Connection, Postgres, Transaction};
 use tracing::{info, warn};
 
 use super::schema::{self, HNSW_MAX_DIMS, REGISTRY_SCHEMA};
-use super::sql::{args, count, execute, execute_script, fetch_optional, get, Arg};
+use super::sql::{args, count, execute, execute_script, fetch_all, fetch_optional, get, Arg};
 
 /// How long a request waits for a pooled connection (and how long start-up
 /// waits for the first one) before reporting storage as unavailable.
@@ -53,13 +53,13 @@ pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// The schema name owned by `instance`.
-pub fn schema_name(instance: &InstanceId) -> String {
-    let digest = Sha256::digest(instance.as_str().as_bytes());
+/// The schema name owned by `department`.
+pub fn schema_name(department: &DepartmentId) -> String {
+    let digest = Sha256::digest(department.as_str().as_bytes());
     format!("am_{}", &hex::encode(digest)[..16])
 }
 
-/// A migrated instance schema; displays as its quoted name for use in SQL.
+/// A migrated department schema; displays as its quoted name for use in SQL.
 #[derive(Debug, Clone)]
 pub struct Schema(Arc<str>);
 
@@ -80,14 +80,14 @@ pub async fn xact_lock(tx: &mut Transaction<'_, Postgres>, key: &str) -> DomainR
     .map(|_| ())
 }
 
-/// The shared pool plus the set of instance schemas known to be migrated.
+/// The shared pool plus the set of department schemas known to be migrated.
 pub struct PgDb {
     pool: PgPool,
     dims: Option<usize>,
     /// pgvector ≥ 0.8 can keep scanning HNSW until enough rows pass the
     /// scope filter; older versions may return fewer than `limit` rows.
     iterative_scan: bool,
-    ready: RwLock<HashMap<InstanceId, Schema>>,
+    ready: RwLock<HashMap<DepartmentId, Schema>>,
     /// Serialises first-use migrations within this process (the advisory
     /// lock serialises them across processes).
     migrating: tokio::sync::Mutex<()>,
@@ -137,11 +137,7 @@ impl PgDb {
                     ))
                 })?;
         }
-        execute_script(
-            &mut tx,
-            &schema::registry_ddl(&quote_ident(REGISTRY_SCHEMA)),
-        )
-        .await?;
+        migrate(&mut tx).await?;
         let version: Option<String> = match fetch_optional(
             &mut tx,
             "SELECT extversion FROM pg_extension WHERE extname = 'vector'",
@@ -194,50 +190,50 @@ impl PgDb {
         }
     }
 
-    fn cached(&self, instance: &InstanceId) -> Option<Schema> {
-        self.ready.read().ok()?.get(instance).cloned()
+    fn cached(&self, department: &DepartmentId) -> Option<Schema> {
+        self.ready.read().ok()?.get(department).cloned()
     }
 
-    /// The instance's schema, created and migrated on first use.
-    pub async fn schema(&self, instance: &InstanceId) -> DomainResult<Schema> {
-        if let Some(s) = self.cached(instance) {
+    /// The department's schema, created and migrated on first use.
+    pub async fn schema(&self, department: &DepartmentId) -> DomainResult<Schema> {
+        if let Some(s) = self.cached(department) {
             return Ok(s);
         }
         let _guard = self.migrating.lock().await;
-        if let Some(s) = self.cached(instance) {
+        if let Some(s) = self.cached(department) {
             return Ok(s);
         }
-        let name = schema_name(instance);
+        let name = schema_name(department);
         let quoted = quote_ident(&name);
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         xact_lock(&mut tx, &format!("agent_memory:migrate:{name}")).await?;
         let registry = quote_ident(REGISTRY_SCHEMA);
         execute(
             &mut tx,
-            &format!("INSERT INTO {registry}.instances (instance_id, schema_name) VALUES (?, ?) ON CONFLICT (instance_id) DO NOTHING"),
-            &args![instance.as_str(), name.as_str()],
+            &format!("INSERT INTO {registry}.departments (department_id, schema_name) VALUES (?, ?) ON CONFLICT (department_id) DO NOTHING"),
+            &args![department.as_str(), name.as_str()],
         )
         .await?;
-        execute_script(&mut tx, &schema::instance_ddl(&quoted)).await?;
+        execute_script(&mut tx, &schema::department_ddl(&quoted)).await?;
         if let Some(dims) = self.dims {
             migrate_embedding(&mut tx, &quoted, dims).await?;
         }
         tx.commit().await.map_err(pg_err)?;
         let schema = Schema(quoted.into());
         if let Ok(mut ready) = self.ready.write() {
-            ready.insert(instance.clone(), schema.clone());
+            ready.insert(department.clone(), schema.clone());
         }
         Ok(schema)
     }
 
-    /// Drops the instance schema and its registry row. Returns whether the
-    /// instance was registered.
-    pub async fn drop_instance(&self, instance: &InstanceId) -> DomainResult<bool> {
+    /// Drops the department schema and its registry row. Returns whether the
+    /// department was registered.
+    pub async fn drop_department(&self, department: &DepartmentId) -> DomainResult<bool> {
         let _guard = self.migrating.lock().await;
         if let Ok(mut ready) = self.ready.write() {
-            ready.remove(instance);
+            ready.remove(department);
         }
-        let name = schema_name(instance);
+        let name = schema_name(department);
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         xact_lock(&mut tx, &format!("agent_memory:migrate:{name}")).await?;
         execute(
@@ -249,25 +245,120 @@ impl PgDb {
         let registry = quote_ident(REGISTRY_SCHEMA);
         let removed = execute(
             &mut tx,
-            &format!("DELETE FROM {registry}.instances WHERE instance_id = ?"),
-            &args![instance.as_str()],
+            &format!("DELETE FROM {registry}.departments WHERE department_id = ?"),
+            &args![department.as_str()],
         )
         .await?;
         tx.commit().await.map_err(pg_err)?;
         Ok(removed > 0)
     }
 
-    /// Instances registered in the database.
-    pub async fn known_instances(&self) -> DomainResult<Vec<String>> {
+    /// Departments registered in the database.
+    pub async fn known_departments(&self) -> DomainResult<Vec<String>> {
         let registry = quote_ident(REGISTRY_SCHEMA);
         let rows = super::sql::fetch_all(
             &mut *self.conn().await?,
-            &format!("SELECT instance_id FROM {registry}.instances ORDER BY instance_id"),
+            &format!("SELECT department_id FROM {registry}.departments ORDER BY department_id"),
             &[],
         )
         .await?;
-        rows.iter().map(|r| get(r, "instance_id")).collect()
+        rows.iter().map(|r| get(r, "department_id")).collect()
     }
+}
+
+/// Brings the registry and every registered department schema to
+/// [`schema::SCHEMA_VERSION`], recording each step in
+/// `agent_memory.schema_migrations`. Runs under the bootstrap lock, so one
+/// replica migrates while the others wait.
+async fn migrate(tx: &mut Transaction<'_, Postgres>) -> DomainResult<()> {
+    let registry = quote_ident(REGISTRY_SCHEMA);
+    execute_script(tx, &schema::migrations_ddl(&registry)).await?;
+    let applied = match fetch_optional(
+        tx,
+        &format!("SELECT max(version) AS v FROM {registry}.schema_migrations"),
+        &[],
+    )
+    .await?
+    {
+        Some(row) => get::<Option<i64>>(&row, "v")?.unwrap_or(0),
+        None => 0,
+    };
+    if applied < 1 {
+        rename_instances(tx, &registry).await?;
+    }
+    execute_script(tx, &schema::registry_ddl(&registry)).await?;
+    for (version, name) in schema::MIGRATIONS.iter().filter(|(v, _)| *v > applied) {
+        execute(
+            tx,
+            &format!("INSERT INTO {registry}.schema_migrations (version, name) VALUES (?, ?)"),
+            &args![*version, *name],
+        )
+        .await?;
+        info!(version, name, "migrated postgres schema");
+    }
+    Ok(())
+}
+
+/// Migration 1: the `instances` registry becomes `departments`, and prompt
+/// settings that targeted the instance now target the department.
+async fn rename_instances(tx: &mut Transaction<'_, Postgres>, registry: &str) -> DomainResult<()> {
+    let old = fetch_optional(
+        tx,
+        &format!("SELECT 1 AS x WHERE to_regclass('{REGISTRY_SCHEMA}.instances') IS NOT NULL AND to_regclass('{REGISTRY_SCHEMA}.departments') IS NULL"),
+        &[],
+    )
+    .await?;
+    if old.is_none() {
+        return Ok(());
+    }
+    execute_script(
+        tx,
+        &format!(
+            "ALTER TABLE {registry}.instances RENAME COLUMN instance_id TO department_id;
+             ALTER TABLE {registry}.instances RENAME TO departments;
+             ALTER INDEX IF EXISTS {registry}.instances_pkey RENAME TO departments_pkey;
+             ALTER INDEX IF EXISTS {registry}.instances_schema_name_key RENAME TO departments_schema_name_key;"
+        ),
+    )
+    .await?;
+    let rows = fetch_all(
+        tx,
+        &format!("SELECT schema_name FROM {registry}.departments"),
+        &[],
+    )
+    .await?;
+    for row in &rows {
+        let s = quote_ident(&get::<String>(row, "schema_name")?);
+        let steps = [
+            ("prompt_settings", format!("UPDATE {s}.prompt_settings SET target_type = 'department' WHERE target_type = 'instance'")),
+            ("prompt_logs", format!("UPDATE {s}.prompt_logs SET target_type = 'department' WHERE target_type = 'instance'")),
+            // The operator's quota replaces the default seeded under the new name.
+            ("meta_config_params", format!(
+                "DELETE FROM {s}.meta_config_params n USING {s}.meta_config_params o
+                 WHERE o.module = 'quota' AND o.param_name IN ('max_users_per_instance', 'max_teams_per_instance')
+                   AND n.scope = o.scope AND n.user_id = o.user_id AND n.module = o.module
+                   AND n.param_name = replace(o.param_name, '_per_instance', '_per_department');
+                 UPDATE {s}.meta_config_params SET param_name = replace(param_name, '_per_instance', '_per_department')
+                 WHERE module = 'quota' AND param_name IN ('max_users_per_instance', 'max_teams_per_instance');"
+            )),
+        ];
+        for (table, sql) in steps {
+            let exists = fetch_optional(
+                tx,
+                "SELECT 1 AS x WHERE to_regclass(?) IS NOT NULL",
+                &args![format!("{s}.{table}")],
+            )
+            .await?;
+            if exists.is_some() {
+                execute_script(tx, &sql).await?;
+            }
+        }
+    }
+    info!(
+        departments = rows.len(),
+        "renamed the postgres instance registry to departments"
+    );
+    Ok(())
 }
 
 fn supports_iterative_scan(version: &str) -> bool {
@@ -321,7 +412,7 @@ mod tests {
 
     #[test]
     fn schema_names_are_short_safe_identifiers() {
-        let id = SegmentId::parse("instance", "Weird \"name\"; DROP").unwrap();
+        let id = SegmentId::parse("department", "Weird \"name\"; DROP").unwrap();
         let name = schema_name(&id);
         assert_eq!(name.len(), 19);
         assert!(name

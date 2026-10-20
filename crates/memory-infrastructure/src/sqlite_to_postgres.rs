@@ -1,4 +1,4 @@
-//! One-shot copy of every SQLite instance database into Postgres, for an
+//! One-shot copy of every SQLite department database into Postgres, for an
 //! install outgrowing the single-node backend.
 //!
 //! Rows are copied as stored (ids, `seq` numbers, versions, timestamps), so
@@ -10,16 +10,16 @@
 //! where they are.
 //!
 //! The source must not change while this runs: stop memory-core first.
-//! Each instance is copied in one transaction and checked by row count
+//! Each department is copied in one transaction and checked by row count
 //! before it commits, so a failure leaves its Postgres schema empty and the
-//! run can simply be repeated. An instance whose schema already holds
+//! run can simply be repeated. A department whose schema already holds
 //! exactly the source's rows is reported as already migrated.
 
 use std::path::{Path, PathBuf};
 
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::without_nul;
-use memory_domain::scope::{InstanceId, SegmentId};
+use memory_domain::scope::{DepartmentId, SegmentId};
 use memory_domain::skill::SkillVersion;
 use pgvector::Vector;
 use rusqlite::types::Value;
@@ -398,8 +398,8 @@ pub struct TableReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct InstanceReport {
-    pub instance: String,
+pub struct DepartmentReport {
+    pub department: String,
     pub outcome: Outcome,
     pub tables: Vec<TableReport>,
     /// Atom embeddings written to the `embedding` column.
@@ -413,24 +413,27 @@ pub struct InstanceReport {
 #[derive(Debug, Clone, Serialize)]
 pub struct MigrationReport {
     pub dry_run: bool,
-    pub instances: Vec<InstanceReport>,
+    pub departments: Vec<DepartmentReport>,
 }
 
-/// Copies every instance under `<data_dir>/instances` into `pg`. With
+/// Copies every department under `<data_dir>/departments` into `pg`. With
 /// `dry_run` nothing is written to Postgres: the report shows what would be
 /// copied, and a target that would refuse the copy still fails.
 pub async fn migrate(data_dir: &Path, pg: &PgDb, dry_run: bool) -> DomainResult<MigrationReport> {
-    let mut instances = Vec::new();
-    for (instance, path) in sqlite_instances(data_dir)? {
-        let source = Db::open(&path, schema::migrate_instance)?;
-        instances.push(migrate_instance(&source, pg, &instance, dry_run).await?);
+    let mut departments = Vec::new();
+    for (department, path) in sqlite_departments(data_dir)? {
+        let source = Db::open(&path, schema::migrate_department)?;
+        departments.push(migrate_department(&source, pg, &department, dry_run).await?);
     }
-    Ok(MigrationReport { dry_run, instances })
+    Ok(MigrationReport {
+        dry_run,
+        departments,
+    })
 }
 
-/// `(instance, memory.db)` for each instance directory, sorted by id.
-fn sqlite_instances(data_dir: &Path) -> DomainResult<Vec<(InstanceId, PathBuf)>> {
-    let root = data_dir.join("instances");
+/// `(department, memory.db)` for each department directory, sorted by id.
+fn sqlite_departments(data_dir: &Path) -> DomainResult<Vec<(DepartmentId, PathBuf)>> {
+    let root = data_dir.join("departments");
     let entries = match std::fs::read_dir(&root) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -448,32 +451,32 @@ fn sqlite_instances(data_dir: &Path) -> DomainResult<Vec<(InstanceId, PathBuf)>>
             continue;
         };
         if path.is_file() {
-            found.push((SegmentId::parse("instance", &name)?, path));
+            found.push((SegmentId::parse("department", &name)?, path));
         }
     }
     found.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
     Ok(found)
 }
 
-async fn migrate_instance(
+async fn migrate_department(
     source: &Db,
     pg: &PgDb,
-    instance: &InstanceId,
+    department: &DepartmentId,
     dry_run: bool,
-) -> DomainResult<InstanceReport> {
+) -> DomainResult<DepartmentReport> {
     let mut tables = Vec::with_capacity(TABLES.len());
     for t in TABLES {
         let source_rows = source_count(source, t.name).await?;
-        let target = target_count(pg, instance, t.name).await?;
+        let target = target_count(pg, department, t.name).await?;
         tables.push(TableReport {
             table: t.name,
             source: source_rows,
             target,
         });
     }
-    let mut report = InstanceReport {
-        instance: instance.as_str().to_owned(),
-        outcome: plan(instance, &tables)?,
+    let mut report = DepartmentReport {
+        department: department.as_str().to_owned(),
+        outcome: plan(department, &tables)?,
         tables,
         embeddings_copied: 0,
         embeddings_dropped: 0,
@@ -487,7 +490,7 @@ async fn migrate_instance(
         return Ok(report);
     }
 
-    let s = pg.schema(instance).await?;
+    let s = pg.schema(department).await?;
     let mut tx = pg.begin().await?;
     for t in TABLES {
         let (copied, dropped) = copy_table(source, &mut tx, &s.to_string(), t, pg.dims()).await?;
@@ -522,8 +525,8 @@ async fn migrate_instance(
         };
         if !matches {
             return Err(DomainError::internal(format!(
-                "instance {}: {} has {} rows in Postgres after the copy, expected {}; nothing was committed",
-                instance.as_str(),
+                "department {}: {} has {} rows in Postgres after the copy, expected {}; nothing was committed",
+                department.as_str(),
                 row.table,
                 row.target,
                 row.source
@@ -534,8 +537,8 @@ async fn migrate_instance(
     Ok(report)
 }
 
-/// What to do with an instance, given each table's row counts.
-fn plan(instance: &InstanceId, tables: &[TableReport]) -> DomainResult<Outcome> {
+/// What to do with a department, given each table's row counts.
+fn plan(department: &DepartmentId, tables: &[TableReport]) -> DomainResult<Outcome> {
     let data = || {
         TABLES
             .iter()
@@ -561,10 +564,10 @@ fn plan(instance: &InstanceId, tables: &[TableReport]) -> DomainResult<Outcome> 
     Err(DomainError::conflict(
         "target_not_empty",
         format!(
-            "instance {}: its Postgres schema already holds other data: {}. Migrate into an empty database, or drop schema {} first.",
-            instance.as_str(),
+            "department {}: its Postgres schema already holds other data: {}. Migrate into an empty database, or drop schema {} first.",
+            department.as_str(),
             differing.join(", "),
-            schema_name(instance)
+            schema_name(department)
         ),
     ))
 }
@@ -580,21 +583,21 @@ async fn source_count(source: &Db, table: &'static str) -> DomainResult<usize> {
         .map(|n| n as usize)
 }
 
-/// Rows in the instance's table, 0 when the instance has no schema yet
+/// Rows in the department's table, 0 when the department has no schema yet
 /// (looked up without creating it, so a dry run writes nothing).
-async fn target_count(pg: &PgDb, instance: &InstanceId, table: &str) -> DomainResult<usize> {
+async fn target_count(pg: &PgDb, department: &DepartmentId, table: &str) -> DomainResult<usize> {
     let mut conn = pg.conn().await?;
     let registry = quote_ident(REGISTRY_SCHEMA);
     let registered = fetch_optional(
         &mut conn,
-        &format!("SELECT schema_name FROM {registry}.instances WHERE instance_id = ?"),
-        &args![instance.as_str()],
+        &format!("SELECT schema_name FROM {registry}.departments WHERE department_id = ?"),
+        &args![department.as_str()],
     )
     .await?;
     if registered.is_none() {
         return Ok(0);
     }
-    let s = quote_ident(&schema_name(instance));
+    let s = quote_ident(&schema_name(department));
     count(&mut conn, &format!("SELECT count(*) FROM {s}.{table}"), &[]).await
 }
 
@@ -804,7 +807,7 @@ mod tests {
     #[test]
     fn covers_every_sqlite_table_and_column() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        schema::migrate_instance(&conn).unwrap();
+        schema::migrate_department(&conn).unwrap();
         let mut stmt = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
             .unwrap();
@@ -854,14 +857,14 @@ mod tests {
 
     #[test]
     fn plans_a_copy_a_skip_or_a_refusal() {
-        let instance = SegmentId::parse("instance", "default").unwrap();
+        let department = SegmentId::parse("department", "default").unwrap();
         // The seeded config table never blocks a copy.
         let empty = reports(|n| (3, usize::from(n == "meta_config_params") * 6));
-        assert_eq!(plan(&instance, &empty).unwrap(), Outcome::Copied);
+        assert_eq!(plan(&department, &empty).unwrap(), Outcome::Copied);
         let done = reports(|_| (3, 3));
-        assert_eq!(plan(&instance, &done).unwrap(), Outcome::AlreadyMigrated);
+        assert_eq!(plan(&department, &done).unwrap(), Outcome::AlreadyMigrated);
         let other = reports(|n| (3, if n == "atoms" { 1 } else { 0 }));
-        let err = plan(&instance, &other).unwrap_err();
+        let err = plan(&department, &other).unwrap_err();
         assert_eq!(err.code, "target_not_empty");
         assert!(
             err.detail.contains("atoms (3 in SQLite, 1 in Postgres)"),

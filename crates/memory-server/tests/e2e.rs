@@ -55,8 +55,8 @@ async fn spawn_fake_llm() -> String {
 struct Client {
     http: reqwest::Client,
     base: String,
-    /// `x-memory-service-id` of every call.
-    instance: String,
+    /// `x-memory-department-id` of every call.
+    department: String,
     /// Set by `bootstrap`: the admin, plus a plain member whose key `call`
     /// sends and whose team/agent/user `scoped` fills in.
     admin_key: String,
@@ -163,7 +163,7 @@ async fn start_with(configure: impl FnOnce(&mut Config)) -> (tempfile::TempDir, 
         app.state.clone(),
         std::future::pending(),
     ));
-    // Unique per run: on Postgres instances outlive the test process.
+    // Unique per run: on Postgres departments outlive the test process.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -171,7 +171,7 @@ async fn start_with(configure: impl FnOnce(&mut Config)) -> (tempfile::TempDir, 
     let mut client = Client {
         http: reqwest::Client::new(),
         base,
-        instance: format!("ins-e2e-{}-{nanos}", std::process::id()),
+        department: format!("ins-e2e-{}-{nanos}", std::process::id()),
         admin_key: String::new(),
         member_key: String::new(),
         team_id: String::new(),
@@ -246,8 +246,8 @@ async fn the_pipeline_runs_on_the_postgres_backend() {
 
     let destroyed = client
         .call(
-            "/v3/instance/destroy",
-            json!({"instance_id": client.instance}),
+            "/v3/department/destroy",
+            json!({"department_id": client.department}),
         )
         .await;
     assert_eq!(
@@ -259,8 +259,8 @@ async fn the_pipeline_runs_on_the_postgres_backend() {
     // Reading re-created the (empty) schema lazily; leave nothing behind.
     client
         .call(
-            "/v3/instance/destroy",
-            json!({"instance_id": client.instance}),
+            "/v3/department/destroy",
+            json!({"department_id": client.department}),
         )
         .await;
 }
@@ -383,7 +383,7 @@ async fn requests_without_bearer_token_are_rejected() {
     let res = client
         .http
         .post(format!("{}/v3/stats/overview", client.base))
-        .header("x-memory-service-id", &client.instance)
+        .header("x-memory-department-id", &client.department)
         .send()
         .await
         .unwrap();
@@ -404,7 +404,7 @@ impl Client {
             .http
             .post(format!("{}{path}", self.base))
             .bearer_auth("test-key")
-            .header("x-memory-service-id", &self.instance);
+            .header("x-memory-department-id", &self.department);
         if !user_key.is_empty() {
             req = req.header("x-memory-user-key", user_key);
         }
@@ -491,7 +491,7 @@ async fn the_data_plane_is_authorized_by_user_key_alone() {
         client
             .http
             .post(format!("{}{path}", client.base))
-            .header("x-memory-service-id", &client.instance)
+            .header("x-memory-department-id", &client.department)
     };
     let anonymous = post("/v3/recall")
         .json(&client.scoped(json!({"query": "x"})))
@@ -645,7 +645,7 @@ async fn the_amem_client_redacts_queues_and_delivers() {
     let queue_dir = tempfile::tempdir().unwrap();
     let cfg = Config {
         server_url: client.base.clone(),
-        service_id: client.instance.clone(),
+        department_id: client.department.clone(),
         user_key: client.member_key.clone(),
         team_id: client.team_id.clone(),
         agent_id: client.agent_id.clone(),
@@ -756,9 +756,9 @@ async fn legacy_default_data_migrates_on_postgres() {
     assert_legacy_migration(&client).await;
     client
         .call_as(
-            "/v3/instance/destroy",
+            "/v3/department/destroy",
             "",
-            json!({"instance_id": client.instance}),
+            json!({"department_id": client.department}),
         )
         .await;
 }
@@ -782,7 +782,7 @@ async fn seed_legacy_as(
     use memory_domain::memory::Role;
     use memory_domain::scope::{MemoryScope, SegmentId};
 
-    let instance = SegmentId::parse("instance", &client.instance).unwrap();
+    let department = SegmentId::parse("department", &client.department).unwrap();
     let legacy = MemoryScope::from_optional(None, agent, user, None).unwrap();
     let message = |role, content: &str| NewMessage {
         role,
@@ -795,7 +795,7 @@ async fn seed_legacy_as(
         .services
         .memory
         .add_conversation(
-            &instance,
+            &department,
             &legacy,
             session,
             vec![
@@ -959,11 +959,11 @@ async fn named_legacy_scope_migrates_with_from_fields() {
     assert_eq!(moved["data"]["total"], 2, "{moved}");
 }
 
-/// `internal/upgrade` needs only the instance key: it finds the admin,
+/// `internal/upgrade` needs only the department key: it finds the admin,
 /// reuses or creates team and agent by name, moves the legacy data and
 /// issues a key that reaches it. Re-running it changes nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn upgrade_rehomes_legacy_data_with_the_instance_key_only() {
+async fn upgrade_rehomes_legacy_data_with_the_department_key_only() {
     let (_data, client) = start().await;
     seed_legacy(&client, "legacy", "Our staging database is called KESTREL.").await;
     client

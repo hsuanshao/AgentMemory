@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use memory_application::admin::InstanceLifecycle;
+use memory_application::admin::DepartmentLifecycle;
 use memory_application::common::Page;
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, ConversationFilter, ConversationRepository, ProfileFileRepository,
@@ -18,14 +18,14 @@ use memory_application::ports::skill::{SkillFilter, SkillRepository};
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
 use memory_domain::meta::{KeyStatus, User, UserKey, UserStatus, UserType};
 use memory_domain::profile::ProfileScope;
-use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
+use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
 use memory_domain::skill::{SkillStatus, SkillVersion};
 use memory_infrastructure::postgres::db::PgDb;
 use memory_infrastructure::postgres::lifecycle::PostgresCleanup;
 use memory_infrastructure::postgres::memory_store::PostgresMemoryStore;
 use memory_infrastructure::postgres::meta_store::PostgresMetaStore;
 use memory_infrastructure::postgres::skill_store::PostgresSkillStore;
-use memory_infrastructure::sqlite::db::InstancePool;
+use memory_infrastructure::sqlite::db::DepartmentPool;
 use memory_infrastructure::sqlite::memory_store::SqliteMemoryStore;
 use memory_infrastructure::sqlite::meta_store::SqliteMetaStore;
 use memory_infrastructure::sqlite::skill_store::SqliteSkillStore;
@@ -91,11 +91,11 @@ fn skill(version: u32, is_head: bool, description: &str) -> SkillVersion {
 }
 
 /// Writes one of everything through the SQLite adapters.
-async fn seed(pool: &Arc<InstancePool>, instance: &InstanceId) {
+async fn seed(pool: &Arc<DepartmentPool>, department: &DepartmentId) {
     let memory = SqliteMemoryStore::new(Arc::clone(pool), Some(2));
     memory
         .append(
-            instance,
+            department,
             &[
                 message("m1", "We release v2 next Monday"),
                 message("m2", "我們下週一發布第二版"),
@@ -105,7 +105,7 @@ async fn seed(pool: &Arc<InstancePool>, instance: &InstanceId) {
         .unwrap();
     memory
         .upsert(
-            instance,
+            department,
             &atom("a1", "Prefers Rust for services", Some("said in standup")),
             Some(&[1.0, 0.0]),
         )
@@ -113,7 +113,7 @@ async fn seed(pool: &Arc<InstancePool>, instance: &InstanceId) {
         .unwrap();
     memory
         .upsert(
-            instance,
+            department,
             &atom("a2", "Drinks oolong tea", None),
             Some(&[0.0, 1.0, 0.0]), // wrong dimension: kept, but without vector
         )
@@ -121,11 +121,11 @@ async fn seed(pool: &Arc<InstancePool>, instance: &InstanceId) {
         .unwrap();
     let profile = ProfileScope::from(&scope());
     memory
-        .write(instance, &profile, "persona.md", "v1")
+        .write(department, &profile, "persona.md", "v1")
         .await
         .unwrap();
     memory
-        .write(instance, &profile, "persona.md", "v2")
+        .write(department, &profile, "persona.md", "v2")
         .await
         .unwrap();
 
@@ -150,15 +150,15 @@ async fn seed(pool: &Arc<InstancePool>, instance: &InstanceId) {
         expires_at: None,
         created_at: "2026-01-01T00:00:00.000Z".into(),
     };
-    meta.create_user(instance, &user, &key).await.unwrap();
+    meta.create_user(department, &user, &key).await.unwrap();
 
     let skills = SqliteSkillStore::new(Arc::clone(pool));
     skills
-        .append_version(instance, &skill(1, true, "old steps"))
+        .append_version(department, &skill(1, true, "old steps"))
         .await
         .unwrap();
     skills
-        .append_version(instance, &skill(2, true, "how to ship a release"))
+        .append_version(department, &skill(2, true, "how to ship a release"))
         .await
         .unwrap();
 }
@@ -171,16 +171,16 @@ async fn sqlite_data_survives_the_move_to_postgres() {
     };
     let data = tempfile::tempdir().unwrap();
     let id = format!("ins-mig-{}", uuid::Uuid::new_v4().simple());
-    let instance: InstanceId = SegmentId::parse("instance", &id).unwrap();
-    let pool = Arc::new(InstancePool::new(data.path().to_owned(), 4));
-    seed(&pool, &instance).await;
+    let department: DepartmentId = SegmentId::parse("department", &id).unwrap();
+    let pool = Arc::new(DepartmentPool::new(data.path().to_owned(), 4));
+    seed(&pool, &department).await;
     drop(pool);
 
     let pg = Arc::new(PgDb::connect(&url, 4, Some(2)).await.unwrap());
 
     // A dry run reports the plan and writes nothing.
     let dry = migrate(data.path(), &pg, true).await.unwrap();
-    let ours = dry.instances.iter().find(|r| r.instance == id).unwrap();
+    let ours = dry.departments.iter().find(|r| r.department == id).unwrap();
     assert_eq!(ours.outcome, Outcome::Copied);
     assert_eq!((ours.embeddings_copied, ours.embeddings_dropped), (1, 1));
     assert!(ours
@@ -189,7 +189,11 @@ async fn sqlite_data_survives_the_move_to_postgres() {
         .all(|t| t.target == 0 || t.table == "meta_config_params"));
 
     let done = migrate(data.path(), &pg, false).await.unwrap();
-    let ours = done.instances.iter().find(|r| r.instance == id).unwrap();
+    let ours = done
+        .departments
+        .iter()
+        .find(|r| r.department == id)
+        .unwrap();
     assert_eq!(ours.outcome, Outcome::Copied);
     let rows = |table: &str| {
         ours.tables
@@ -213,7 +217,7 @@ async fn sqlite_data_survives_the_move_to_postgres() {
     let filter = ConversationFilter::default();
     let (messages, total) = ConversationRepository::query(
         &memory,
-        &instance,
+        &department,
         &scope(),
         &filter,
         Page {
@@ -224,7 +228,7 @@ async fn sqlite_data_survives_the_move_to_postgres() {
     .await
     .unwrap();
     assert_eq!((messages.len(), total), (2, 2));
-    let hits = ConversationRepository::search(&memory, &instance, &scope(), "發布", &filter, 5)
+    let hits = ConversationRepository::search(&memory, &department, &scope(), "發布", &filter, 5)
         .await
         .unwrap();
     assert_eq!(
@@ -234,12 +238,12 @@ async fn sqlite_data_survives_the_move_to_postgres() {
 
     let atoms = AtomFilter::default();
     let by_background = memory
-        .keyword_search(&instance, &scope(), "standup", &atoms, 5)
+        .keyword_search(&department, &scope(), "standup", &atoms, 5)
         .await
         .unwrap();
     assert_eq!(by_background[0].item.id, "a1", "background is indexed too");
     let by_vector = memory
-        .vector_search(&instance, &scope(), &[1.0, 0.0], &atoms, 5)
+        .vector_search(&department, &scope(), &[1.0, 0.0], &atoms, 5)
         .await
         .unwrap();
     assert_eq!(
@@ -253,7 +257,7 @@ async fn sqlite_data_survives_the_move_to_postgres() {
 
     let profile = ProfileScope::from(&scope());
     let head = memory
-        .read(&instance, &profile, "persona.md", None)
+        .read(&department, &profile, "persona.md", None)
         .await
         .unwrap()
         .unwrap();
@@ -261,18 +265,18 @@ async fn sqlite_data_survives_the_move_to_postgres() {
 
     let meta = PostgresMetaStore::new(Arc::clone(&pg));
     let key = meta
-        .find_key_by_value(&instance, &format!("sk-mem-{}", "x".repeat(32)))
+        .find_key_by_value(&department, &format!("sk-mem-{}", "x".repeat(32)))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(key.user_id, "usr-1");
-    let admin = meta.get_user(&instance, "usr-1").await.unwrap().unwrap();
+    let admin = meta.get_user(&department, "usr-1").await.unwrap().unwrap();
     assert_eq!(admin.user_type, UserType::SystemAdmin);
 
     let skills = PostgresSkillStore::new(Arc::clone(&pg));
     let found = skills
         .search_heads(
-            &instance,
+            &department,
             &SkillFilter {
                 statuses: vec![SkillStatus::Active],
                 ..SkillFilter::default()
@@ -288,18 +292,19 @@ async fn sqlite_data_survives_the_move_to_postgres() {
     // Sequences moved past the copied `seq`s: new writes do not collide,
     // and cursors (which compare `seq`) see them as newer.
     memory
-        .append(&instance, &[message("m3", "after the move")])
+        .append(&department, &[message("m3", "after the move")])
         .await
         .unwrap();
-    let newer = ConversationRepository::after_seq(&memory, &instance, &scope(), "s1", Some(2), 10)
-        .await
-        .unwrap();
+    let newer =
+        ConversationRepository::after_seq(&memory, &department, &scope(), "s1", Some(2), 10)
+            .await
+            .unwrap();
     assert_eq!(
         newer.iter().map(|s| s.item.id.as_str()).collect::<Vec<_>>(),
         ["m3"]
     );
 
-    // A second run finds this instance complete... until it differs.
+    // A second run finds this department complete... until it differs.
     let again = migrate(data.path(), &pg, false).await;
     let refused = again.is_err();
     assert!(
@@ -307,15 +312,19 @@ async fn sqlite_data_survives_the_move_to_postgres() {
         "the target now has a row the source lacks, so the copy must refuse"
     );
     memory
-        .delete_by_ids(&instance, &scope(), &["m3".into()])
+        .delete_by_ids(&department, &scope(), &["m3".into()])
         .await
         .unwrap();
     let again = migrate(data.path(), &pg, false).await.unwrap();
-    let ours = again.instances.iter().find(|r| r.instance == id).unwrap();
+    let ours = again
+        .departments
+        .iter()
+        .find(|r| r.department == id)
+        .unwrap();
     assert_eq!(ours.outcome, Outcome::AlreadyMigrated);
 
     PostgresCleanup::new(Arc::clone(&pg))
-        .destroy(&instance)
+        .destroy(&department)
         .await
         .unwrap();
 }

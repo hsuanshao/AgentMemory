@@ -20,7 +20,7 @@ use memory_application::ports::memory::{
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{ProfileFile, ProfileScope};
-use memory_domain::scope::{InstanceId, MemoryScope};
+use memory_domain::scope::{DepartmentId, MemoryScope};
 use pgvector::Vector;
 use sqlx::postgres::PgRow;
 use tracing::warn;
@@ -132,10 +132,10 @@ fn placeholders(n: usize) -> String {
 impl ConversationRepository for PostgresMemoryStore {
     async fn append(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         messages: &[ConversationMessage],
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let columns = format!("{CONV_COLUMNS}, tokens");
         let sql = format!(
             "INSERT INTO {s}.conversations ({columns}) VALUES ({}, ?::tsvector) ON CONFLICT (id) DO UPDATE SET {}",
@@ -174,12 +174,12 @@ impl ConversationRepository for PostgresMemoryStore {
 
     async fn query(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         filter: &ConversationFilter,
         page: Page,
     ) -> DomainResult<(Vec<ConversationMessage>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let w = conversation_where(Some(scope), filter);
         let mut c = self.db.conn().await?;
         let total = count(
@@ -206,7 +206,7 @@ impl ConversationRepository for PostgresMemoryStore {
 
     async fn search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &ConversationFilter,
@@ -215,7 +215,7 @@ impl ConversationRepository for PostgresMemoryStore {
         let Some(q) = tsquery_literal(query) else {
             return Ok(Vec::new());
         };
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = conversation_where(Some(scope), filter);
         w.raw("tokens @@ q", []);
         // ts_rank_cd normalisation 32 maps the rank to rank/(rank+1), the
@@ -239,11 +239,11 @@ impl ConversationRepository for PostgresMemoryStore {
 
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: Option<&MemoryScope>,
         filter: &ConversationFilter,
     ) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let w = conversation_where(scope, filter);
         count(
             &mut *self.db.conn().await?,
@@ -255,47 +255,47 @@ impl ConversationRepository for PostgresMemoryStore {
 
     async fn delete_by_ids(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("id", ids);
-        self.delete_from(instance, "conversations", w).await
+        self.delete_from(department, "conversations", w).await
     }
 
     async fn delete_by_sessions(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         sessions: &[String],
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("session_id", sessions);
-        self.delete_from(instance, "conversations", w).await
+        self.delete_from(department, "conversations", w).await
     }
 
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         profile_where(&mut w, profile);
-        self.delete_from(instance, "conversations", w).await
+        self.delete_from(department, "conversations", w).await
     }
 
     async fn after_seq(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
         after: Option<i64>,
         limit: usize,
     ) -> DomainResult<Vec<Sequenced<ConversationMessage>>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.eq("session_id", session_id)
@@ -324,11 +324,11 @@ impl PostgresMemoryStore {
     /// Deletes matching rows; their tokens go with them (same row).
     async fn delete_from(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         table: &str,
         w: Where,
     ) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let n = execute(
             &mut *self.db.conn().await?,
             &format!("DELETE FROM {s}.{table} {}", w.sql()),
@@ -398,11 +398,11 @@ fn atoms_from_rows(rows: &[PgRow]) -> DomainResult<Vec<AtomicMemory>> {
 impl AtomRepository for PostgresMemoryStore {
     async fn upsert(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         atom: &AtomicMemory,
         embedding: Option<&[f32]>,
     ) -> DomainResult<()> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let with_vector = self.db.dims().is_some();
         let columns = if with_vector {
             format!("{ATOM_COLUMNS}, tokens, embedding")
@@ -454,8 +454,8 @@ impl AtomRepository for PostgresMemoryStore {
         tx.commit().await.map_err(pg_err)
     }
 
-    async fn get(&self, instance: &InstanceId, id: &str) -> DomainResult<Option<AtomicMemory>> {
-        let s = self.db.schema(instance).await?;
+    async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AtomicMemory>> {
+        let s = self.db.schema(department).await?;
         fetch_optional(
             &mut *self.db.conn().await?,
             &format!("SELECT {ATOM_COLUMNS} FROM {s}.atoms WHERE id = ?"),
@@ -469,12 +469,12 @@ impl AtomRepository for PostgresMemoryStore {
 
     async fn query(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         selector: AtomSelector<'_>,
         filter: &AtomFilter,
         page: Page,
     ) -> DomainResult<(Vec<AtomicMemory>, usize)> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let w = atom_where(Some(selector), filter);
         let mut c = self.db.conn().await?;
         let total = count(
@@ -497,12 +497,12 @@ impl AtomRepository for PostgresMemoryStore {
 
     async fn after_seq(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         after: Option<i64>,
         limit: usize,
     ) -> DomainResult<Vec<Sequenced<AtomicMemory>>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         profile_where(&mut w, profile);
         w.raw("seq > ?", [Arg::from(after.unwrap_or(0))]);
@@ -527,7 +527,7 @@ impl AtomRepository for PostgresMemoryStore {
 
     async fn keyword_search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         query: &str,
         filter: &AtomFilter,
@@ -536,7 +536,7 @@ impl AtomRepository for PostgresMemoryStore {
         let Some(q) = tsquery_literal(query) else {
             return Ok(Vec::new());
         };
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = atom_where(Some(AtomSelector::Scope(scope)), filter);
         w.raw("tokens @@ q", []);
         let sql = format!(
@@ -561,7 +561,7 @@ impl AtomRepository for PostgresMemoryStore {
     /// index until `limit` rows pass them).
     async fn vector_search(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         embedding: &[f32],
         filter: &AtomFilter,
@@ -573,7 +573,7 @@ impl AtomRepository for PostgresMemoryStore {
         if embedding.len() != dims || limit == 0 {
             return Ok(Vec::new());
         }
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = atom_where(Some(AtomSelector::Scope(scope)), filter);
         w.raw("embedding IS NOT NULL", []);
         let query = Vector::from(embedding.to_vec());
@@ -610,11 +610,11 @@ impl AtomRepository for PostgresMemoryStore {
 
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: Option<&MemoryScope>,
         filter: &AtomFilter,
     ) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let w = atom_where(scope.map(AtomSelector::Scope), filter);
         count(
             &mut *self.db.conn().await?,
@@ -626,24 +626,24 @@ impl AtomRepository for PostgresMemoryStore {
 
     async fn delete(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("id", ids);
-        self.delete_from(instance, "atoms", w).await
+        self.delete_from(department, "atoms", w).await
     }
 
     async fn delete_profile(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         profile_where(&mut w, profile);
-        self.delete_from(instance, "atoms", w).await
+        self.delete_from(department, "atoms", w).await
     }
 }
 
@@ -672,11 +672,11 @@ const PREFIX_MATCH: &str = "path ILIKE ? ESCAPE '\\'";
 impl ProfileFileRepository for PostgresMemoryStore {
     async fn list(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
     ) -> DomainResult<Vec<ProfileFile>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
         let rows = fetch_all(
             &mut *self.db.conn().await?,
@@ -691,12 +691,12 @@ impl ProfileFileRepository for PostgresMemoryStore {
 
     async fn read(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         version: Option<u32>,
     ) -> DomainResult<Option<ProfileFile>> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
         let (cond, v) = match version {
             Some(v) => ("version = ?", vec![Arg::from(v)]),
@@ -717,12 +717,12 @@ impl ProfileFileRepository for PostgresMemoryStore {
 
     async fn write(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         content: &str,
     ) -> DomainResult<ProfileFile> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
         let now = to_ms(Utc::now());
         let mut tx = self.db.begin().await?;
@@ -775,11 +775,11 @@ impl ProfileFileRepository for PostgresMemoryStore {
 
     async fn remove(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
     ) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
         let (cond, value) = if path.ends_with('/') {
             (PREFIX_MATCH, like_prefix(path))
@@ -806,11 +806,11 @@ impl ProfileFileRepository for PostgresMemoryStore {
 
     async fn count(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         profile: Option<&ProfileScope>,
         prefix: &str,
     ) -> DomainResult<usize> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let mut w = Where::default();
         if let Some(p) = profile {
             profile_where(&mut w, p);
@@ -830,12 +830,12 @@ impl ProfileFileRepository for PostgresMemoryStore {
 impl ScopeMigrationStore for PostgresMemoryStore {
     async fn reassign_default(
         &self,
-        instance: &InstanceId,
+        department: &DepartmentId,
         from: &MemoryScope,
         to: &MemoryScope,
         dry_run: bool,
     ) -> DomainResult<MovedRows> {
-        let s = self.db.schema(instance).await?;
+        let s = self.db.schema(department).await?;
         let (team, agent, user) = (
             to.team_id.as_str(),
             to.agent_id.as_str(),
