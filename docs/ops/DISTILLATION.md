@@ -21,10 +21,18 @@ Every L1, L2 and L3 run that reaches the LLM leaves a generation log:
 | `succeeded` | It wrote memories, scenes or the persona |
 | `empty` | The LLM answered but nothing was written: nothing worth keeping, or an answer that changed nothing. Many `empty` runs in a row can mean a model that answers badly |
 | `failed` | The call failed (quota, timeout, no output) or its answer could not be used. `error_message` says why |
+| `dropped` | Like `failed`, on the **last** attempt of an L1 or L2 run: the input was skipped so the session or agent could go on (below) |
 
 Each log also records the model. For a CLI provider that is the command plus the model its arguments select, for example `cli:agy:gemini-3.8-flash-high`.
 
 A failed job is retried after 5, 15 and 45 seconds (`worker.maxRetries`, default 3). If every attempt fails, it becomes a **dead letter**, kept with its last error. Dead letters are not retried on their own; see section 5.
+
+**L1 and L2 drop what they cannot distil.** L1 works through a session and L2 through an agent's atoms, each from a cursor that moves only on success. A batch that fails every attempt would otherwise block everything after it, because each later run starts with the same batch again. So on the last attempt:
+- the cursor moves past the batch, and later turns or atoms are distilled as usual;
+- the run is logged as `dropped`, with the error and the ids of its input (`input_refs`);
+- the dead letter keeps a job limited to exactly that input (`range: {first, last}`, storage sequence numbers). Redriving it redoes only that batch and leaves the cursor alone.
+
+Nothing is deleted: the conversations stay in L0 and the atoms in L1. L3 and skill jobs have no cursor, so a failure there blocks nothing and is not dropped.
 
 | Coordination backend | Where dead letters live |
 | --- | --- |
@@ -88,4 +96,7 @@ The Panel's **Re-run** button does the same, 10 at a time. A redriven job starts
 
 Redrive in small batches and watch the failures between them: a backlog sent at once can use up an LLM quota again. Redriving is safe to repeat:
 - An L1 job continues from its session's cursor, so it never processes the same messages twice.
+- A job with a `range` (dropped input) redoes only that batch. If it fails again it comes back as the same dead letter and is not dropped again.
 - L2, L3 and skill jobs work on the current state of their agent or task.
+
+Find what was dropped and why with **Panel → Generation logs** (`#/logs?status=dropped`) or `memory-server generations --status dropped`. The dashboard's Distillation card counts dropped runs per layer.

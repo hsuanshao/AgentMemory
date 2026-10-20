@@ -216,7 +216,8 @@ export interface RecallResult {
 
 export type GenerationLayer = "l1" | "l2" | "l3";
 /** `empty`: the LLM answered but nothing was written. */
-export type GenerationStatus = "succeeded" | "empty" | "failed";
+/** `dropped`: the last attempt failed and the input was skipped so later input could go on. */
+export type GenerationStatus = "succeeded" | "empty" | "failed" | "dropped";
 
 export interface GenerationLogItem {
   log_id: string;

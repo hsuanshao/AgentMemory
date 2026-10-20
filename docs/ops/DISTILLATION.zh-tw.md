@@ -21,10 +21,18 @@ memory-core 會在背景蒸餾對話：L1 擷取記憶，L2 整理成 scene，L3
 | `succeeded` | 寫出了記憶、scene 或 persona |
 | `empty` | LLM 有回應，但沒有寫出任何東西：沒有值得保留的內容，或回應沒有改變任何東西。連續出現大量 `empty`，可能代表模型回答得不好 |
 | `failed` | 呼叫失敗（額度用完、逾時、沒有輸出），或回應無法使用。`error_message` 會說明原因 |
+| `dropped` | 和 `failed` 一樣，但發生在 L1 或 L2 的**最後一次**嘗試：這批輸入被略過，讓該 session 或 agent 可以繼續（見下方） |
 
 每筆紀錄也會記下使用的模型。CLI provider 會記成指令加上參數選用的模型，例如 `cli:agy:gemini-3.8-flash-high`。
 
 失敗的 job 會在 5、15、45 秒後重試（`worker.maxRetries`，預設 3 次）。每次嘗試都失敗，就會成為 **dead letter**，並保留最後一次的錯誤。Dead letter 不會自動重試，處理方式見第 5 節。
+
+**L1 和 L2 會 drop 無法蒸餾的那一批。** L1 依序處理一個 session，L2 依序處理一個 agent 的 atom，兩者都從游標開始，而游標只有成功時才會前進。如果某一批每次嘗試都失敗，之後每次執行都會先遇到同一批，後面的內容就全部被擋住。所以在最後一次嘗試仍失敗時：
+- 游標會越過這一批，之後的對話或 atom 照常蒸餾；
+- 這次執行記錄為 `dropped`，附上錯誤和輸入的 id（`input_refs`）；
+- dead letter 保存的是只處理這一批的 job（`range: {first, last}`，儲存序號）。重跑它只會重做這一批，不會動到游標。
+
+不會刪除任何東西：對話仍在 L0，atom 仍在 L1。L3 和 skill job 沒有游標，失敗不會擋住任何東西，所以不會被 drop。
 
 | Coordination backend | Dead letter 存放位置 |
 | --- | --- |
@@ -88,4 +96,7 @@ Panel 上的 **Re-run** 按鈕效果相同，每次 10 筆。重跑的 job 會�
 
 請小批重跑，並在每批之間觀察失敗情況：一次把積壓全部送出，可能又把 LLM 的額度用完。重跑可以安全地重複執行：
 - L1 job 會從該 session 的游標接著處理，不會重複處理同樣的訊息。
+- 帶 `range` 的 job（被 drop 的輸入）只會重做那一批。如果又失敗，會回到同一筆 dead letter，不會再被 drop 一次。
 - L2、L3 和 skill job 處理的是 agent 或 task 當下的狀態。
+
+要查哪些內容被 drop、原因是什麼，請看 **Panel → Generation logs**（`#/logs?status=dropped`）或 `memory-server generations --status dropped`。Dashboard 的 Distillation 卡片會列出各層被 drop 的次數。

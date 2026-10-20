@@ -32,7 +32,7 @@ use crate::ports::coordination::KeyLock;
 use crate::ports::memory::{AtomRepository, ConversationRepository};
 use crate::ports::pipeline::{
     DeadLetter, DeadLetterFilter, GenerationRef, JobQueue, PipelineJob, PipelineStateRepository,
-    ProfileState, QueueStats, SessionState,
+    ProfileState, QueueStats, SeqRange, SessionState,
 };
 use crate::ports::system::{Clock, LlmClient};
 
@@ -46,6 +46,21 @@ pub trait SkillJobRunner: Send + Sync {
 }
 
 /// What `record_failure` needs about a generation that did not finish.
+/// A job that failed. `redo` is set when its input was dropped so later
+/// input could go on: the job that redoes exactly that input, which the dead
+/// letter keeps instead of the original.
+#[derive(Debug)]
+pub struct JobFailure {
+    pub error: DomainError,
+    pub redo: Option<Box<PipelineJob>>,
+}
+
+impl From<DomainError> for JobFailure {
+    fn from(error: DomainError) -> Self {
+        Self { error, redo: None }
+    }
+}
+
 struct Failure<'a> {
     layer: Layer,
     team_id: &'a str,
@@ -55,6 +70,7 @@ struct Failure<'a> {
     strategy: Option<&'a CustomStrategy>,
     input_refs: Vec<GenerationRef>,
     started_at_ms: i64,
+    dropped: bool,
 }
 
 fn refs<'a>(layer: &str, ids: impl Iterator<Item = &'a String>) -> Vec<GenerationRef> {
@@ -263,6 +279,7 @@ impl PipelineService {
                 department: department.clone(),
                 scope: scope.clone(),
                 session_id: session_id.to_owned(),
+                range: None,
             })
             .await?;
         }
@@ -296,6 +313,7 @@ impl PipelineService {
                     department: due.department,
                     scope: due.scope,
                     session_id: due.session_id,
+                    range: None,
                 })
                 .await?;
             }
@@ -317,6 +335,7 @@ impl PipelineService {
             self.enqueue_job(PipelineJob::L2 {
                 department: due.department,
                 profile: due.profile,
+                range: None,
             })
             .await?;
         }
@@ -324,57 +343,75 @@ impl PipelineService {
     }
 
     /// Executes one job. Errors are retried by the worker.
-    pub async fn run(&self, job: &PipelineJob) -> DomainResult<()> {
+    /// Runs one job. When the LLM call of an L1 or L2 run fails on its
+    /// `last_attempt`, the input is dropped: the cursor moves past it so the
+    /// session or profile goes on, the run is logged as `dropped`, and the
+    /// failure carries the job that redoes exactly that input.
+    pub async fn run(&self, job: &PipelineJob, last_attempt: bool) -> Result<(), JobFailure> {
         match job {
             PipelineJob::L1 {
                 department,
                 scope,
                 session_id,
-            } => self.run_l1(department, scope, session_id).await,
+                range,
+            } => {
+                self.run_l1(department, scope, session_id, *range, last_attempt)
+                    .await
+            }
             PipelineJob::L2 {
                 department,
                 profile,
-            } => self.run_l2(department, profile).await,
+                range,
+            } => self.run_l2(department, profile, *range, last_attempt).await,
             PipelineJob::L3 {
                 department,
                 profile,
-            } => self.run_l3(department, profile).await,
+            } => Ok(self.run_l3(department, profile).await?),
             PipelineJob::SkillExtract {
                 department,
                 task_id,
             } => match self.skill_runner.get() {
-                Some(runner) => runner.run_skill_task(department, task_id).await,
+                Some(runner) => Ok(runner.run_skill_task(department, task_id).await?),
                 None => Ok(()),
             },
         }
     }
 
+    /// From the session's cursor, or exactly `range` (a redo, which leaves
+    /// the cursor alone).
     async fn run_l1(
         &self,
         department: &DepartmentId,
         scope: &MemoryScope,
         session_id: &str,
-    ) -> DomainResult<()> {
+        range: Option<SeqRange>,
+        last_attempt: bool,
+    ) -> Result<(), JobFailure> {
         if !self.deps.llm.is_configured() {
             warn!("LLM not configured; skipping L1 extraction");
             return Ok(());
         }
         let snapshot = self.load_session(department, scope, session_id).await?;
+        let after = range.map_or(snapshot.l1_cursor, |r| Some(r.first - 1));
         let mut fetched = self
             .deps
             .conversations
-            .after_seq(
-                department,
-                scope,
-                session_id,
-                snapshot.l1_cursor,
-                L1_PROCESS_BATCH + 1,
-            )
+            .after_seq(department, scope, session_id, after, L1_PROCESS_BATCH + 1)
             .await?;
-        let has_more = fetched.len() > L1_PROCESS_BATCH;
+        if let Some(r) = range {
+            fetched.retain(|m| m.seq <= r.last);
+        }
+        let has_more = range.is_none() && fetched.len() > L1_PROCESS_BATCH;
         fetched.truncate(L1_PROCESS_BATCH);
-        let Some(last_seq) = fetched.last().map(|m| m.seq) else {
+        let (Some(first), Some(last_seq)) = (
+            fetched.first().map(|m| m.seq),
+            fetched.last().map(|m| m.seq),
+        ) else {
             return Ok(());
+        };
+        let span = SeqRange {
+            first,
+            last: last_seq,
         };
         let batch: Vec<_> = fetched.into_iter().map(|m| m.item).collect();
 
@@ -404,6 +441,7 @@ impl PipelineService {
         let outcome = match extracted {
             Ok(outcome) => outcome,
             Err(err) => {
+                let drop = last_attempt && range.is_none();
                 self.record_failure(
                     department,
                     Failure {
@@ -415,15 +453,48 @@ impl PipelineService {
                         strategy: strategy.as_ref(),
                         input_refs: refs("l0", batch.iter().map(|m| &m.id)),
                         started_at_ms: started,
+                        dropped: drop,
                     },
                     &err,
                 )
                 .await;
-                return Err(err);
+                if !drop {
+                    return Err(err.into());
+                }
+                {
+                    let _guard = self
+                        .deps
+                        .locks
+                        .lock(&session_key(department, scope, session_id))
+                        .await?;
+                    let mut state = self.load_session(department, scope, session_id).await?;
+                    state.l1_cursor = max_seq(state.l1_cursor, Some(span.last));
+                    self.deps.state.put_session(&state).await?;
+                }
+                warn!(session = session_id, first = span.first, last = span.last, error = %err, "L1 input dropped after its last attempt failed");
+                if has_more {
+                    self.enqueue_job(PipelineJob::L1 {
+                        department: department.clone(),
+                        scope: scope.clone(),
+                        session_id: session_id.to_owned(),
+                        range: None,
+                    })
+                    .await?;
+                }
+                return Err(JobFailure {
+                    error: err,
+                    redo: Some(Box::new(PipelineJob::L1 {
+                        department: department.clone(),
+                        scope: scope.clone(),
+                        session_id: session_id.to_owned(),
+                        range: Some(span),
+                    })),
+                });
             }
         };
 
-        {
+        // A redo leaves the cursor and the session's scene context alone.
+        if range.is_none() {
             let _guard = self
                 .deps
                 .locks
@@ -472,6 +543,7 @@ impl PipelineService {
                             .collect(),
                         started_at_ms: started,
                         error: None,
+                        dropped: false,
                     },
                 )
                 .await;
@@ -489,6 +561,7 @@ impl PipelineService {
                 department: department.clone(),
                 scope: scope.clone(),
                 session_id: session_id.to_owned(),
+                range: None,
             })
             .await?;
         }
@@ -521,19 +594,37 @@ impl PipelineService {
         self.deps.state.put_profile(&state).await
     }
 
-    async fn run_l2(&self, department: &DepartmentId, profile: &ProfileScope) -> DomainResult<()> {
+    /// From the profile's cursor, or exactly `range` (a redo, which leaves
+    /// the cursor and the schedule alone).
+    async fn run_l2(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        range: Option<SeqRange>,
+        last_attempt: bool,
+    ) -> Result<(), JobFailure> {
         if !self.deps.llm.is_configured() {
             return Ok(());
         }
         let snapshot = self.load_profile(department, profile).await?;
+        let after = range.map_or(snapshot.l2_cursor, |r| Some(r.first - 1));
         let mut fetched = self
             .deps
             .atoms
-            .after_seq(department, profile, snapshot.l2_cursor, L2_ATOM_BATCH + 1)
+            .after_seq(department, profile, after, L2_ATOM_BATCH + 1)
             .await?;
-        let has_more = fetched.len() > L2_ATOM_BATCH;
+        if let Some(r) = range {
+            fetched.retain(|a| a.seq <= r.last);
+        }
+        let has_more = range.is_none() && fetched.len() > L2_ATOM_BATCH;
         fetched.truncate(L2_ATOM_BATCH);
-        let Some(last_seq) = fetched.last().map(|a| a.seq) else {
+        let (Some(first), Some(last_seq)) = (
+            fetched.first().map(|a| a.seq),
+            fetched.last().map(|a| a.seq),
+        ) else {
+            if range.is_some() {
+                return Ok(());
+            }
             let _guard = self
                 .deps
                 .locks
@@ -541,7 +632,11 @@ impl PipelineService {
                 .await?;
             let mut state = self.load_profile(department, profile).await?;
             state.l2_pending = false;
-            return self.deps.state.put_profile(&state).await;
+            return Ok(self.deps.state.put_profile(&state).await?);
+        };
+        let span = SeqRange {
+            first,
+            last: last_seq,
         };
         let atoms: Vec<_> = fetched.into_iter().map(|a| a.item).collect();
 
@@ -564,6 +659,7 @@ impl PipelineService {
         let outcome = match consolidated {
             Ok(outcome) => outcome,
             Err(err) => {
+                let drop = last_attempt && range.is_none();
                 self.record_failure(
                     department,
                     Failure {
@@ -575,15 +671,48 @@ impl PipelineService {
                         strategy: strategy.as_ref(),
                         input_refs: refs("l1", atoms.iter().map(|a| &a.id)),
                         started_at_ms: started,
+                        dropped: drop,
                     },
                     &err,
                 )
                 .await;
-                return Err(err);
+                if !drop {
+                    return Err(err.into());
+                }
+                {
+                    let _guard = self
+                        .deps
+                        .locks
+                        .lock(&profile_key(department, profile))
+                        .await?;
+                    let mut state = self.load_profile(department, profile).await?;
+                    state.l2_cursor = max_seq(state.l2_cursor, Some(span.last));
+                    state.l2_pending = has_more;
+                    let now = self.now();
+                    let next = if has_more {
+                        now
+                    } else {
+                        now + Duration::seconds(self.settings.l2_max_interval_secs as i64)
+                    };
+                    state.l2_due_at = Some(state.l2_due_at.map_or(next, |t| t.min(next)));
+                    self.deps.state.put_profile(&state).await?;
+                }
+                warn!(profile = %profile.key(), first = span.first, last = span.last, error = %err, "L2 input dropped after its last attempt failed");
+                return Err(JobFailure {
+                    error: err,
+                    redo: Some(Box::new(PipelineJob::L2 {
+                        department: department.clone(),
+                        profile: profile.clone(),
+                        range: Some(span),
+                    })),
+                });
             }
         };
 
-        let state = {
+        // A redo leaves the cursor and the schedule alone.
+        let state = if range.is_some() {
+            self.load_profile(department, profile).await?
+        } else {
             let _guard = self
                 .deps
                 .locks
@@ -641,6 +770,7 @@ impl PipelineService {
                             .collect(),
                         started_at_ms: started,
                         error: None,
+                        dropped: false,
                     },
                 )
                 .await;
@@ -732,6 +862,8 @@ impl PipelineService {
                         strategy: strategy.as_ref(),
                         input_refs: Vec::new(),
                         started_at_ms: started,
+                        // L3 has no cursor: a later run rebuilds from scratch.
+                        dropped: false,
                     },
                     &err,
                 )
@@ -790,6 +922,7 @@ impl PipelineService {
                     }],
                     started_at_ms: started,
                     error: None,
+                    dropped: false,
                 },
             )
             .await;
@@ -817,6 +950,7 @@ impl PipelineService {
                     output_refs: Vec::new(),
                     started_at_ms: f.started_at_ms,
                     error: Some(err.to_string()),
+                    dropped: f.dropped,
                 },
             )
             .await;

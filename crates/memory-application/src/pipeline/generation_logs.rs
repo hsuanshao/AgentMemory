@@ -37,6 +37,9 @@ pub struct GenerationRecord<'a> {
     pub output_refs: Vec<GenerationRef>,
     pub started_at_ms: i64,
     pub error: Option<String>,
+    /// The failed input was skipped so later input could go on (the last
+    /// attempt of an L1 or L2 run); logged as `dropped` instead of `failed`.
+    pub dropped: bool,
 }
 
 /// What `GenerationLogService::list` returns: one page, newest first.
@@ -70,7 +73,9 @@ impl GenerationLogService {
         let finished = self.clock.now().timestamp_millis();
         // `empty`: the LLM answered but nothing was written (nothing worth
         // keeping, or an answer that changed nothing).
-        let status = if r.error.is_some() {
+        let status = if r.error.is_some() && r.dropped {
+            "dropped"
+        } else if r.error.is_some() {
             "failed"
         } else if r.output_refs.is_empty() {
             "empty"

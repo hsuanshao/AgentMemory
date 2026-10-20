@@ -99,6 +99,7 @@ Every L1, L2 and L3 run that reaches the LLM leaves a generation log with a `sta
 - `succeeded`: it wrote memories, scenes or the persona;
 - `empty`: the LLM answered but nothing was written;
 - `failed`: the call or its answer failed; `error_message` says why.
+- `dropped`: failed on the last attempt of an L1 or L2 run; the input was skipped so later input could go on, and the dead letter's job (with `range`) redoes it.
 
 `model` names the LLM, including the model a CLI provider selects (`cli:agy:gemini-3.8-flash-high`). A job whose every attempt fails becomes a **dead letter**, kept with its last error until it is redriven. With `coordination.backend: local`, dead letters live in memory (at most 1,000) and are lost on restart. The same views are in the Panel dashboard and in `memory-server generations` / `memory-server dead-letters` ([docs/ops/DISTILLATION.md](ops/DISTILLATION.md)).
 

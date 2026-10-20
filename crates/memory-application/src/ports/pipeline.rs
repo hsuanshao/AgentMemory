@@ -101,16 +101,31 @@ pub trait PipelineStateRepository: Send + Sync {
     async fn delete_department(&self, department: &DepartmentId) -> DomainResult<()>;
 }
 
+/// Storage sequence numbers `first..=last` of the input one L1 or L2 run
+/// took: conversation rows for L1, atoms for L2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeqRange {
+    pub first: i64,
+    pub last: i64,
+}
+
+/// L1 and L2 normally continue from their cursor. With `range` they redo
+/// exactly that input and leave the cursor alone: that is the job a dead
+/// letter keeps for input that was dropped so later input could go on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PipelineJob {
     L1 {
         department: DepartmentId,
         scope: MemoryScope,
         session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<SeqRange>,
     },
     L2 {
         department: DepartmentId,
         profile: ProfileScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<SeqRange>,
     },
     L3 {
         department: DepartmentId,
@@ -130,10 +145,12 @@ impl PipelineJob {
                 department,
                 scope,
                 session_id,
+                ..
             } => format!("{department}/{}/s:{session_id}", scope.key()),
             Self::L2 {
                 department,
                 profile,
+                ..
             }
             | Self::L3 {
                 department,
@@ -159,6 +176,14 @@ impl PipelineJob {
                 visibility.sees(profile.team_id.as_str(), None)
             }
             Self::SkillExtract { .. } => visibility.teams().is_none(),
+        }
+    }
+
+    /// The input a redo job is limited to; `None` continues from the cursor.
+    pub fn range(&self) -> Option<SeqRange> {
+        match self {
+            Self::L1 { range, .. } | Self::L2 { range, .. } => *range,
+            Self::L3 { .. } | Self::SkillExtract { .. } => None,
         }
     }
 

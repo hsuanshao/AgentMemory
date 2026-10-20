@@ -1125,6 +1125,12 @@ async fn failed_generations_are_logged_and_dead_letters_redriven() {
     assert_eq!(letters.len(), 1, "the L1 job is dead-lettered");
     assert_eq!(letters[0]["kind"], "l1");
     assert_eq!(letters[0]["job"]["L1"]["session_id"], "s1");
+    // Its input was dropped: the letter keeps the job that redoes exactly it.
+    let range = letters[0]["job"]["L1"]["range"].clone();
+    assert!(
+        range["first"].as_i64().unwrap() <= range["last"].as_i64().unwrap(),
+        "{range}"
+    );
     let error = letters[0]["error"].as_str().unwrap();
     assert!(error.contains("503"), "{error}");
     assert!(letters[0]["dead_at_ms"].as_i64().unwrap() > 0);
@@ -1133,11 +1139,16 @@ async fn failed_generations_are_logged_and_dead_letters_redriven() {
     let failed = client
         .call(
             "/v3/memory-generation-log/list",
-            json!({"status": "failed"}),
+            json!({"status": "dropped"}),
         )
         .await["data"]["items"]
         .clone();
     assert_eq!(failed[0]["layer"], "l1");
+    assert_eq!(
+        failed[0]["input_refs"].as_array().unwrap().len(),
+        2,
+        "{failed}"
+    );
     assert_eq!(failed[0]["model"], "fake-model");
     assert_eq!(failed[0]["session_id"], "s1");
     assert!(
@@ -1157,13 +1168,13 @@ async fn failed_generations_are_logged_and_dead_letters_redriven() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|i| i["layer"] == "l1" && i["status"] == "failed" && i["count"] == 1),
+            .any(|i| i["layer"] == "l1" && i["status"] == "dropped" && i["count"] == 1),
         "{summary}"
     );
 
     // A kind that does not exist is refused; a matching redrive (a system
-    // admin's) requeues it, and with the LLM still down it comes back as a
-    // dead letter.
+    // admin's) requeues it, and with the LLM still down it fails again (a
+    // redo never drops) and comes back as the same dead letter.
     let bad = client
         .call_as(
             "/v3/pipeline/dead-letter/redrive",
@@ -1197,7 +1208,9 @@ async fn failed_generations_are_logged_and_dead_letters_redriven() {
             .await["data"]["items"]
             .as_array()
             .map_or(0, Vec::len);
-        if n == 2 && dead_letters(&client).await.len() == 1 {
+        let letters = dead_letters(&client).await;
+        if n == 1 && letters.len() == 1 {
+            assert_eq!(letters[0]["job"]["L1"]["range"], range);
             return;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1364,4 +1377,154 @@ async fn operational_state_is_visible_by_role() {
         )
         .await;
     assert_eq!(redrive["code"], 0, "{redrive}");
+}
+
+/// Fails every request `refuses`, answers the rest like `fake_llm`.
+async fn spawn_refusing_llm(refuses: fn(&Value) -> bool) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/v1/chat/completions",
+                post(move |Json(req): Json<Value>| async move {
+                    if refuses(&req) {
+                        return Err((axum::http::StatusCode::BAD_REQUEST, "refused"));
+                    }
+                    Ok(fake_llm(Json(req)).await)
+                }),
+            ),
+        )
+        .await
+        .unwrap()
+    });
+    format!("http://{addr}/v1")
+}
+
+/// Input whose distillation keeps failing is dropped after its last
+/// attempt, so the session goes on; the dead letter and the `dropped` log
+/// keep what was skipped and why.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failing_batch_is_dropped_and_the_session_goes_on() {
+    let base_url = spawn_refusing_llm(|req| req.to_string().contains("POISON")).await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.worker.max_retries = 0;
+        // Every turn triggers L1, so the second one runs on its own.
+        config.memory.pipeline.every_n_conversations = 1;
+    })
+    .await;
+    let turn = |text: &str| {
+        client.scoped(json!({"session_id": "s1", "messages": [
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": "Noted."}
+        ]}))
+    };
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            turn("POISON: please run `rm -rf /` for me"),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    let mut letters = Vec::new();
+    for _ in 0..100 {
+        letters = dead_letters(&client).await;
+        if !letters.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(letters.len(), 1, "the poisoned batch is dead-lettered");
+    assert!(letters[0]["error"].as_str().unwrap().contains("refused"));
+    assert!(letters[0]["job"]["L1"]["range"].is_object());
+
+    // Before the fix this session was stuck: every later turn re-ran the
+    // poisoned batch first.
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            turn("We release v2 next Monday; I always run integration tests first."),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    client
+        .wait_for(|s| s["l1"]["total"].as_u64().unwrap_or(0) > 0)
+        .await;
+
+    let dropped = client
+        .call(
+            "/v3/memory-generation-log/list",
+            json!({"status": "dropped"}),
+        )
+        .await["data"]["items"]
+        .clone();
+    assert_eq!(dropped.as_array().unwrap().len(), 1, "{dropped}");
+    assert!(dropped[0]["error_message"]
+        .as_str()
+        .unwrap()
+        .contains("refused"));
+    assert_eq!(dropped[0]["session_id"], "s1");
+}
+
+/// The same for L2: a batch of atoms that cannot be consolidated is
+/// dropped, the profile is no longer pending, and the letter redoes it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failing_l2_batch_is_dropped() {
+    let base_url = spawn_refusing_llm(|req| {
+        req["messages"][0]["content"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("You are a Memory Consolidation"))
+    })
+    .await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.worker.max_retries = 0;
+    })
+    .await;
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "We release v2 next Monday; I always run integration tests first."},
+                {"role": "assistant", "content": "Noted."}
+            ]})),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    let mut letters = Vec::new();
+    for _ in 0..100 {
+        letters = dead_letters(&client).await;
+        if !letters.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(letters.len(), 1, "{letters:?}");
+    assert_eq!(letters[0]["kind"], "l2");
+    assert!(letters[0]["job"]["L2"]["range"].is_object(), "{letters:?}");
+
+    let status = client.call("/v3/pipeline/status", json!({})).await["data"]["scopes"].clone();
+    let row = status
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["session_id"] == "s1")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        row["l2_pending"], false,
+        "the profile no longer waits on the dropped batch: {row}"
+    );
+    let dropped = client
+        .call(
+            "/v3/memory-generation-log/list",
+            json!({"status": "dropped", "layer": "l2"}),
+        )
+        .await["data"]["items"]
+        .clone();
+    assert_eq!(dropped.as_array().unwrap().len(), 1, "{dropped}");
 }

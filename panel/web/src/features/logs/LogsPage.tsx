@@ -28,6 +28,7 @@ const STATUSES = [
   { value: "succeeded", label: "succeeded" },
   { value: "empty", label: "empty (nothing written)" },
   { value: "failed", label: "failed" },
+  { value: "dropped", label: "dropped (input skipped)" },
 ] as const;
 
 const COLUMNS: ReadonlyArray<Column<GenerationLogItem>> = [
@@ -59,7 +60,7 @@ export function LogsPage() {
   const [params] = useSearchParams();
   const [status, setStatus] = useState<GenerationStatus | "">(() => {
     const s = params.get("status");
-    return s === "succeeded" || s === "empty" || s === "failed" ? s : "";
+    return s === "succeeded" || s === "empty" || s === "failed" || s === "dropped" ? s : "";
   });
   const [selected, setSelected] = useState<string>();
   const [more, setMore] = useState<GenerationLogList>();
@@ -80,7 +81,7 @@ export function LogsPage() {
     <div className="space-y-4">
       <PageHeader
         title="Generation logs"
-        subtitle="Every L1/L2/L3 distillation run: succeeded, empty (nothing written) or failed with its error (Core default window: last 7 days)"
+        subtitle="Every L1/L2/L3 distillation run: succeeded, empty (nothing written), failed with its error, or dropped (the last attempt failed and the input was skipped so later input could go on; its dead letter redoes it) (Core default window: last 7 days)"
         actions={
           <>
             <Field label="Layer">

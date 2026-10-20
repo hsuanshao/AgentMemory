@@ -84,6 +84,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 - `succeeded`：寫出了記憶、scene 或 persona；
 - `empty`：LLM 有回應，但沒有寫出任何東西；
 - `failed`：呼叫或回應失敗，`error_message` 說明原因。
+- `dropped`：L1 或 L2 在最後一次嘗試仍失敗；這批輸入被略過，讓後面的內容可以繼續，dead letter 裡的 job（帶 `range`）可以重做它。
 
 `model` 是使用的 LLM，包含 CLI provider 選用的模型（例如 `cli:agy:gemini-3.8-flash-high`）。每次嘗試都失敗的 job 會成為 **dead letter**，連同最後一次的錯誤保留下來，直到被重跑為止。`coordination.backend: local` 時，dead letter 存在記憶體中（最多 1,000 筆），重新啟動後就會消失。同樣的資訊也可以在 Panel 的 dashboard，以及 `memory-server generations`、`memory-server dead-letters` 查看（[docs/ops/DISTILLATION.zh-tw.md](ops/DISTILLATION.zh-tw.md)）。
 

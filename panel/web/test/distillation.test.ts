@@ -7,6 +7,7 @@ describe("statusTone", () => {
     expect(statusTone("succeeded")).toBe("ok");
     expect(statusTone("failed")).toBe("err");
     expect(statusTone("empty")).toBe("neutral");
+    expect(statusTone("dropped")).toBe("warn");
   });
 });
 
@@ -21,12 +22,14 @@ describe("layerRows", () => {
         { layer: "l1", status: "empty", count: 2 },
         { layer: "l1", status: "failed", count: 2 },
         { layer: "l3", status: "failed", count: 1 },
+        { layer: "l2", status: "dropped", count: 1 },
+        { layer: "l2", status: "succeeded", count: 3 },
       ],
     });
     expect(rows).toEqual([
-      { layer: "l1", succeeded: 6, empty: 2, failed: 2, failureRate: 0.2 },
-      { layer: "l2", succeeded: 0, empty: 0, failed: 0, failureRate: undefined },
-      { layer: "l3", succeeded: 0, empty: 0, failed: 1, failureRate: 1 },
+      { layer: "l1", succeeded: 6, empty: 2, failed: 2, dropped: 0, failureRate: 0.2 },
+      { layer: "l2", succeeded: 3, empty: 0, failed: 0, dropped: 1, failureRate: 0.25 },
+      { layer: "l3", succeeded: 0, empty: 0, failed: 1, dropped: 0, failureRate: 1 },
     ]);
   });
 
@@ -43,6 +46,9 @@ describe("dead letters", () => {
     expect(deadLetterSubject(letter("skill", { SkillExtract: { task_id: "t-1" } }))).toBe("task t-1");
     expect(deadLetterSubject(letter("l2", { L2: { profile: { team_id: "team-1", agent_id: "agt-1" } } }))).toBe("agent agt-1");
     expect(deadLetterSubject(letter("l3", {}))).toBe("—");
+    expect(deadLetterSubject(letter("l1", { L1: { session_id: "s-1", range: { first: 10, last: 14 } } }))).toBe(
+      "session s-1 · dropped seq 10–14",
+    );
   });
 
   it("counts per kind, every kind present", () => {

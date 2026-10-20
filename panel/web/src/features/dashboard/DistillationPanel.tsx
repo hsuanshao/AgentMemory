@@ -73,6 +73,16 @@ const LAYER_COLUMNS: ReadonlyArray<Column<LayerRow>> = [
     render: (r) => <span className={r.failed ? "mono text-err" : "mono"}>{formatNumber(r.failed)}</span>,
   },
   {
+    key: "dropped",
+    header: "Dropped",
+    className: "text-right",
+    render: (r) => (
+      <span className={r.dropped ? "mono text-warn" : "mono"} title="The last attempt failed; the input was skipped so later input could go on">
+        {formatNumber(r.dropped)}
+      </span>
+    ),
+  },
+  {
     key: "rate",
     header: "Failure rate",
     className: "text-right",
@@ -91,9 +101,14 @@ function LatestFailures({ slot }: { slot: Slot<GenerationLogItem[]> }) {
     <div className="border-t border-line p-3">
       <div className="mb-1 flex items-center justify-between">
         <span className="label">Latest failures</span>
-        <Link to="/logs?status=failed" className="text-xxs text-accent hover:underline">
-          All failed runs →
-        </Link>
+        <span className="flex gap-3">
+          <Link to="/logs?status=dropped" className="text-xxs text-accent hover:underline">
+            Dropped input →
+          </Link>
+          <Link to="/logs?status=failed" className="text-xxs text-accent hover:underline">
+            All failed runs →
+          </Link>
+        </span>
       </div>
       {items.length === 0 ? (
         <div className="text-muted">{slot.data ? "No failed runs in this window" : "…"}</div>

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use memory_application::pipeline::service::PipelineService;
+use memory_application::pipeline::service::{JobFailure, PipelineService};
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::pipeline::{
     DeadLetter, DeadLetterFilter, JobQueue, PipelineJob, QueueStats,
@@ -65,7 +65,11 @@ pub struct Delivery {
 
 /// Identical waiting jobs share this key and are coalesced.
 pub fn dedupe_key(job: &PipelineJob) -> String {
-    format!("{}:{}", job.kind(), job.serial_key())
+    match job.range() {
+        // A redo is never the same job as the cursor run of its session.
+        Some(r) => format!("{}:{}:{}-{}", job.kind(), job.serial_key(), r.first, r.last),
+        None => format!("{}:{}", job.kind(), job.serial_key()),
+    }
 }
 
 /// Where queued jobs live.
@@ -333,10 +337,13 @@ pub fn spawn_worker(
                 // An inner task turns a panic into an error, so the serial
                 // key is always released and the job follows retry policy.
                 let (runner, job) = (Arc::clone(&pipeline), envelope.job.clone());
+                let last_attempt = envelope.attempt >= settings.max_retries;
                 let lease = keep_lease(Arc::clone(&queue.backend), receipt.clone());
-                let result = tokio::spawn(async move { runner.run(&job).await })
+                let result = tokio::spawn(async move { runner.run(&job, last_attempt).await })
                     .await
-                    .unwrap_or_else(|e| Err(DomainError::internal(format!("job panicked: {e}"))));
+                    .unwrap_or_else(|e| {
+                        Err(DomainError::internal(format!("job panicked: {e}")).into())
+                    });
                 queue.running.fetch_sub(1, Ordering::Relaxed);
                 drop(guard);
                 drop(permit);
@@ -400,11 +407,11 @@ async fn handle_result(
     queue: &WorkerQueue,
     pipeline: &PipelineService,
     envelope: Envelope,
-    result: DomainResult<()>,
+    result: Result<(), JobFailure>,
     settings: &WorkerSettings,
 ) -> bool {
     let metrics = pipeline.metrics();
-    let Err(err) = result else {
+    let Err(JobFailure { error: err, redo }) = result else {
         metrics.completed(Utc::now().to_rfc3339());
         return true;
     };
@@ -425,8 +432,9 @@ async fn handle_result(
         .await
     } else {
         error!(kind = envelope.job.kind(), error = %err, "job dead-lettered");
+        // A dropped input is kept as the job that redoes exactly it.
         let letter = DeadLetter {
-            job: envelope.job,
+            job: redo.map_or(envelope.job, |job| *job),
             attempt: envelope.attempt,
             error: Some(err.to_string()),
             dead_at_ms: Utc::now().timestamp_millis(),

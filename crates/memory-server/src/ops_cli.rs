@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::config::Config;
 
 const GENERATIONS_HELP: &str = "\
-memory-server generations [--status succeeded|empty|failed] [--layer l1|l2|l3]
+memory-server generations [--status succeeded|empty|failed|dropped] [--layer l1|l2|l3]
                           [--hours N] [--limit N] [--department ID] [--json]
 
 Counts of distillation runs per layer and status over the last N hours
@@ -148,8 +148,8 @@ pub async fn generations(args: impl Iterator<Item = String>) -> Result<()> {
     let limit = a.number("--limit")?.unwrap_or(10);
     let department = a.value("--department")?.unwrap_or_else(|| "default".into());
     a.finish()?;
-    if !["succeeded", "empty", "failed"].contains(&status.as_str()) {
-        bail!("--status must be succeeded, empty or failed");
+    if !["succeeded", "empty", "failed", "dropped"].contains(&status.as_str()) {
+        bail!("--status must be succeeded, empty, failed or dropped");
     }
 
     let core = Core::new(department)?;
@@ -188,8 +188,8 @@ pub async fn generations(args: impl Iterator<Item = String>) -> Result<()> {
     );
     println!("Last {hours} h:");
     println!(
-        "  {:<6} {:>10} {:>8} {:>8}",
-        "layer", "succeeded", "empty", "failed"
+        "  {:<6} {:>10} {:>8} {:>8} {:>8}",
+        "layer", "succeeded", "empty", "failed", "dropped"
     );
     for l in ["l1", "l2", "l3"] {
         let n = |s: &str| {
@@ -202,11 +202,12 @@ pub async fn generations(args: impl Iterator<Item = String>) -> Result<()> {
                 .sum::<u64>()
         };
         println!(
-            "  {:<6} {:>10} {:>8} {:>8}",
+            "  {:<6} {:>10} {:>8} {:>8} {:>8}",
             l,
             n("succeeded"),
             n("empty"),
-            n("failed")
+            n("failed"),
+            n("dropped")
         );
     }
     let items = recent["items"].as_array().cloned().unwrap_or_default();

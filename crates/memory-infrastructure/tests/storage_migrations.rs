@@ -174,6 +174,7 @@ async fn redis_instance_keys_and_documents_are_renamed() {
         department: dept.clone(),
         scope: scope(),
         session_id: "s-1".into(),
+        range: None,
     };
     queue.push_new(job.clone()).await.unwrap();
     queue
