@@ -12,8 +12,8 @@ export const time = (v: string | null | undefined) => <span className="mono whit
 
 export const ROLE_OPTIONS = [
   { value: "member", label: "member" },
+  { value: "leader", label: "leader" },
   { value: "admin", label: "admin" },
-  { value: "reviewer", label: "reviewer" },
 ] as const;
 
 export function userOptions(users: ReadonlyArray<UserPublic> | undefined, placeholder: string) {

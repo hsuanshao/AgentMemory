@@ -5,6 +5,7 @@ use std::sync::Arc;
 use chrono::Duration;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use memory_domain::memory::Layer;
+use memory_domain::meta::visibility::ScopeVisibility;
 use memory_domain::scope::DepartmentId;
 use sha2::{Digest, Sha256};
 use tracing::warn;
@@ -36,6 +37,17 @@ pub struct GenerationRecord<'a> {
     pub output_refs: Vec<GenerationRef>,
     pub started_at_ms: i64,
     pub error: Option<String>,
+}
+
+/// What `GenerationLogService::list` returns: one page, newest first.
+pub struct LogQuery<'a> {
+    pub layer: Option<Layer>,
+    pub status: Option<String>,
+    /// Started within `[from, to]` ms; default the last `DEFAULT_RANGE_DAYS`.
+    pub range_ms: Option<(i64, i64)>,
+    pub limit: usize,
+    /// `next_cursor` of the previous page.
+    pub cursor: Option<&'a str>,
 }
 
 pub struct GenerationLogService {
@@ -98,12 +110,16 @@ impl GenerationLogService {
     pub async fn list(
         &self,
         department: &DepartmentId,
-        layer: Option<Layer>,
-        status: Option<String>,
-        range_ms: Option<(i64, i64)>,
-        limit: usize,
-        cursor: Option<&str>,
+        query: LogQuery<'_>,
+        visibility: &ScopeVisibility,
     ) -> DomainResult<GenerationLogPage> {
+        let LogQuery {
+            layer,
+            status,
+            range_ms,
+            limit,
+            cursor,
+        } = query;
         let now = self.clock.now().timestamp_millis();
         let (from_ms, to_ms) = range_ms.unwrap_or((
             now - Duration::days(DEFAULT_RANGE_DAYS).num_milliseconds(),
@@ -116,6 +132,7 @@ impl GenerationLogService {
             from_ms,
             to_ms,
             before,
+            visible: visibility.teams().cloned(),
         };
         let limit = limit.clamp(1, 100);
         let items = self.repo.list(department, &filter, limit).await?;
@@ -134,20 +151,24 @@ impl GenerationLogService {
         &self,
         department: &DepartmentId,
         hours: i64,
+        visibility: &ScopeVisibility,
     ) -> DomainResult<(i64, Vec<GenerationCount>)> {
         let from_ms = (self.clock.now() - Duration::hours(hours)).timestamp_millis();
-        Ok((from_ms, self.repo.summarize(department, from_ms).await?))
+        let counts = self
+            .repo
+            .summarize(department, from_ms, visibility.teams())
+            .await?;
+        Ok((from_ms, counts))
     }
 
+    /// A log the caller may not see is reported like a missing one.
     pub async fn get(
         &self,
         department: &DepartmentId,
         log_id: &str,
+        visibility: &ScopeVisibility,
     ) -> DomainResult<GenerationLog> {
-        self.repo
-            .get(department, log_id)
-            .await?
-            .ok_or_else(log_not_found)
+        visible(self.repo.get(department, log_id).await?, visibility)
     }
 
     pub async fn find_by_memory(
@@ -155,12 +176,23 @@ impl GenerationLogService {
         department: &DepartmentId,
         layer: Layer,
         memory_id: &str,
+        visibility: &ScopeVisibility,
     ) -> DomainResult<GenerationLog> {
-        self.repo
-            .find_by_output(department, layer, memory_id)
-            .await?
-            .ok_or_else(log_not_found)
+        visible(
+            self.repo
+                .find_by_output(department, layer, memory_id)
+                .await?,
+            visibility,
+        )
     }
+}
+
+fn visible(
+    log: Option<GenerationLog>,
+    visibility: &ScopeVisibility,
+) -> DomainResult<GenerationLog> {
+    log.filter(|l| visibility.sees(&l.team_id, l.user_id.as_deref()))
+        .ok_or_else(log_not_found)
 }
 
 fn log_not_found() -> DomainError {

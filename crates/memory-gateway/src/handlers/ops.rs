@@ -1,35 +1,48 @@
 //! Health, monitoring, prompts, generation logs, knowledge metadata,
 //! chat-memory clearing, department destruction and legacy v1 endpoints.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use memory_application::admin::KnowledgeInput;
 use memory_application::common::Page;
+use memory_application::meta::DisplayNames;
+use memory_application::pipeline::generation_logs::LogQuery;
 use memory_application::pipeline::memory_prompts::{ApplyTarget, PromptAction};
 use memory_application::ports::pipeline::{
     DeadLetterFilter, ProfileState, PromptSettingFilter, PromptTarget, SessionState,
 };
+use memory_domain::error::DomainError;
 use memory_domain::memory::Layer;
+use memory_domain::meta::visibility::ScopeVisibility;
 use memory_domain::scope::{DepartmentId, SegmentId};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::context::{Ctx, JsonBody};
+use crate::context::{Ctx, JsonBody, USER_KEY};
 use crate::envelope::{ok, ApiError};
 use crate::state::SharedState;
 
 type ApiResult = Result<Response, ApiError>;
 
 pub async fn health(State(s): State<SharedState>) -> Response {
+    // Unauthenticated: counts only, never the last job error.
     let worker = s
         .services
         .pipeline
-        .status(&SegmentId::default_bucket(), 0)
+        .status(
+            &SegmentId::default_bucket(),
+            0,
+            &ScopeVisibility::Department,
+        )
         .await
-        .ok();
+        .ok()
+        .map(|mut w| {
+            w.worker.last_error = None;
+            w
+        });
     Json(json!({
         "status": if s.health.fts_available { "ok" } else { "degraded" },
         "version": s.settings.version,
@@ -50,27 +63,59 @@ pub async fn health(State(s): State<SharedState>) -> Response {
     .into_response()
 }
 
+/// Who is asking. The server API key alone sees the whole department;
+/// with `x-memory-user-key` (the Panel always sends one), what that user's
+/// role allows (`ScopeVisibility`).
+async fn visibility(
+    s: &SharedState,
+    ctx: &Ctx,
+    department: &DepartmentId,
+) -> Result<ScopeVisibility, ApiError> {
+    s.services
+        .meta
+        .visibility(department, ctx.header(USER_KEY).as_deref())
+        .await
+        .map_err(|e| ctx.err(e))
+}
+
+/// One row per session, with its profile's L2/L3 state, plus one per
+/// profile none of the listed sessions belongs to. `key` is unique per row,
+/// `scope` names the profile. A name is absent when its id no longer
+/// exists. `can_read_memory` tells whether the caller may open that scope's
+/// memory, which leaders may not do for other members.
 fn scope_rows(
     sessions: Vec<SessionState>,
     profiles: Vec<ProfileState>,
     every_n: u32,
+    names: &DisplayNames,
+    visibility: &ScopeVisibility,
 ) -> Vec<Value> {
     let by_profile: HashMap<String, &ProfileState> =
         profiles.iter().map(|p| (p.profile.key(), p)).collect();
+    let name = |map: &HashMap<String, String>, id: &str| map.get(id).cloned();
     let mut seen = std::collections::HashSet::new();
     let mut rows: Vec<Value> = sessions
         .iter()
         .map(|st| {
-            let key = format!("team:{}|agent:{}", st.scope.team_id, st.scope.agent_id);
+            let (team, agent, user) = (
+                st.scope.team_id.as_str(),
+                st.scope.agent_id.as_str(),
+                st.scope.user_id.as_str(),
+            );
+            let key = format!("team:{team}|agent:{agent}");
             seen.insert(key.clone());
             let p = by_profile.get(&key);
             json!({
+                "key": format!("{key}|user:{user}|session:{}", st.session_id),
                 "scope": key,
-                "team_id": st.scope.team_id, "agent_id": st.scope.agent_id, "user_id": st.scope.user_id, "session_id": st.session_id,
+                "team_id": team, "agent_id": agent, "user_id": user, "session_id": st.session_id,
+                "team_name": name(&names.teams, team), "agent_name": name(&names.agents, agent),
+                "username": name(&names.users, user),
+                "can_read_memory": visibility.can_read_memory(team, Some(user)),
                 "conversation_count": st.conversation_count,
                 "warmup_threshold": memory_domain::pipeline::Warmup(st.warmup).threshold(every_n),
                 "l1_cursor": st.l1_cursor, "l1_due_at": st.l1_due_at, "last_l1_at": st.last_l1_at,
-                "l2_pending": p.map(|p| p.l2_pending), "l2_due_at": p.and_then(|p| p.l2_due_at),
+                "l2_pending": p.is_some_and(|p| p.l2_pending), "l2_due_at": p.and_then(|p| p.l2_due_at),
                 "last_l2_at": p.and_then(|p| p.last_l2_at), "last_l3_at": p.and_then(|p| p.last_l3_at),
                 "memories_since_persona": p.map(|p| p.memories_since_persona),
                 "last_active_at": st.last_active_at,
@@ -78,9 +123,13 @@ fn scope_rows(
         })
         .collect();
     rows.extend(profiles.iter().filter(|p| !seen.contains(&p.profile.key())).map(|p| {
+        let (team, agent) = (p.profile.team_id.as_str(), p.profile.agent_id.as_str());
         json!({
-            "scope": p.profile.key(), "team_id": p.profile.team_id, "agent_id": p.profile.agent_id,
-            "user_id": null, "session_id": null, "l2_pending": p.l2_pending, "l2_due_at": p.l2_due_at,
+            "key": p.profile.key(), "scope": p.profile.key(), "team_id": team, "agent_id": agent,
+            "user_id": null, "session_id": null,
+            "team_name": name(&names.teams, team), "agent_name": name(&names.agents, agent), "username": null,
+            "can_read_memory": visibility.can_read_memory(team, None),
+            "l2_pending": p.l2_pending, "l2_due_at": p.l2_due_at,
             "last_l2_at": p.last_l2_at, "last_l3_at": p.last_l3_at, "memories_since_persona": p.memories_since_persona,
         })
     }));
@@ -93,6 +142,7 @@ pub async fn pipeline_status(
     JsonBody(body): JsonBody,
 ) -> ApiResult {
     let department = ctx.department()?;
+    let visibility = visibility(&s, &ctx, &department).await?;
     let limit = body
         .get("limit")
         .and_then(Value::as_u64)
@@ -101,16 +151,41 @@ pub async fn pipeline_status(
     let status = s
         .services
         .pipeline
-        .status(&department, limit)
+        .status(&department, limit, &visibility)
         .await
         .map_err(|e| ctx.err(e))?;
     let every_n = memory_domain::pipeline::PipelineSettings::default().every_n_conversations;
+    let ids = |f: &dyn Fn(&SessionState) -> String, g: &dyn Fn(&ProfileState) -> String| {
+        status
+            .sessions
+            .iter()
+            .map(f)
+            .chain(status.profiles.iter().map(g))
+            .collect::<BTreeSet<String>>()
+    };
+    let teams = ids(&|st| st.scope.team_id.to_string(), &|p| {
+        p.profile.team_id.to_string()
+    });
+    let agents = ids(&|st| st.scope.agent_id.to_string(), &|p| {
+        p.profile.agent_id.to_string()
+    });
+    let users = status
+        .sessions
+        .iter()
+        .map(|st| st.scope.user_id.to_string())
+        .collect();
+    let names = s
+        .services
+        .meta
+        .display_names(&department, teams, agents, users)
+        .await
+        .map_err(|e| ctx.err(e))?;
     Ok(ok(
         &ctx.request_id,
         json!({
             "worker": status.worker,
             "queue": status.queue,
-            "scopes": scope_rows(status.sessions, status.profiles, every_n),
+            "scopes": scope_rows(status.sessions, status.profiles, every_n, &names, &visibility),
         }),
     ))
 }
@@ -149,11 +224,13 @@ pub async fn dead_letter_list(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let filter = dead_letter_filter(&ctx, ctx.department()?, &body)?;
+    let department = ctx.department()?;
+    let visibility = visibility(&s, &ctx, &department).await?;
+    let filter = dead_letter_filter(&ctx, department, &body)?;
     let items = s
         .services
         .pipeline
-        .dead_letters(&filter, limit(&body, 50, 500))
+        .dead_letters(&filter, limit(&body, 50, 500), &visibility)
         .await
         .map_err(|e| ctx.err(e))?;
     let items: Vec<Value> = items
@@ -176,7 +253,15 @@ pub async fn dead_letter_redrive(
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
-    let filter = dead_letter_filter(&ctx, ctx.department()?, &body)?;
+    let department = ctx.department()?;
+    // Redriving spends the department's LLM budget: operators and system
+    // admins only.
+    if visibility(&s, &ctx, &department).await?.teams().is_some() {
+        return Err(ctx.err(DomainError::permission_denied(
+            "only a system admin can redrive dead letters",
+        )));
+    }
+    let filter = dead_letter_filter(&ctx, department, &body)?;
     let requeued = s
         .services
         .pipeline
@@ -192,6 +277,7 @@ pub async fn generation_log_summary(
     JsonBody(body): JsonBody,
 ) -> ApiResult {
     let department = ctx.department()?;
+    let visibility = visibility(&s, &ctx, &department).await?;
     let hours = body
         .get("hours")
         .and_then(Value::as_i64)
@@ -200,7 +286,7 @@ pub async fn generation_log_summary(
     let (from_ms, items) = s
         .services
         .generation_logs
-        .summary(&department, hours)
+        .summary(&department, hours, &visibility)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
@@ -255,6 +341,7 @@ pub async fn generation_log_list(
     JsonBody(body): JsonBody,
 ) -> ApiResult {
     let department = ctx.department()?;
+    let visibility = visibility(&s, &ctx, &department).await?;
     let status = body
         .get("status")
         .and_then(Value::as_str)
@@ -265,11 +352,14 @@ pub async fn generation_log_list(
         .generation_logs
         .list(
             &department,
-            layer_of(&ctx, &body)?,
-            status,
-            ms_range(&body),
-            limit,
-            body.get("cursor").and_then(Value::as_str),
+            LogQuery {
+                layer: layer_of(&ctx, &body)?,
+                status,
+                range_ms: ms_range(&body),
+                limit,
+                cursor: body.get("cursor").and_then(Value::as_str),
+            },
+            &visibility,
         )
         .await
         .map_err(|e| ctx.err(e))?;
@@ -285,14 +375,18 @@ pub async fn generation_log_get(
     JsonBody(body): JsonBody,
 ) -> ApiResult {
     let department = ctx.department()?;
+    let visibility = visibility(&s, &ctx, &department).await?;
     let logs = &s.services.generation_logs;
     let log = match (
         body.get("log_id").and_then(Value::as_str),
         body.get("memory_id").and_then(Value::as_str),
         layer_of(&ctx, &body)?,
     ) {
-        (Some(id), None, _) => logs.get(&department, id).await,
-        (None, Some(memory), Some(layer)) => logs.find_by_memory(&department, layer, memory).await,
+        (Some(id), None, _) => logs.get(&department, id, &visibility).await,
+        (None, Some(memory), Some(layer)) => {
+            logs.find_by_memory(&department, layer, memory, &visibility)
+                .await
+        }
         _ => {
             return Err(ApiError::bad_request(
                 &ctx.request_id,

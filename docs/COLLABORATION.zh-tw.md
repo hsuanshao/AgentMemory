@@ -24,8 +24,9 @@
 9. [記憶請求的授權](#9-記憶請求的授權)
 10. [依範圍運作的管線與召回](#10-依範圍運作的管線與召回)
 11. [Metadata 平面的規則](#11-metadata-平面的規則)
-12. [部門與儲存](#12-部門與儲存)
-13. [限制與目前的不足](#13-限制與目前的不足)
+12. [依角色檢視運作狀態](#12-依角色檢視運作狀態)
+13. [部門與儲存](#13-部門與儲存)
+14. [限制與目前的不足](#14-限制與目前的不足)
 
 圖中的識別名稱保留英文，方便對照程式碼。
 
@@ -98,9 +99,10 @@ flowchart TD
 | **系統管理者** | 部門 | 全部權限：任何 team 的使用者、key、team、成員和 agent。可以讀寫任何使用者的記憶。由 `install.sh` 建立（`init-admin`）。 |
 | **一般使用者** | 部門 | 在所屬的 team 中使用記憶，管理自己的 key。 |
 | Team **admin** | Team | 管理 team 的成員和 agent；對 team 中非私有的 asset 有完整權限。建立 team 時，team 的 owner 會成為它的 admin。 |
-| Team **member** / **reviewer** | Team | 使用記憶；可以建立自己擁有的 agent；可以讀取 team 中非私有的 asset。在記憶 API 中這兩個角色的權限相同。 |
+| Team **leader** | Team | 擁有 member 的所有權限，另外可以看到整個 team 的蒸餾運作狀態：每位成員的管線狀態、生成紀錄和 dead letter（第 12 節）。不能開啟其他成員的對話或事實，也不能管理成員。 |
+| Team **member** | Team | 使用記憶；可以建立自己擁有的 agent；可以讀取 team 中非私有的 asset。可以看到 team 共用層和自己工作的運作狀態。 |
 
-**v0.1.x 的 Panel** 刻意保持簡單：只有系統管理者能在 Panel 上修改任何東西（使用者、key、team、成員、agent、記憶），其他人登入後只能檢視。Team admin 仍然可以透過 API 行使自己的權限。
+**Panel** 刻意保持簡單：只有系統管理者能在 Panel 上修改任何東西（使用者、key、team、成員、agent、記憶），其他人登入後只能檢視，dashboard 和生成紀錄只會顯示第 12 節允許的內容。Team admin 仍然可以透過 API 行使自己的權限。
 
 ## 5. 建立使用者、team 與 agent
 
@@ -181,7 +183,7 @@ amem login --server-url https://memory.example.com --team-id team-… --agent-id
 | `MemoryScope` | team_id、agent_id、user_id（可加 task_id） | L0 對話、L1 atom、原始 session 回合、以 session 為單位的管線狀態 |
 | `ProfileScope` | team_id、agent_id | L2 場景檔、L3 persona、以 profile 為單位的管線狀態 |
 
-每次查詢，儲存層都會用這些欄位過濾。例如 SQLite 對 `MemoryScope` 會加上 `team_id = ? AND agent_id = ? AND user_id = ?`，對 `ProfileScope` 則加上 `team_id = ? AND agent_id = ?`；Postgres 也一樣。這一切都發生在單一部門內，而部門本身就是獨立的資料庫檔或 schema（第 12 節）。
+每次查詢，儲存層都會用這些欄位過濾。例如 SQLite 對 `MemoryScope` 會加上 `team_id = ? AND agent_id = ? AND user_id = ?`，對 `ProfileScope` 則加上 `team_id = ? AND agent_id = ?`；Postgres 也一樣。這一切都發生在單一部門內，而部門本身就是獨立的資料庫檔或 schema（第 13 節）。
 
 ## 9. 記憶請求的授權
 
@@ -245,19 +247,37 @@ Metadata 呼叫（`/v3/meta/*`）以 user key 識別呼叫者，並由各 meta s
    - `restricted`：team admin，或經 ACL 授權的使用者。
    - `task`：非 admin 只能讀取。
    - `team` 和 `agent`：交由角色預設權限決定。
-5. 角色預設權限：admin 有讀、寫、指派、分享；member 和 reviewer 只能讀。
+5. 角色預設權限：admin 有讀、寫、指派、分享；leader 和 member 只能讀。
 6. 否則看 ACL 中是否有條目把這個動作 **allow** 給該使用者、角色或 agent。
 
 ACL 的 `deny` 條目會被儲存，但目前不會被套用。
 
-## 12. 部門與儲存
+## 12. 依角色檢視運作狀態
+
+管線狀態（`/v3/pipeline/status`）、生成紀錄（`/v3/memory-generation-log/*`）和 dead letter（`/v3/pipeline/dead-letter/list`）呈現每個範圍的蒸餾運作情形。它們會列出 team、agent、使用者和 session，但不含任何記憶內容。誰能看到哪些列，由同一條規則 `ScopeVisibility`（`memory-domain/src/meta/visibility.rs`）決定：
+
+| 呼叫者 | 看得到 |
+| --- | --- |
+| 只帶伺服器 API key、沒有 user key（維運人員、`memory-server` 指令） | 整個部門 |
+| 系統管理者 | 整個部門 |
+| Team **admin** 或 **leader** | 該 team 的全部：每位成員的 L0/L1 工作，以及 agent 的 L2/L3 工作 |
+| Team **member** | team 共用的 L2/L3 工作，以及自己的 L0/L1 工作 |
+| 任何人 | 自己不是有效成員的 team，一律看不到 |
+
+- Skill 擷取的 dead letter 只記錄 task，所以只有整個部門的檢視範圍會列出它們。
+- 重跑 dead letter 會消耗部門的 LLM 額度：帶 user key 時，只有系統管理者可以執行。
+- Worker 最後一次的錯誤可能來自任何 team，所以只有整個部門的檢視範圍看得到。不需要 key 的 `/health` 一律不顯示它。
+- 看得到某一列，不代表能讀取記憶。每一列都帶有 `can_read_memory`，也就是第 9 節資料平面的規則：自己的範圍，以及所屬 team 的共用層。Panel 只在它為 true 時才把那一列連到記憶瀏覽器。Leader 看得到某位成員的 session 已經蒸餾，但打不開它。
+- 每一列都有唯一的 `key`，以及 `team_name`、`agent_name`、`username`。id 已經不存在時，名稱會是空的。
+
+## 13. 部門與儲存
 
 - 部門在第一次使用時建立。用 SQLite 時是 `<data>/departments/<id>/memory.db` 這個資料庫檔；用 Postgres 時是一個獨立的 schema。檔案（skill 資源、原始 session 回合）放在 `<data>/departments/<id>/` 底下。
 - 使用者是每個部門各自獨立的，所以每個新的部門都需要自己的管理者：用該部門的 `x-memory-department-id` 呼叫 `POST /v3/internal/meta/user/init-admin`。
 - 一套 Panel 只服務一個部門（`CORE_DEPARTMENT_ID`）。要管理另一個部門，請再部署一套 Panel。
 - `POST /v3/department/destroy` 會刪除一個部門及其所有內容，需要伺服器 API key。
 
-## 13. 限制與目前的不足
+## 14. 限制與目前的不足
 
 - **記憶 API 的角色是扁平的**，team admin 目前也還沒有 Panel 介面（見第 4、9 節）。
 - **記憶 API 不會檢查 agent 的狀態**。被標成 inactive 的 agent 仍然可以收到請求；若要切斷存取，請移除成員或撤銷 key。

@@ -71,11 +71,11 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | Method | 路徑 | 說明 |
 | --- | --- | --- |
 | GET | `/health` | `{status, version, uptime, stores{vectorStore,embeddingService,ftsAvailable,llmConfigured}, services{pipelineWorker, stateBackend}}` |
-| POST | `/v3/pipeline/status` | `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}` |
+| POST | `/v3/pipeline/status` | `{limit?}`（預設 50，最多 500）→ `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}`。每一列範圍都有唯一的 `key`、各個 id、`team_name` / `agent_name` / `username`，以及 `can_read_memory` |
 | POST | `/v3/stats/overview` | 此部門各層的筆數：`{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
 | POST | `/v3/memory-generation-log/summary` | `{hours?}`（預設 24，最多 720）→ `{hours, from_ms, llm: {configured, model}, items: [{layer, status, count}]}`：各層、各狀態的蒸餾次數 |
 | POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}`（`l1`、`l2`、`l3`、`skill`；預設 50，最多 500）→ `{items: [{kind, job, attempt, error, dead_at_ms}]}`，新的在前，只列此部門 |
-| POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}`（預設 10，最多 1000）→ `{requeued}`：把最舊的符合條件 dead letter 重新排回佇列，從第一次嘗試開始 |
+| POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}`（預設 10，最多 1000）→ `{requeued}`：把最舊的符合條件 dead letter 重新排回佇列，從第一次嘗試開始。帶 user key 時只有系統管理者可以執行 |
 
 `WorkerMetrics`：`{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`。
 `ScopeState`：`{scope, team_id, agent_id, user_id, session_id, conversation_count, warmup_threshold, l1_cursor, l2_pending, last_l1_at, last_l2_at, last_l3_at, memories_since_persona}`。
@@ -86,6 +86,8 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 - `failed`：呼叫或回應失敗，`error_message` 說明原因。
 
 `model` 是使用的 LLM，包含 CLI provider 選用的模型（例如 `cli:agy:gemini-3.8-flash-high`）。每次嘗試都失敗的 job 會成為 **dead letter**，連同最後一次的錯誤保留下來，直到被重跑為止。`coordination.backend: local` 時，dead letter 存在記憶體中（最多 1,000 筆），重新啟動後就會消失。同樣的資訊也可以在 Panel 的 dashboard，以及 `memory-server generations`、`memory-server dead-letters` 查看（[docs/ops/DISTILLATION.zh-tw.md](ops/DISTILLATION.zh-tw.md)）。
+
+這些路由可以另外帶 `x-memory-user-key`。沒有帶時（維運人員、`memory-server` 指令）涵蓋整個部門；有帶時，範圍、生成紀錄和 dead letter 只會列出該使用者角色允許的部分：team admin 或 leader 看得到整個 team，member 看得到 team 共用的 L2/L3 工作和自己的工作（[COLLABORATION.zh-tw.md 第 12 節](COLLABORATION.zh-tw.md#12-依角色檢視運作狀態)）。Panel 一律會送出登入使用者的 key。
 
 ### 召回
 

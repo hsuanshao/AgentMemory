@@ -29,6 +29,8 @@
 | `memory-core.yaml` | `maxOpenInstances`、`maxUsersPerInstance`、`maxTeamsPerInstance` | `maxOpenDepartments`、`maxUsersPerDepartment`、`maxTeamsPerDepartment`。設定檔還用舊名稱時，memory-core 會拒絕啟動 |
 | API | `/v3/instance/destroy` `{instance_id}`、`/v3/meta/instance-quota/get`、`/v3/internal/meta/user/list-by-instance` | `/v3/department/destroy` `{department_id}`、`/v3/meta/department-quota/get`、`/v3/internal/meta/user/list-by-department` |
 | `memory-server` 指令 | `--instance` | `--department` |
+| Team 角色 | `admin`、`member`、`reviewer` | `admin`、`leader`、`member`。原本的 reviewer 改為 member；leader 可以看到整個 team 的管線狀態、生成紀錄和 dead letter（[COLLABORATION 第 12 節](COLLABORATION.zh-tw.md#12-依角色檢視運作狀態)） |
+| 帶 user key 查詢運作狀態 | 整個部門 | 依使用者角色允許的範圍。重跑 dead letter 需要系統管理者 |
 | 儲存的資料 | `<data>/instances`、Postgres `agent_memory.instances`、Redis `…:pipe:inst:…` | memory-core 啟動時自動遷移（[改了哪些](ops/SCHEMA-MIGRATIONS.zh-tw.md#3-目前的遷移)） |
 
 **伺服器和所有 client 要一起更新。** 0.3.0 之前的 client 會收到 `401`，訊息是「x-memory-service-id was renamed in 0.3.0; update the client」。

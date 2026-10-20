@@ -156,7 +156,8 @@ CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_
 ///
 /// 1. 0.3.0: "instance" became "department" (column, prompt target and
 ///    quota names).
-pub const SCHEMA_VERSION: i64 = 1;
+/// 2. 0.3.0: the team role `reviewer` was removed; its members are members.
+pub const SCHEMA_VERSION: i64 = 2;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -181,6 +182,12 @@ pub fn migrate_department(conn: &Connection) -> rusqlite::Result<()> {
              UPDATE OR REPLACE meta_config_params SET param_name = replace(param_name, '_per_instance', '_per_department')
              WHERE module = 'quota' AND param_name IN ('max_users_per_instance', 'max_teams_per_instance');
              COMMIT;",
+        )?;
+    }
+    if user_version(conn)? < 2 {
+        conn.execute(
+            "UPDATE meta_team_members SET doc = json_set(doc, '$.role', 'member') WHERE json_extract(doc, '$.role') = 'reviewer'",
+            [],
         )?;
     }
     conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -247,12 +254,13 @@ mod tests {
     }
 
     #[test]
-    fn department_db_names_are_renamed() {
+    fn department_db_from_0_2_is_migrated() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(DEPARTMENT_SCHEMA).unwrap();
         conn.execute_batch(
-            "INSERT INTO prompt_settings VALUES ('instance', '', '', 'l1', 'p-1', 1);
-             INSERT INTO meta_config_params VALUES ('global', '', 'quota', 'max_users_per_instance', '20');",
+            r#"INSERT INTO prompt_settings VALUES ('instance', '', '', 'l1', 'p-1', 1);
+             INSERT INTO meta_config_params VALUES ('global', '', 'quota', 'max_users_per_instance', '20');
+             INSERT INTO meta_team_members VALUES ('t-1', 'u-1', 'active', '', '{"team_id":"t-1","user_id":"u-1","role":"reviewer"}');"#,
         )
         .unwrap();
 
@@ -278,6 +286,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(old, 0);
+        let role: String = conn
+            .query_row(
+                "SELECT json_extract(doc, '$.role') FROM meta_team_members",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(role, "member", "reviewers become members");
         assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
     }
 }

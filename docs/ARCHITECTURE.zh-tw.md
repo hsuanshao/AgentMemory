@@ -112,7 +112,7 @@ erDiagram
     string user_type "system_admin | normal"
   }
   TEAM_MEMBER {
-    string role "admin | member | reviewer"
+    string role "admin | leader | member"
     string status "active | removed"
   }
 ```

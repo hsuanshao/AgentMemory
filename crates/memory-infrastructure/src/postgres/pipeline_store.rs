@@ -11,6 +11,7 @@ use memory_application::ports::pipeline::{
 };
 use memory_domain::error::DomainResult;
 use memory_domain::memory::Layer;
+use memory_domain::meta::visibility::TeamView;
 use memory_domain::scope::DepartmentId;
 
 use super::db::{pg_err, PgDb};
@@ -293,6 +294,10 @@ impl PostgresGenerationLogStore {
     }
 }
 
+fn log_visibility(view: &TeamView) -> (String, Vec<String>) {
+    crate::visibility_sql::clause("doc->>'team_id'", "doc->>'user_id'", view)
+}
+
 #[async_trait]
 impl GenerationLogRepository for PostgresGenerationLogStore {
     async fn append(&self, department: &DepartmentId, log: &GenerationLog) -> DomainResult<()> {
@@ -384,6 +389,10 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
                 args![*ts, *ts, id],
             );
         }
+        if let Some(view) = &filter.visible {
+            let (sql, params) = log_visibility(view);
+            w.raw(&sql, params.into_iter().map(Arg::from));
+        }
         let rows = fetch_all(
             &mut *self.db.conn().await?,
             &format!(
@@ -410,15 +419,23 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
         &self,
         department: &DepartmentId,
         from_ms: i64,
+        visible: Option<&TeamView>,
     ) -> DomainResult<Vec<GenerationCount>> {
         let s = self.db.schema(department).await?;
+        let mut w = Where::default();
+        w.raw("started_at_ms >= ?", args![from_ms]);
+        if let Some(view) = visible {
+            let (sql, params) = log_visibility(view);
+            w.raw(&sql, params.into_iter().map(Arg::from));
+        }
         let rows = fetch_all(
             &mut *self.db.conn().await?,
             &format!(
-                "SELECT layer, status, COUNT(*) AS n FROM {s}.generation_logs \
-                 WHERE started_at_ms >= ? GROUP BY layer, status ORDER BY layer, status"
+                "SELECT layer, status, COUNT(*) AS n FROM {s}.generation_logs {} \
+                 GROUP BY layer, status ORDER BY layer, status",
+                w.sql()
             ),
-            &args![from_ms],
+            &w.params,
         )
         .await?;
         let mut out = Vec::new();

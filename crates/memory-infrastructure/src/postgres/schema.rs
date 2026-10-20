@@ -15,7 +15,10 @@ pub const REGISTRY_SCHEMA: &str = "agent_memory";
 /// Schema changes after the first release, oldest first. The DDL in this
 /// file always describes the latest version; `db::migrate` upgrades older
 /// databases step by step and records each step.
-pub const MIGRATIONS: &[(i64, &str)] = &[(1, "instance renamed to department")];
+pub const MIGRATIONS: &[(i64, &str)] = &[
+    (1, "instance renamed to department"),
+    (2, "team role reviewer removed"),
+];
 
 /// The latest schema version.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;

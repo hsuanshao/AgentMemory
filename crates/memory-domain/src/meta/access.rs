@@ -42,7 +42,7 @@ pub fn role_defaults(role: TeamRole) -> &'static [Permission] {
             Permission::Assign,
             Permission::Share,
         ],
-        TeamRole::Member | TeamRole::Reviewer => &[Permission::Read],
+        TeamRole::Leader | TeamRole::Member => &[Permission::Read],
     }
 }
 

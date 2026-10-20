@@ -60,7 +60,7 @@ fn with_database(url: &str, name: &str) -> String {
 }
 
 #[tokio::test]
-async fn postgres_instance_registry_becomes_departments() {
+async fn postgres_data_from_0_2_is_migrated() {
     let Ok(url) = std::env::var("AGENT_MEMORY_TEST_POSTGRES_URL") else {
         eprintln!(
             "skipping: set AGENT_MEMORY_TEST_POSTGRES_URL to run the Postgres migration test"
@@ -84,14 +84,15 @@ async fn postgres_instance_registry_becomes_departments() {
         let mut c = db.conn().await.unwrap();
         c.execute(
             format!(
-                "INSERT INTO {s}.prompt_settings VALUES ('instance', '', '', 'l1', 'p-1', 1);
+                r#"INSERT INTO {s}.prompt_settings VALUES ('instance', '', '', 'l1', 'p-1', 1);
                  UPDATE {s}.meta_config_params SET param_name = 'max_users_per_instance', param_value = '20'
                  WHERE param_name = 'max_users_per_department';
                  INSERT INTO {s}.meta_config_params VALUES ('global', '', 'quota', 'max_users_per_department', '500');
+                 INSERT INTO {s}.meta_team_members VALUES ('t-1', 'u-1', 'active', '', '{{"team_id":"t-1","user_id":"u-1","role":"reviewer"}}');
                  ALTER TABLE agent_memory.departments RENAME COLUMN department_id TO instance_id;
                  ALTER TABLE agent_memory.departments RENAME TO instances;
                  ALTER INDEX agent_memory.departments_pkey RENAME TO instances_pkey;
-                 DROP TABLE agent_memory.schema_migrations;"
+                 DROP TABLE agent_memory.schema_migrations;"#
             )
             .as_str(),
         )
@@ -103,18 +104,26 @@ async fn postgres_instance_registry_becomes_departments() {
     for _ in 0..2 {
         let db = PgDb::connect(&db_url, 2, None).await.unwrap();
         let mut c = db.conn().await.unwrap();
-        let (id, target, users, version): (String, String, String, i64) = sqlx::query_as(&format!(
-            "SELECT (SELECT department_id FROM agent_memory.departments),
-                    (SELECT target_type FROM {s}.prompt_settings),
-                    (SELECT param_value FROM {s}.meta_config_params WHERE param_name = 'max_users_per_department'),
-                    (SELECT max(version) FROM agent_memory.schema_migrations)"
-        ))
-        .fetch_one(&mut *c)
-        .await
-        .unwrap();
+        let (id, target, users, role, version): (String, String, String, String, i64) =
+            sqlx::query_as(&format!(
+                "SELECT (SELECT department_id FROM agent_memory.departments),
+                        (SELECT target_type FROM {s}.prompt_settings),
+                        (SELECT param_value FROM {s}.meta_config_params WHERE param_name = 'max_users_per_department'),
+                        (SELECT doc->>'role' FROM {s}.meta_team_members),
+                        (SELECT max(version) FROM agent_memory.schema_migrations)"
+            ))
+            .fetch_one(&mut *c)
+            .await
+            .unwrap();
         assert_eq!(
-            (id.as_str(), target.as_str(), users.as_str(), version),
-            ("legacy", "department", "20", 1)
+            (
+                id.as_str(),
+                target.as_str(),
+                users.as_str(),
+                role.as_str(),
+                version
+            ),
+            ("legacy", "department", "20", "member", 2)
         );
         let left: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM pg_class WHERE relname IN ('instances', 'instances_pkey')",

@@ -287,6 +287,17 @@ async fn migrate(tx: &mut Transaction<'_, Postgres>) -> DomainResult<()> {
         rename_instances(tx, &registry).await?;
     }
     execute_script(tx, &schema::registry_ddl(&registry)).await?;
+    if applied < 2 {
+        update_departments(tx, &registry, |s| {
+            vec![(
+                "meta_team_members",
+                format!(
+                    "UPDATE {s}.meta_team_members SET doc = jsonb_set(doc, '{{role}}', '\"member\"') WHERE doc->>'role' = 'reviewer'"
+                ),
+            )]
+        })
+        .await?;
+    }
     for (version, name) in schema::MIGRATIONS.iter().filter(|(v, _)| *v > applied) {
         execute(
             tx,
@@ -321,15 +332,8 @@ async fn rename_instances(tx: &mut Transaction<'_, Postgres>, registry: &str) ->
         ),
     )
     .await?;
-    let rows = fetch_all(
-        tx,
-        &format!("SELECT schema_name FROM {registry}.departments"),
-        &[],
-    )
-    .await?;
-    for row in &rows {
-        let s = quote_ident(&get::<String>(row, "schema_name")?);
-        let steps = [
+    let departments = update_departments(tx, registry, |s| {
+        vec![
             ("prompt_settings", format!("UPDATE {s}.prompt_settings SET target_type = 'department' WHERE target_type = 'instance'")),
             ("prompt_logs", format!("UPDATE {s}.prompt_logs SET target_type = 'department' WHERE target_type = 'instance'")),
             // The operator's quota replaces the default seeded under the new name.
@@ -341,8 +345,33 @@ async fn rename_instances(tx: &mut Transaction<'_, Postgres>, registry: &str) ->
                  UPDATE {s}.meta_config_params SET param_name = replace(param_name, '_per_instance', '_per_department')
                  WHERE module = 'quota' AND param_name IN ('max_users_per_instance', 'max_teams_per_instance');"
             )),
-        ];
-        for (table, sql) in steps {
+        ]
+    })
+    .await?;
+    info!(
+        departments,
+        "renamed the postgres instance registry to departments"
+    );
+    Ok(())
+}
+
+/// Runs `steps(schema)` in every registered department schema: each step is
+/// a table and the statements to run when that table exists (a department
+/// creates its tables on first use). Returns the number of departments.
+async fn update_departments(
+    tx: &mut Transaction<'_, Postgres>,
+    registry: &str,
+    steps: impl Fn(&str) -> Vec<(&'static str, String)>,
+) -> DomainResult<usize> {
+    let rows = fetch_all(
+        tx,
+        &format!("SELECT schema_name FROM {registry}.departments"),
+        &[],
+    )
+    .await?;
+    for row in &rows {
+        let s = quote_ident(&get::<String>(row, "schema_name")?);
+        for (table, sql) in steps(&s) {
             let exists = fetch_optional(
                 tx,
                 "SELECT 1 AS x WHERE to_regclass(?) IS NOT NULL",
@@ -354,11 +383,7 @@ async fn rename_instances(tx: &mut Transaction<'_, Postgres>, registry: &str) ->
             }
         }
     }
-    info!(
-        departments = rows.len(),
-        "renamed the postgres instance registry to departments"
-    );
-    Ok(())
+    Ok(rows.len())
 }
 
 fn supports_iterative_scan(version: &str) -> bool {

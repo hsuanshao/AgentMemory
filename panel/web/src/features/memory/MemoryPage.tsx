@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { EmptyState } from "../../components/Feedback";
 import { PageHeader } from "../../components/PageHeader";
 import { Tabs, type TabItem } from "../../components/Tabs";
@@ -8,12 +9,10 @@ import { L1Tab } from "./L1Tab";
 import { L2Tab } from "./L2Tab";
 import { L3Tab } from "./L3Tab";
 import { RecallPanel } from "./RecallPanel";
-import { isComplete, scopeKey, scopeStore } from "./scope";
+import { fromLink, isComplete, type MemoryTab, scopeKey, scopeStore } from "./scope";
 import { ScopePicker } from "./ScopePicker";
 
-type TabId = "l0" | "l1" | "l2" | "l3" | "recall";
-
-const TABS: ReadonlyArray<TabItem<TabId>> = [
+const TABS: ReadonlyArray<TabItem<MemoryTab>> = [
   { id: "l0", label: "L0 Conversations" },
   { id: "l1", label: "L1 Atoms" },
   { id: "l2", label: "L2 Scenarios" },
@@ -23,7 +22,17 @@ const TABS: ReadonlyArray<TabItem<TabId>> = [
 
 export function MemoryPage() {
   const scope = useStore(scopeStore);
-  const [tab, setTab] = useState<TabId>("l1");
+  const [params, setParams] = useSearchParams();
+  const [tab, setTab] = useState<MemoryTab>(() => fromLink(params)?.tab ?? "l1");
+
+  // A link (from the scope table) selects its scope once, then leaves the URL.
+  useEffect(() => {
+    const link = fromLink(params);
+    if (!link) return;
+    scopeStore.set(link.scope);
+    if (link.tab) setTab(link.tab);
+    setParams({}, { replace: true });
+  }, [params, setParams]);
 
   return (
     <div className="space-y-4">

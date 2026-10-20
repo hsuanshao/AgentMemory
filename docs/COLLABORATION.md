@@ -24,8 +24,9 @@ One Agent Memory server can hold memory for many people, many teams and many AI 
 9. [Authorization of memory requests](#9-authorization-of-memory-requests)
 10. [Pipeline and recall per scope](#10-pipeline-and-recall-per-scope)
 11. [Metadata-plane rules](#11-metadata-plane-rules)
-12. [Departments and storage](#12-departments-and-storage)
-13. [Limits and current gaps](#13-limits-and-current-gaps)
+12. [Operational state by role](#12-operational-state-by-role)
+13. [Departments and storage](#13-departments-and-storage)
+14. [Limits and current gaps](#14-limits-and-current-gaps)
 
 ---
 
@@ -96,9 +97,10 @@ Nothing is shared **between agents**, not even inside one team: every agent has 
 | **System admin** | Department | Everything: users, keys, teams, members and agents, in any team. Can read and write the memory of any user. Created by `install.sh` (`init-admin`). |
 | **Normal user** | Department | Uses memory in the teams they belong to; manages their own keys. |
 | Team **admin** | Team | Manages the team's members and agents; full rights on the team's non-private assets. A team's owner is made its admin when the team is created. |
-| Team **member** / **reviewer** | Team | Uses memory; can create agents they own; reads the team's non-private assets. In the memory API the two roles behave the same. |
+| Team **leader** | Team | Everything a member can do, and sees how the whole team's distillation is doing: pipeline state, generation logs and dead letters of every member (§12). Cannot open other members' conversations or facts, and cannot manage members. |
+| Team **member** | Team | Uses memory; can create agents they own; reads the team's non-private assets. Sees the operational state of the team's shared layers and of their own work. |
 
-**The Panel in v0.1.x** keeps it simple: only system admins can change anything there (users, keys, teams, members, agents, memory). Everyone else can sign in and view. Team admins can still use their rights through the API.
+**The Panel** keeps it simple: only system admins can change anything there (users, keys, teams, members, agents, memory). Everyone else can sign in and view, and the dashboard and generation logs show them what §12 allows. Team admins can still use their rights through the API.
 
 ## 5. Create users, teams and agents
 
@@ -179,7 +181,7 @@ Two scope types decide where data lives (`memory-domain/src/scope.rs`, `profile.
 | `MemoryScope` | team_id, agent_id, user_id (+ optional task_id) | L0 conversations, L1 atoms, raw session turns, per-session pipeline state |
 | `ProfileScope` | team_id, agent_id | L2 scene files, the L3 persona, per-profile pipeline state |
 
-Stores filter on these fields in every query. For example, the SQLite store adds `team_id = ? AND agent_id = ? AND user_id = ?` for a `MemoryScope`, and `team_id = ? AND agent_id = ?` for a `ProfileScope`. The Postgres store does the same. All of this happens inside one department, which is itself a separate database file or schema (§12).
+Stores filter on these fields in every query. For example, the SQLite store adds `team_id = ? AND agent_id = ? AND user_id = ?` for a `MemoryScope`, and `team_id = ? AND agent_id = ?` for a `ProfileScope`. The Postgres store does the same. All of this happens inside one department, which is itself a separate database file or schema (§13).
 
 ## 9. Authorization of memory requests
 
@@ -243,19 +245,37 @@ Metadata calls (`/v3/meta/*`) identify the caller by user key. They are checked 
    - `restricted`: team admins, or users granted by an ACL entry.
    - `task`: read-only for non-admins.
    - `team` and `agent`: fall through to role defaults.
-5. Role defaults: an admin has read, write, assign and share; a member or reviewer has read.
+5. Role defaults: an admin has read, write, assign and share; a leader or member has read.
 6. Otherwise, ACL entries that **allow** the action to the user, the role or the agent.
 
 ACL `deny` entries are stored but not consulted yet.
 
-## 12. Departments and storage
+## 12. Operational state by role
+
+Pipeline state (`/v3/pipeline/status`), generation logs (`/v3/memory-generation-log/*`) and dead letters (`/v3/pipeline/dead-letter/list`) say how distillation is doing for each scope. They name teams, agents, users and sessions, never memory content. Who sees which rows is one rule, `ScopeVisibility` (`memory-domain/src/meta/visibility.rs`):
+
+| Caller | Sees |
+| --- | --- |
+| The server API key without a user key (the operator, `memory-server` commands) | The whole department |
+| A system admin | The whole department |
+| A team **admin** or **leader** | Everything of that team: every member's L0/L1 work and the agents' L2/L3 work |
+| A team **member** | The team's shared L2/L3 work, and their own L0/L1 work |
+| Anyone | Nothing of teams they are not an active member of |
+
+- Skill-extraction dead letters name only a task, so only the whole-department view lists them.
+- Redriving dead letters spends the department's LLM budget: with a user key, only a system admin may do it.
+- The worker's last error can come from any team, so only the whole-department view gets it. `/health`, which needs no key, never shows it.
+- Seeing a row is not reading memory. Each scope row carries `can_read_memory`, the data-plane rule of §9: your own scopes and your teams' shared layers. The Panel links a row to the memory browser only when it is true. A leader sees that a member's session was distilled, but cannot open it.
+- Every row has a unique `key`, plus `team_name`, `agent_name` and `username`. A name is absent when its id no longer exists.
+
+## 13. Departments and storage
 
 - A department is created on first use. With SQLite that is a database file at `<data>/departments/<id>/memory.db`; with Postgres, a schema of its own. Files (skill resources, raw session turns) live under `<data>/departments/<id>/`.
 - Users are per department, so each new department needs its own administrator: `POST /v3/internal/meta/user/init-admin` with that department's `x-memory-department-id`.
 - One Panel deployment serves one department (`CORE_DEPARTMENT_ID`). Run a second Panel to manage another one.
 - `POST /v3/department/destroy` removes a department and everything in it. It needs the server API key.
 
-## 13. Limits and current gaps
+## 14. Limits and current gaps
 
 - **Roles are flat in the memory API**, and team admins have no Panel UI yet (see §4 and §9).
 - **The agent status is not checked** by the memory API. An agent marked inactive still accepts requests; remove members or revoke keys to cut access.

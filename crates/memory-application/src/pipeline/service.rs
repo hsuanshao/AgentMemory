@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::Layer;
+use memory_domain::meta::visibility::ScopeVisibility;
 use memory_domain::pipeline::{
     next_l2_due, persona_trigger, PersonaState, PipelineSettings, Warmup,
 };
@@ -82,6 +83,10 @@ pub struct PipelineDeps {
     pub locks: Arc<dyn KeyLock>,
 }
 
+/// Most recent states scanned when filtering status for a team view: older
+/// ones beyond this are not listed, like any beyond `limit`.
+const STATUS_SCAN_LIMIT: usize = 5_000;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PipelineStatus {
     pub worker: MetricsSnapshot,
@@ -135,8 +140,16 @@ impl PipelineService {
         &self,
         filter: &DeadLetterFilter,
         limit: usize,
+        visibility: &ScopeVisibility,
     ) -> DomainResult<Vec<DeadLetter>> {
-        self.deps.queue.dead_letters(filter, limit).await
+        if visibility.teams().is_none() {
+            return self.deps.queue.dead_letters(filter, limit).await;
+        }
+        // Filter before limiting; the stored letters are bounded already.
+        let mut letters = self.deps.queue.dead_letters(filter, usize::MAX).await?;
+        letters.retain(|l| l.job.visible_to(visibility));
+        letters.truncate(limit);
+        Ok(letters)
     }
 
     /// Queues dead letters again as first attempts; returns how many.
@@ -809,16 +822,39 @@ impl PipelineService {
             .await;
     }
 
+    /// Pipeline state of the scopes `visibility` covers, most recent first.
     pub async fn status(
         &self,
         department: &DepartmentId,
         limit: usize,
+        visibility: &ScopeVisibility,
     ) -> DomainResult<PipelineStatus> {
+        let mut worker = self.deps.metrics.snapshot();
+        let state = &self.deps.state;
+        let (sessions, profiles) = match visibility.teams() {
+            None => (
+                state.list_sessions(department, limit).await?,
+                state.list_profiles(department, limit).await?,
+            ),
+            Some(_) => {
+                // The error of the last failed job may belong to anyone.
+                worker.last_error = None;
+                let mut sessions = state.list_sessions(department, STATUS_SCAN_LIMIT).await?;
+                sessions.retain(|s| {
+                    visibility.sees(s.scope.team_id.as_str(), Some(s.scope.user_id.as_str()))
+                });
+                sessions.truncate(limit);
+                let mut profiles = state.list_profiles(department, STATUS_SCAN_LIMIT).await?;
+                profiles.retain(|p| visibility.sees(p.profile.team_id.as_str(), None));
+                profiles.truncate(limit);
+                (sessions, profiles)
+            }
+        };
         Ok(PipelineStatus {
-            worker: self.deps.metrics.snapshot(),
+            worker,
             queue: self.deps.queue.stats().await?,
-            sessions: self.deps.state.list_sessions(department, limit).await?,
-            profiles: self.deps.state.list_profiles(department, limit).await?,
+            sessions,
+            profiles,
         })
     }
 

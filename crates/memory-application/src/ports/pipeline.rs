@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use memory_domain::error::DomainResult;
 use memory_domain::memory::Layer;
+use memory_domain::meta::visibility::{ScopeVisibility, TeamView};
 use memory_domain::profile::ProfileScope;
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::{Deserialize, Serialize};
@@ -144,6 +145,20 @@ impl PipelineJob {
                 department,
                 task_id,
             } => format!("{department}/skill/{task_id}"),
+        }
+    }
+
+    /// Whether `visibility` covers this job. A skill job names only its
+    /// task, so only the department view sees it.
+    pub fn visible_to(&self, visibility: &ScopeVisibility) -> bool {
+        match self {
+            Self::L1 { scope, .. } => {
+                visibility.sees(scope.team_id.as_str(), Some(scope.user_id.as_str()))
+            }
+            Self::L2 { profile, .. } | Self::L3 { profile, .. } => {
+                visibility.sees(profile.team_id.as_str(), None)
+            }
+            Self::SkillExtract { .. } => visibility.teams().is_none(),
         }
     }
 
@@ -356,6 +371,8 @@ pub struct GenerationLogFilter {
     pub to_ms: i64,
     /// Opaque cursor: return logs started strictly before this.
     pub before: Option<(i64, String)>,
+    /// Only logs this caller may see; `None` for the whole department.
+    pub visible: Option<TeamView>,
 }
 
 #[async_trait]
@@ -384,6 +401,7 @@ pub trait GenerationLogRepository: Send + Sync {
         &self,
         department: &DepartmentId,
         from_ms: i64,
+        visible: Option<&TeamView>,
     ) -> DomainResult<Vec<GenerationCount>>;
 }
 

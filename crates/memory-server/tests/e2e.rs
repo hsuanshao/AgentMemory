@@ -73,6 +73,17 @@ impl Client {
         self.call_as(path, &self.member_key, body).await
     }
 
+    /// `body` in the bootstrap team and agent, for `user` (default: the
+    /// caller, which the server fills in).
+    fn scoped_for(&self, mut body: Value, user: Option<&str>) -> Value {
+        body["team_id"] = json!(self.team_id);
+        body["agent_id"] = json!(self.agent_id);
+        if let Some(user) = user {
+            body["user_id"] = json!(user);
+        }
+        body
+    }
+
     fn scoped(&self, mut body: Value) -> Value {
         body["team_id"] = json!(self.team_id);
         body["agent_id"] = json!(self.agent_id);
@@ -101,6 +112,10 @@ impl Client {
 
     /// Creates a user, adds it to the bootstrap team, returns (id, key).
     async fn create_member(&self, username: &str) -> (String, String) {
+        self.create_member_as(username, "member").await
+    }
+
+    async fn create_member_as(&self, username: &str, role: &str) -> (String, String) {
         let user = self
             .call_as(
                 "/v3/meta/user/create",
@@ -114,7 +129,7 @@ impl Client {
             .call_as(
                 "/v3/meta/team-member/add",
                 &self.admin_key,
-                json!({"team_id": self.team_id, "user_id": user_id}),
+                json!({"team_id": self.team_id, "user_id": user_id, "role": role}),
             )
             .await;
         assert_eq!(added["code"], 0, "{added}");
@@ -1146,18 +1161,31 @@ async fn failed_generations_are_logged_and_dead_letters_redriven() {
         "{summary}"
     );
 
-    // A kind that does not exist is refused; a matching redrive requeues it,
-    // and with the LLM still down it comes back as a dead letter.
+    // A kind that does not exist is refused; a matching redrive (a system
+    // admin's) requeues it, and with the LLM still down it comes back as a
+    // dead letter.
     let bad = client
-        .call("/v3/pipeline/dead-letter/redrive", json!({"kind": "l9"}))
+        .call_as(
+            "/v3/pipeline/dead-letter/redrive",
+            &client.admin_key,
+            json!({"kind": "l9"}),
+        )
         .await;
     assert_ne!(bad["code"], 0, "{bad}");
     let none = client
-        .call("/v3/pipeline/dead-letter/redrive", json!({"kind": "l2"}))
+        .call_as(
+            "/v3/pipeline/dead-letter/redrive",
+            &client.admin_key,
+            json!({"kind": "l2"}),
+        )
         .await;
     assert_eq!(none["data"]["requeued"], 0);
     let redriven = client
-        .call("/v3/pipeline/dead-letter/redrive", json!({"kind": "l1"}))
+        .call_as(
+            "/v3/pipeline/dead-letter/redrive",
+            &client.admin_key,
+            json!({"kind": "l1"}),
+        )
         .await;
     assert_eq!(redriven["data"]["requeued"], 1, "{redriven}");
     for _ in 0..100 {
@@ -1175,4 +1203,165 @@ async fn failed_generations_are_logged_and_dead_letters_redriven() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("the redriven job did not run again");
+}
+
+/// Operational state is filtered by role: the server API key alone sees the
+/// department, a leader the whole team, a member the team's shared work and
+/// their own; other teams stay hidden. A leader still cannot open another
+/// member's memory.
+#[tokio::test(flavor = "multi_thread")]
+async fn operational_state_is_visible_by_role() {
+    let (_data, client) = start().await;
+    let (bob_id, bob_key) = client.create_member("bob").await;
+    let (_, lead_key) = client.create_member_as("lead", "leader").await;
+    let reviewer = client
+        .call_as(
+            "/v3/meta/team-member/add",
+            &client.admin_key,
+            json!({"team_id": client.team_id, "user_id": bob_id, "role": "reviewer"}),
+        )
+        .await;
+    assert_eq!(
+        reviewer["code"], 400,
+        "the reviewer role is gone: {reviewer}"
+    );
+
+    // Another team, with its own member and agent.
+    let carol = client
+        .call_as(
+            "/v3/meta/user/create",
+            &client.admin_key,
+            json!({"username": "carol"}),
+        )
+        .await["data"]
+        .clone();
+    let other = client
+        .call_as(
+            "/v3/meta/team/create",
+            &client.admin_key,
+            json!({"name": "other", "owner_user_id": carol["user_id"]}),
+        )
+        .await["data"]
+        .clone();
+    let other_agent = client
+        .call_as(
+            "/v3/meta/agent/create",
+            &client.admin_key,
+            json!({"team_id": other["team_id"], "owner_user_id": carol["user_id"], "name": "other-agent"}),
+        )
+        .await["data"]
+        .clone();
+
+    let turn = |session: &str| {
+        json!({"session_id": session, "messages": [
+            {"role": "user", "content": "We release v2 next Monday; I always run integration tests first."},
+            {"role": "assistant", "content": "Noted."}
+        ]})
+    };
+    for (key, session) in [(&client.member_key, "s-member"), (&bob_key, "s-bob")] {
+        let added = client
+            .call_as(
+                "/v3/conversation/add",
+                key,
+                client.scoped_for(turn(session), None),
+            )
+            .await;
+        assert_eq!(added["code"], 0, "{added}");
+    }
+    let mut carol_turn = turn("s-carol");
+    carol_turn["team_id"] = other["team_id"].clone();
+    carol_turn["agent_id"] = other_agent["agent_id"].clone();
+    let added = client
+        .call_as(
+            "/v3/conversation/add",
+            carol["default_user_key"].as_str().unwrap(),
+            carol_turn,
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    client
+        .wait_for(|s| s["generation_logs"].as_u64().unwrap_or(0) >= 4)
+        .await;
+
+    let sessions = |key: &str| {
+        let key = key.to_owned();
+        let client = &client;
+        async move {
+            let status = client.call_as("/v3/pipeline/status", &key, json!({})).await;
+            assert_eq!(status["code"], 0, "{status}");
+            let mut rows: Vec<Value> = status["data"]["scopes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| !r["session_id"].is_null())
+                .cloned()
+                .collect();
+            rows.sort_by_key(|r| r["session_id"].as_str().unwrap().to_owned());
+            rows
+        }
+    };
+    let ids = |rows: &[Value]| -> Vec<String> {
+        rows.iter()
+            .map(|r| r["session_id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    assert_eq!(ids(&sessions("").await), ["s-bob", "s-carol", "s-member"]);
+    let led = sessions(&lead_key).await;
+    assert_eq!(ids(&led), ["s-bob", "s-member"]);
+    assert_eq!(led[0]["username"], "bob");
+    assert!(led[0]["agent_name"].is_string());
+    assert_eq!(led[0]["can_read_memory"], false);
+    let keys: std::collections::HashSet<_> = led.iter().map(|r| r["key"].clone()).collect();
+    assert_eq!(keys.len(), led.len(), "row keys are unique");
+    let own = sessions(&bob_key).await;
+    assert_eq!(ids(&own), ["s-bob"]);
+    assert_eq!(own[0]["can_read_memory"], true);
+
+    // Generation logs follow the same rule.
+    let l1_users = |key: &str| {
+        let key = key.to_owned();
+        let client = &client;
+        async move {
+            let logs = client
+                .call_as(
+                    "/v3/memory-generation-log/list",
+                    &key,
+                    json!({"layer": "l1", "limit": 100}),
+                )
+                .await;
+            let mut users: Vec<String> = logs["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|l| l["user_id"].as_str().unwrap().to_owned())
+                .collect();
+            users.sort();
+            users.dedup();
+            users
+        }
+    };
+    assert_eq!(l1_users(&bob_key).await, std::slice::from_ref(&bob_id));
+    let mut team = vec![bob_id.clone(), client.user_id.clone()];
+    team.sort();
+    assert_eq!(l1_users(&lead_key).await, team);
+
+    // Seeing state is not reading memory.
+    let foreign = client
+        .call_as("/v3/atomic/query", &lead_key, client.scoped(json!({})))
+        .await;
+    assert_eq!(foreign["code"], 403, "{foreign}");
+
+    let redrive = client
+        .call_as("/v3/pipeline/dead-letter/redrive", &lead_key, json!({}))
+        .await;
+    assert_eq!(redrive["code"], 403, "{redrive}");
+    let redrive = client
+        .call_as(
+            "/v3/pipeline/dead-letter/redrive",
+            &client.admin_key,
+            json!({}),
+        )
+        .await;
+    assert_eq!(redrive["code"], 0, "{redrive}");
 }

@@ -10,6 +10,7 @@ mod data_access;
 mod reads;
 mod teams;
 mod users;
+mod visibility;
 
 use std::sync::{Arc, OnceLock};
 
@@ -23,6 +24,7 @@ pub use agents::*;
 pub use assets::*;
 pub use teams::*;
 pub use users::*;
+pub use visibility::DisplayNames;
 
 use crate::ports::meta::MetaStore;
 use crate::ports::system::{Clock, IdGenerator};

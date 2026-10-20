@@ -13,6 +13,7 @@ use memory_application::ports::pipeline::{
 };
 use memory_domain::error::DomainResult;
 use memory_domain::memory::Layer;
+use memory_domain::meta::visibility::TeamView;
 use memory_domain::profile::ProfileScope;
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use rusqlite::types::Value;
@@ -455,6 +456,14 @@ impl SqliteGenerationLogStore {
     }
 }
 
+fn log_visibility(view: &TeamView) -> (String, Vec<String>) {
+    crate::visibility_sql::clause(
+        "json_extract(doc, '$.team_id')",
+        "json_extract(doc, '$.user_id')",
+        view,
+    )
+}
+
 #[async_trait]
 impl GenerationLogRepository for SqliteGenerationLogStore {
     async fn append(&self, department: &DepartmentId, log: &GenerationLog) -> DomainResult<()> {
@@ -538,6 +547,10 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
                 [Value::from(*ts), Value::from(*ts), Value::from(id.clone())],
             );
         }
+        if let Some(view) = &filter.visible {
+            let (sql, params) = log_visibility(view);
+            w.raw(&sql, params.into_iter().map(Value::from));
+        }
         self.pool
             .get(department)?
             .call(move |c| {
@@ -558,15 +571,23 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
         &self,
         department: &DepartmentId,
         from_ms: i64,
+        visible: Option<&TeamView>,
     ) -> DomainResult<Vec<GenerationCount>> {
+        let mut w = Where::default();
+        w.raw("started_at_ms >= ?", [Value::from(from_ms)]);
+        if let Some(view) = visible {
+            let (sql, params) = log_visibility(view);
+            w.raw(&sql, params.into_iter().map(Value::from));
+        }
         self.pool
             .get(department)?
             .call(move |c| {
-                let mut stmt = c.prepare(
-                    "SELECT layer, status, COUNT(*) FROM generation_logs \
-                     WHERE started_at_ms >= ? GROUP BY layer, status ORDER BY layer, status",
-                )?;
-                let rows = stmt.query_map(params![from_ms], |r| {
+                let mut stmt = c.prepare(&format!(
+                    "SELECT layer, status, COUNT(*) FROM generation_logs {} \
+                     GROUP BY layer, status ORDER BY layer, status",
+                    w.sql()
+                ))?;
+                let rows = stmt.query_map(rusqlite::params_from_iter(w.params.iter()), |r| {
                     Ok((r.get::<_, String>(0)?, r.get(1)?, r.get::<_, i64>(2)?))
                 })?;
                 let mut out = Vec::new();

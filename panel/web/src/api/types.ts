@@ -59,20 +59,30 @@ export interface WorkerMetrics {
   last_error?: string | null;
 }
 
+/** One session (with its agent's L2/L3 state), or an agent without a listed session. */
 export interface ScopeState {
+  /** Unique per row. */
+  key: string;
+  /** The agent's profile: team and agent. */
   scope: string;
   team_id?: string;
   agent_id?: string;
-  user_id?: string;
-  session_id?: string;
-  conversation_count: number;
-  warmup_threshold: number;
+  user_id?: string | null;
+  session_id?: string | null;
+  /** Absent when the id no longer exists. */
+  team_name?: string | null;
+  agent_name?: string | null;
+  username?: string | null;
+  /** Whether the caller may open this scope in the memory browser. */
+  can_read_memory: boolean;
+  conversation_count?: number;
+  warmup_threshold?: number;
   l1_cursor?: string | number | null;
-  l2_pending: number;
+  l2_pending: boolean;
   last_l1_at?: string | null;
   last_l2_at?: string | null;
   last_l3_at?: string | null;
-  memories_since_persona: number;
+  memories_since_persona?: number | null;
 }
 
 export interface PipelineStatus {
@@ -317,7 +327,7 @@ export interface TeamMember {
   username?: string;
 }
 
-export type TeamRole = "admin" | "member" | "reviewer";
+export type TeamRole = "admin" | "leader" | "member";
 
 export interface UserKeyInfo {
   key_id: string;

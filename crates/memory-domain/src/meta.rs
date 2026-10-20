@@ -8,6 +8,7 @@ use crate::error::{DomainError, DomainResult};
 
 pub mod access;
 pub mod memory_access;
+pub mod visibility;
 
 macro_rules! string_enum {
     ($(#[$m:meta])* $name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
@@ -38,7 +39,13 @@ string_enum!(UserType { Normal => "normal", SystemAdmin => "system_admin" });
 string_enum!(UserStatus { Active => "active", Inactive => "inactive", Invited => "invited" });
 string_enum!(KeyStatus { Active => "active", Revoked => "revoked" });
 string_enum!(TeamStatus { Active => "active", Archived => "archived" });
-string_enum!(TeamRole { Admin => "admin", Member => "member", Reviewer => "reviewer" });
+string_enum!(
+    /// A member's role in a team. A `leader` uses memory like a member and
+    /// also sees how the team's distillation is doing (pipeline state,
+    /// generation logs, dead letters), never the members' own memory.
+    /// Managing members and agents stays with team admins.
+    TeamRole { Admin => "admin", Leader => "leader", Member => "member" }
+);
 string_enum!(MemberStatus { Active => "active", Removed => "removed" });
 string_enum!(AgentStatus { Active => "active", Inactive => "inactive" });
 string_enum!(TaskStatus { Running => "running", Completed => "completed" });

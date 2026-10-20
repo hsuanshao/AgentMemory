@@ -29,6 +29,8 @@
 | `memory-core.yaml` | `maxOpenInstances`, `maxUsersPerInstance`, `maxTeamsPerInstance` | `maxOpenDepartments`, `maxUsersPerDepartment`, `maxTeamsPerDepartment`. memory-core refuses to start with an old name |
 | API | `/v3/instance/destroy` `{instance_id}`, `/v3/meta/instance-quota/get`, `/v3/internal/meta/user/list-by-instance` | `/v3/department/destroy` `{department_id}`, `/v3/meta/department-quota/get`, `/v3/internal/meta/user/list-by-department` |
 | `memory-server` commands | `--instance` | `--department` |
+| Team roles | `admin`, `member`, `reviewer` | `admin`, `leader`, `member`. Reviewers become members; a leader sees the whole team's pipeline state, generation logs and dead letters ([COLLABORATION §12](COLLABORATION.md#12-operational-state-by-role)) |
+| Operational state with a user key | The whole department | What the user's role allows. Redriving dead letters needs a system admin |
 | Stored data | `<data>/instances`, Postgres `agent_memory.instances`, Redis `…:pipe:inst:…` | Migrated by memory-core when it starts ([what changes](ops/SCHEMA-MIGRATIONS.md#3-migrations-so-far)) |
 
 **Update the server and every client together.** A client older than 0.3.0 gets `401` with "x-memory-service-id was renamed in 0.3.0; update the client".

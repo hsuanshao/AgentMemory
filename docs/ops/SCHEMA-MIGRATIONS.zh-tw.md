@@ -49,6 +49,7 @@ flowchart LR
 | 版本 | 發行版 | 改變內容 |
 | --- | --- | --- |
 | 1 | 0.3.0 | 「instance」改名為「部門（department）」：<br/>• `<data>/instances` → `<data>/departments`<br/>• `system.db` 的欄位 `instance` → `department`，各文件裡的同名欄位也一起改<br/>• Postgres 的 `agent_memory.instances(instance_id)` → `agent_memory.departments(department_id)`<br/>• prompt 目標 `instance` → `department`<br/>• 配額 `max_*_per_instance` → `max_*_per_department`（保留維運人員設定的值）<br/>• Redis 的 `{p}:pipe:inst:*` → `{p}:pipe:department:*`，以及狀態文件、佇列中的 job 和 dead letter 裡的 `instance` 欄位 |
+| 2 | 0.3.0 | 移除 team 角色 `reviewer`：這些成員改為 `member`（SQLite 和 Postgres；Redis 沒有第 2 步） |
 
 ## 4. 新增遷移
 
