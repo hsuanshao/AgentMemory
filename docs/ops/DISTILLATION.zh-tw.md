@@ -60,7 +60,7 @@ docker compose exec memory-core memory-server dead-letters --kind l1 --json
 | 錯誤（在 `error_message` 或 dead letter 中） | 可能原因 | 處理方式 |
 | --- | --- | --- |
 | `RESOURCE_EXHAUSTED`、`quota`、`429` | LLM 帳號的額度用完了 | 等額度重置，或換一個有獨立額度的模型（第 4 節），之後再重跑 |
-| `` `agy` produced no output `` | CLI 正常結束但沒有輸出任何東西 | 通常是暫時性的，會自動重試。如果同一批一直失敗，換個模型試試 |
+| `` `agy` produced no output; stderr: … `` | CLI 正常結束但沒有輸出回應，後面附上它寫到 stderr 的內容 | 通常是暫時性的，會自動重試。如果同一批一直失敗，先看 stderr 的部分，或換個模型試試 |
 | `` `…` timed out after … `` | 回應時間超過 `llm.timeoutMs` | 調高逾時，或換一個比較快的模型 |
 | `llm_output_invalid` | 回應不是該步驟要求的 JSON | 模型不太遵守指示，換一個模型 |
 | `LLM returned 5xx` | OpenAI 相容端點出錯 | 檢查端點；短暫的中斷通常靠重試就能撐過 |

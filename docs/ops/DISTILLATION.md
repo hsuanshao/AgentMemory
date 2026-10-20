@@ -60,7 +60,7 @@ The commands call the running server's API, so they work the same on every stora
 | Error (in `error_message` or the dead letter) | Likely cause | What to do |
 | --- | --- | --- |
 | `RESOURCE_EXHAUSTED`, `quota`, `429` | The LLM account ran out of quota | Wait for the reset, or switch to a model with its own quota (section 4). Then redrive |
-| `` `agy` produced no output `` | The CLI exited cleanly but printed nothing | Usually transient and retried. If one batch keeps failing, try another model |
+| `` `agy` produced no output; stderr: … `` | The CLI exited cleanly but printed no answer; what it wrote to stderr follows | Often transient and retried. If one batch keeps failing, read the stderr part, or try another model |
 | `` `…` timed out after … `` | The answer took longer than `llm.timeoutMs` | Raise the timeout, or use a faster model |
 | `llm_output_invalid` | The answer was not the JSON the step asks for | A model that follows instructions poorly; switch models |
 | `LLM returned 5xx` | The OpenAI-compatible endpoint failed | Check the endpoint; retries usually cover short outages |

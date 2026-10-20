@@ -148,9 +148,12 @@ impl CliLlm {
         }
         let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         if text.is_empty() {
+            // A tool can exit 0 and still explain itself on stderr (a refused
+            // or throttled request); keep that, without the echoed prompt.
             return Err(unavailable(format!(
-                "`{}` produced no output",
-                self.settings.command
+                "`{}` produced no output; stderr: {}",
+                self.settings.command,
+                failure_reason(&output.stderr, b"", &prompt)
             )));
         }
         Ok(text)
@@ -331,6 +334,39 @@ mod tests {
         assert_eq!(
             failure_reason(over.as_bytes(), b"", ""),
             format!("…{exact}")
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_output_keeps_what_the_tool_said_on_stderr() {
+        let prompt = "secret conversation tok_live_ABC";
+        let quiet = cli(
+            "sh",
+            &[
+                "-c",
+                "cat >&2; echo >&2; echo request was throttled >&2; exit 0",
+            ],
+            PromptMode::Stdin,
+        )
+        .complete(&[ChatMessage::user(prompt)])
+        .await
+        .unwrap_err();
+        assert!(
+            quiet
+                .detail
+                .ends_with("produced no output; stderr: request was throttled"),
+            "{}",
+            quiet.detail
+        );
+        assert!(!quiet.detail.contains("tok_live"));
+        let silent = cli("true", &[], PromptMode::Arg)
+            .complete(&ask())
+            .await
+            .unwrap_err();
+        assert!(
+            silent.detail.ends_with("stderr: no error output"),
+            "{}",
+            silent.detail
         );
     }
 
