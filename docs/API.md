@@ -88,9 +88,19 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | GET | `/health` | `{status, version, uptime, stores{vectorStore,embeddingService,ftsAvailable,llmConfigured}, services{pipelineWorker, stateBackend}}` |
 | POST | `/v3/pipeline/status` | `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}` |
 | POST | `/v3/stats/overview` | Layer counts for the instance: `{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
+| POST | `/v3/memory-generation-log/summary` | `{hours?}` (default 24, at most 720) → `{hours, from_ms, llm: {configured, model}, items: [{layer, status, count}]}`: distillation runs per layer and status |
+| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}` (`l1`, `l2`, `l3`, `skill`; default 50, at most 500) → `{items: [{kind, job, attempt, error, dead_at_ms}]}`, newest first, this instance only |
+| POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}` (default 10, at most 1000) → `{requeued}`: queues the oldest matching dead letters again as first attempts |
 
 `WorkerMetrics`: `{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`.
 `ScopeState`: `{scope, team_id, agent_id, user_id, session_id, conversation_count, warmup_threshold, l1_cursor, l2_pending, last_l1_at, last_l2_at, last_l3_at, memories_since_persona}`.
+
+Every L1, L2 and L3 run that reaches the LLM leaves a generation log with a `status`:
+- `succeeded`: it wrote memories, scenes or the persona;
+- `empty`: the LLM answered but nothing was written;
+- `failed`: the call or its answer failed; `error_message` says why.
+
+`model` names the LLM, including the model a CLI provider selects (`cli:agy:gemini-3.8-flash-high`). A job whose every attempt fails becomes a **dead letter**, kept with its last error until it is redriven. With `coordination.backend: local`, dead letters live in memory (at most 1,000) and are lost on restart. The same views are in the Panel dashboard and in `memory-server generations` / `memory-server dead-letters` ([docs/ops/DISTILLATION.md](ops/DISTILLATION.md)).
 
 ### Recall
 
@@ -121,7 +131,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 `/v3/knowledge/{create,get,update,delete,list}`,
 `/v3/chat-memory/clear`,
 `/v3/memory-prompt/{create,get,update,delete,set,setting/list,log}`,
-`/v3/memory-generation-log/{list,get}`.
+`/v3/memory-generation-log/{list,get,summary}` (`list` takes `{layer?, status?, start_time?, end_time?, limit?, cursor?}`).
 
 ### Metadata plane (`x-memory-user-key` required)
 

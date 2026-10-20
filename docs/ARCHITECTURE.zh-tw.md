@@ -214,7 +214,7 @@ sequenceDiagram
 - **決策**放在 `memory_domain::pipeline` 和 `PipelineService`。Worker 只負責依 session/profile 串行執行 job、合併重複的 job，以及重試。
 - **游標**是儲存層配發、不會重複使用的序號（`after_seq`）。時間戳相同或倒填都不會漏掉資料。升級搬移資料時會保留游標。
 - **LLM 輸出**必須符合嚴格的 JSON（或 markdown）格式，解析時則相對寬鬆，能處理 `<think>` 區塊和 code fence。自訂的 memory prompt 會附加在保護格式的框架內。若 LLM 是 CLI，memory-core 會在 `/workspace` 執行 `claude`、`agy` 或 `codex exec`，prompt 以參數或 stdin 傳入。
-- **狀態**可以從 `POST /v3/pipeline/status`（佇列、worker 指標、各範圍的游標）和 Panel 查看。
+- **狀態**可以從 `POST /v3/pipeline/status`（佇列、worker 指標、各範圍的游標）和 Panel 查看。每一次呼叫到 LLM 的執行，都會記錄為 `succeeded`、`empty` 或 `failed`（附錯誤訊息）；每次重試都失敗的 job 會保留為 dead letter，之後可以重跑（[ops/DISTILLATION.zh-tw.md](ops/DISTILLATION.zh-tw.md)）。
 
 ## 5. 召回
 

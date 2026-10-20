@@ -7,6 +7,8 @@
 export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   // monitoring
   "pipeline/status",
+  "pipeline/dead-letter/list",
+  "pipeline/dead-letter/redrive",
   "stats/overview",
   // recall test
   "recall",
@@ -29,6 +31,7 @@ export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   // generation logs
   "memory-generation-log/list",
   "memory-generation-log/get",
+  "memory-generation-log/summary",
   // skills
   "skill/list",
   "skill/search",
@@ -66,6 +69,7 @@ export const PUBLIC_V3_PATHS: ReadonlySet<string> = new Set(["meta/auth/verify"]
  * applies its own (finer) rules on top.
  */
 export const ADMIN_ONLY_V3_PATHS: ReadonlySet<string> = new Set([
+  "pipeline/dead-letter/redrive",
   "conversation/delete",
   "atomic/update",
   "atomic/delete",

@@ -4,6 +4,7 @@ import { CodeBlock, JsonView, KeyValues } from "../../components/CodeBlock";
 import { Drawer } from "../../components/Drawer";
 import { ErrorBanner, Spinner } from "../../components/Feedback";
 import { useAsync } from "../../hooks/useAsync";
+import { statusTone } from "../../lib/distillation";
 import { formatTime } from "../../lib/format";
 
 export function LogDetail({ logId, onClose }: { logId: string | undefined; onClose: () => void }) {
@@ -19,21 +20,17 @@ export function LogDetail({ logId, onClose }: { logId: string | undefined; onClo
           <KeyValues
             entries={[
               ["layer", <Badge key="l">{d.layer}</Badge>],
-              ["status", <Badge key="s" tone={d.status === "succeeded" ? "ok" : "err"}>{d.status}</Badge>],
-              ["generation", d.generation_id],
-              ["anchor memory", d.anchor_memory_id],
+              ["status", <Badge key="s" tone={statusTone(d.status)}>{d.status}</Badge>],
               ["scope", [d.team_id, d.agent_id, d.user_id, d.session_id].map((v) => v ?? "·").join(" / ")],
               ["model", d.model],
-              ["prompt", d.prompt ? `${d.prompt.memory_prompt_id} v${d.prompt.version} (${d.prompt.source})` : undefined],
-              ["prompt mode", d.prompt_mode],
+              ["prompt", d.memory_prompt_id],
+              ["prompt sha256", d.prompt_sha256 ? <span key="h" className="mono break-all">{d.prompt_sha256}</span> : undefined],
               ["started", formatTime(d.started_at_ms)],
               ["finished", formatTime(d.finished_at_ms)],
               ["latency", d.latency_ms !== undefined ? `${d.latency_ms} ms` : undefined],
             ]}
           />
-          {(d.error_code || d.error_message) && (
-            <CodeBlock className="border-err/40 text-err">{[d.error_code, d.error_message].filter(Boolean).join(": ")}</CodeBlock>
-          )}
+          {d.error_message && <CodeBlock className="border-err/40 text-err">{d.error_message}</CodeBlock>}
           <RefList title="Inputs" refs={d.input_refs} />
           <RefList title="Outputs" refs={d.output_refs} />
           <details>

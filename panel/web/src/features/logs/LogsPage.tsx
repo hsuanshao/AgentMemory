@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type GenerationLayer, type GenerationLogItem, type GenerationLogList, type GenerationStatus } from "../../api";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -9,7 +10,8 @@ import { Field, Select } from "../../components/Field";
 import { PageHeader } from "../../components/PageHeader";
 import { useAction } from "../../hooks/useAction";
 import { useAsync } from "../../hooks/useAsync";
-import { formatNumber, formatRelative, formatTime } from "../../lib/format";
+import { statusTone } from "../../lib/distillation";
+import { formatRelative, formatTime } from "../../lib/format";
 import { LogDetail } from "./LogDetail";
 
 const PAGE = 50;
@@ -24,21 +26,41 @@ const LAYERS = [
 const STATUSES = [
   { value: "", label: "All statuses" },
   { value: "succeeded", label: "succeeded" },
+  { value: "empty", label: "empty (nothing written)" },
   { value: "failed", label: "failed" },
 ] as const;
 
 const COLUMNS: ReadonlyArray<Column<GenerationLogItem>> = [
   { key: "time", header: "Finished", render: (l) => <span className="mono whitespace-nowrap" title={formatRelative(l.finished_at_ms)}>{formatTime(l.finished_at_ms)}</span> },
   { key: "layer", header: "Layer", render: (l) => <Badge>{l.layer}</Badge> },
-  { key: "status", header: "Status", render: (l) => <Badge tone={l.status === "succeeded" ? "ok" : "err"}>{l.status}</Badge> },
-  { key: "anchor", header: "Anchor memory", render: (l) => <span className="mono text-muted">{l.anchor_memory_id ?? "—"}</span> },
-  { key: "id", header: "Log ID", render: (l) => <span className="mono">{l.log_id}</span> },
-  { key: "size", header: "Size", className: "text-right", render: (l) => <span className="mono text-muted">{formatNumber(l.size)}</span> },
+  { key: "status", header: "Status", render: (l) => <Badge tone={statusTone(l.status)}>{l.status}</Badge> },
+  { key: "model", header: "Model", render: (l) => <span className="mono text-muted">{l.model ?? "—"}</span> },
+  {
+    key: "latency",
+    header: "Latency",
+    className: "text-right",
+    render: (l) => <span className="mono text-muted">{l.latency_ms !== undefined ? `${(l.latency_ms / 1000).toFixed(1)} s` : "—"}</span>,
+  },
+  { key: "session", header: "Session", render: (l) => <span className="mono text-muted">{l.session_id ?? "—"}</span> },
+  {
+    key: "error",
+    header: "Error",
+    render: (l) =>
+      l.error_message ? (
+        <span className="mono block max-w-md truncate text-err" title={l.error_message}>
+          {l.error_message}
+        </span>
+      ) : null,
+  },
 ];
 
 export function LogsPage() {
   const [layer, setLayer] = useState<GenerationLayer | "">("");
-  const [status, setStatus] = useState<GenerationStatus | "">("");
+  const [params] = useSearchParams();
+  const [status, setStatus] = useState<GenerationStatus | "">(() => {
+    const s = params.get("status");
+    return s === "succeeded" || s === "empty" || s === "failed" ? s : "";
+  });
   const [selected, setSelected] = useState<string>();
   const [more, setMore] = useState<GenerationLogList>();
 
@@ -58,7 +80,7 @@ export function LogsPage() {
     <div className="space-y-4">
       <PageHeader
         title="Generation logs"
-        subtitle="L1/L2/L3 generation provenance (Core default window: last 7 days)"
+        subtitle="Every L1/L2/L3 distillation run: succeeded, empty (nothing written) or failed with its error (Core default window: last 7 days)"
         actions={
           <>
             <Field label="Layer">

@@ -207,7 +207,7 @@ sequenceDiagram
 - The **decisions** live in `memory_domain::pipeline` and `PipelineService`. The worker only serializes jobs per session/profile, coalesces duplicates and retries.
 - **Cursors** are store-assigned sequence numbers (`after_seq`), never reused. Equal or back-dated timestamps therefore can't skip rows. The upgrade keeps them when it moves data.
 - **LLM output** must follow a strict JSON (or markdown) contract and is parsed tolerantly: `<think>` blocks and code fences are accepted. Custom memory prompts are appended inside a guard that keeps the contract. With a CLI provider, memory-core runs `claude`, `agy` or `codex exec` in `/workspace` with the prompt as an argument or on stdin.
-- **Status** is visible at `POST /v3/pipeline/status` (queue, worker metrics, per-scope cursors) and in the Panel.
+- **Status** is visible at `POST /v3/pipeline/status` (queue, worker metrics, per-scope cursors) and in the Panel. Every run that reaches the LLM is logged as `succeeded`, `empty` or `failed` (with its error), and jobs that fail every retry are kept as dead letters that can be redriven ([ops/DISTILLATION.md](ops/DISTILLATION.md)).
 
 ## 5. Recall
 

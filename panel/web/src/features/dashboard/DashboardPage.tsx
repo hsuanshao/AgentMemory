@@ -3,6 +3,7 @@ import { Button } from "../../components/Button";
 import { Spinner } from "../../components/Feedback";
 import { PageHeader } from "../../components/PageHeader";
 import { formatTime } from "../../lib/format";
+import { DistillationPanel } from "./DistillationPanel";
 import { HealthPanel } from "./HealthPanel";
 import { LayerCounts } from "./LayerCounts";
 import { PipelinePanel } from "./PipelinePanel";
@@ -36,6 +37,12 @@ export function DashboardPage() {
       />
       <HealthPanel slot={data.health} />
       <LayerCounts slot={data.stats} />
+      <DistillationPanel
+        summary={data.summary}
+        failures={data.failures}
+        deadLetters={data.deadLetters}
+        onChanged={() => void data.refresh()}
+      />
       <PipelinePanel slot={data.pipeline} />
     </div>
   );

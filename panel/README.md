@@ -23,9 +23,9 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 | Page | Core calls |
 | --- | --- |
 | Login | `meta/auth/verify`: checks `data.valid`, because an invalid key still returns HTTP 200 |
-| Dashboard (auto-refresh every 5 s, can be paused) | `GET /health`, `pipeline/status`, `stats/overview` |
+| Dashboard (auto-refresh every 5 s, can be paused) | `GET /health`, `pipeline/status`, `stats/overview`<br>Distillation card: `memory-generation-log/summary`, `memory-generation-log/list` (latest failures), `pipeline/dead-letter/list`; system admins: `pipeline/dead-letter/redrive` |
 | Memory browser (team/agent/user scope) | L0 `conversation/{query,search,delete}`<br>L1 `atomic/{query,search,update,delete}`<br>L2 `scenario/{ls,read,write}`<br>L3 `core/{read,write}`<br>Recall test: `recall` |
-| Generation logs | `memory-generation-log/{list,get}` |
+| Generation logs (`#/logs?status=failed` opens filtered) | `memory-generation-log/{list,get}` |
 | Skills | `skill/{list,search,get,versions}` |
 | Metadata: Teams / Users / Assets | Everyone: `meta/team/list`, `meta/team-member/list`, `meta/agent/list`, `meta/asset/list-accessible`<br>System admins: `meta/user/{list,create,delete}`, `meta/user-key/{list,create,revoke}`, `meta/team/{create,update,delete}` (+ `list` with `all`), `meta/team-member/{add,remove}`, `meta/agent/{create,update,delete}` |
 

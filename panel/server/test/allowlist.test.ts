@@ -6,6 +6,8 @@ describe("resolveV3Path", () => {
     expect(resolveV3Path("atomic/query")).toBe("atomic/query");
     expect(resolveV3Path("meta/auth/verify")).toBe("meta/auth/verify");
     expect(resolveV3Path("memory-generation-log/list")).toBe("memory-generation-log/list");
+    expect(resolveV3Path("memory-generation-log/summary")).toBe("memory-generation-log/summary");
+    expect(resolveV3Path("pipeline/dead-letter/list")).toBe("pipeline/dead-letter/list");
   });
 
   it("normalises redundant slashes", () => {

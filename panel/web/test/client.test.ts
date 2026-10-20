@@ -56,3 +56,18 @@ describe("verifyUserKey", () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 });
+
+describe("distillation endpoints", () => {
+  it("call the allowlisted paths with their filters", async () => {
+    const { api, fetchFn } = setup(async () => json({ code: 0, message: "ok", data: { items: [], requeued: 2 } }));
+    await api.generationLog.summary(6);
+    await api.deadLetters.list({ kind: "l1", limit: 20 });
+    await api.deadLetters.redrive({ kind: "skill", limit: 10 });
+    const calls = fetchFn.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))]);
+    expect(calls).toEqual([
+      ["/api/core/memory-generation-log/summary", { hours: 6 }],
+      ["/api/core/pipeline/dead-letter/list", { kind: "l1", limit: 20 }],
+      ["/api/core/pipeline/dead-letter/redrive", { kind: "skill", limit: 10 }],
+    ]);
+  });
+});

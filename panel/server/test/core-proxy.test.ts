@@ -116,7 +116,7 @@ describe("user key guard", () => {
     const fetchFn = coreFetch(() => jsonResponse(ok({})));
     const app = buildApp(fetchFn);
     const viewer = { "x-memory-user-key": "sk-mem-viewer" };
-    for (const path of ["meta/team/create", "meta/team-member/add", "atomic/delete", "core/write"]) {
+    for (const path of ["meta/team/create", "meta/team-member/add", "atomic/delete", "core/write", "pipeline/dead-letter/redrive"]) {
       const res = await app.request(`/api/core/${path}`, post("", {}, viewer));
       expect(res.status, path).toBe(403);
       expect(await res.json()).toMatchObject({ message: "forbidden: system_admin_required" });
@@ -125,6 +125,8 @@ describe("user key guard", () => {
 
     const read = await app.request("/api/core/meta/team/list", post("", {}, viewer));
     expect(read.status).toBe(200);
+    const deadLetters = await app.request("/api/core/pipeline/dead-letter/list", post("", {}, viewer));
+    expect(deadLetters.status, "anyone may look at dead letters").toBe(200);
     const admin = await app.request("/api/core/meta/team/create", post("", { name: "t" }));
     expect(admin.status).toBe(200);
   });

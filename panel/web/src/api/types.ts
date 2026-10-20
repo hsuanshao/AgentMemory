@@ -205,15 +205,22 @@ export interface RecallResult {
 // ---------- generation logs ----------
 
 export type GenerationLayer = "l1" | "l2" | "l3";
-export type GenerationStatus = "succeeded" | "failed";
+/** `empty`: the LLM answered but nothing was written. */
+export type GenerationStatus = "succeeded" | "empty" | "failed";
 
 export interface GenerationLogItem {
   log_id: string;
   layer: GenerationLayer;
   status: GenerationStatus;
-  anchor_memory_id?: string | null;
+  team_id?: string;
+  agent_id?: string;
+  user_id?: string | null;
+  session_id?: string | null;
+  model?: string;
+  started_at_ms?: number;
   finished_at_ms: number;
-  size?: number;
+  latency_ms?: number;
+  error_message?: string | null;
 }
 
 export interface GenerationLogList {
@@ -227,21 +234,33 @@ export interface GenerationRef {
 }
 
 export interface GenerationLog extends GenerationLogItem {
-  generation_id?: string;
-  team_id?: string;
-  agent_id?: string;
-  user_id?: string;
-  session_id?: string;
-  prompt?: { memory_prompt_id: string; version: number; source: string; prompt_sha256?: string };
+  memory_prompt_id?: string;
+  prompt_sha256?: string;
   input_refs?: GenerationRef[];
   output_refs?: GenerationRef[];
-  model?: string;
-  prompt_mode?: string;
-  started_at_ms?: number;
-  latency_ms?: number;
-  error_code?: string | null;
-  error_message?: string | null;
   [extra: string]: unknown;
+}
+
+export interface GenerationSummary {
+  hours: number;
+  from_ms: number;
+  /** The LLM distillation uses, as generation logs record it. */
+  llm: { configured: boolean; model: string };
+  items: { layer: GenerationLayer; status: GenerationStatus; count: number }[];
+}
+
+// ---------- dead letters ----------
+
+export type JobKind = "l1" | "l2" | "l3" | "skill";
+
+/** A pipeline job that failed every retry. `job` is `{L1: {...}}` and so on. */
+export interface DeadLetter {
+  kind: JobKind;
+  job: Record<string, Record<string, unknown>>;
+  attempt: number;
+  error?: string | null;
+  /** 0 when written before the time was recorded. */
+  dead_at_ms: number;
 }
 
 // ---------- skills ----------

@@ -73,9 +73,19 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | GET | `/health` | `{status, version, uptime, stores{vectorStore,embeddingService,ftsAvailable,llmConfigured}, services{pipelineWorker, stateBackend}}` |
 | POST | `/v3/pipeline/status` | `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}` |
 | POST | `/v3/stats/overview` | 此 instance 各層的筆數：`{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
+| POST | `/v3/memory-generation-log/summary` | `{hours?}`（預設 24，最多 720）→ `{hours, from_ms, llm: {configured, model}, items: [{layer, status, count}]}`：各層、各狀態的蒸餾次數 |
+| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}`（`l1`、`l2`、`l3`、`skill`；預設 50，最多 500）→ `{items: [{kind, job, attempt, error, dead_at_ms}]}`，新的在前，只列此 instance |
+| POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}`（預設 10，最多 1000）→ `{requeued}`：把最舊的符合條件 dead letter 重新排回佇列，從第一次嘗試開始 |
 
 `WorkerMetrics`：`{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`。
 `ScopeState`：`{scope, team_id, agent_id, user_id, session_id, conversation_count, warmup_threshold, l1_cursor, l2_pending, last_l1_at, last_l2_at, last_l3_at, memories_since_persona}`。
+
+每一次呼叫到 LLM 的 L1、L2、L3 執行，都會留下一筆生成紀錄，帶有 `status`：
+- `succeeded`：寫出了記憶、scene 或 persona；
+- `empty`：LLM 有回應，但沒有寫出任何東西；
+- `failed`：呼叫或回應失敗，`error_message` 說明原因。
+
+`model` 是使用的 LLM，包含 CLI provider 選用的模型（例如 `cli:agy:gemini-3.8-flash-high`）。每次嘗試都失敗的 job 會成為 **dead letter**，連同最後一次的錯誤保留下來，直到被重跑為止。`coordination.backend: local` 時，dead letter 存在記憶體中（最多 1,000 筆），重新啟動後就會消失。同樣的資訊也可以在 Panel 的 dashboard，以及 `memory-server generations`、`memory-server dead-letters` 查看（[docs/ops/DISTILLATION.zh-tw.md](ops/DISTILLATION.zh-tw.md)）。
 
 ### 召回
 
@@ -106,7 +116,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 `/v3/knowledge/{create,get,update,delete,list}`、
 `/v3/chat-memory/clear`、
 `/v3/memory-prompt/{create,get,update,delete,set,setting/list,log}`、
-`/v3/memory-generation-log/{list,get}`。
+`/v3/memory-generation-log/{list,get,summary}`（`list` 接受 `{layer?, status?, start_time?, end_time?, limit?, cursor?}`）。
 
 ### Metadata 平面（需要 `x-memory-user-key`）
 

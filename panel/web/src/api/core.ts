@@ -17,6 +17,9 @@ import type {
   GenerationLog,
   GenerationLogList,
   GenerationStatus,
+  GenerationSummary,
+  DeadLetter,
+  JobKind,
   MetaList,
   Page,
   PanelConfig,
@@ -49,6 +52,13 @@ export function createCoreApi(client: PanelClient) {
     panelConfig: (opts?: CallOptions) => client.getJson<PanelConfig>("/api/config", opts),
     health: (opts?: CallOptions) => client.getJson<CoreHealth>("/api/core-health", opts),
     pipelineStatus: (opts?: CallOptions) => call<PipelineStatus>("pipeline/status", {}, opts),
+    deadLetters: {
+      list: (filter: { kind?: JobKind; limit?: number } = {}, opts?: CallOptions) =>
+        call<{ items: DeadLetter[] }>("pipeline/dead-letter/list", filter, opts),
+      /** Requeues the oldest matching dead letters; system admins only. */
+      redrive: (filter: { kind?: JobKind; limit?: number }) =>
+        call<{ requeued: number }>("pipeline/dead-letter/redrive", filter),
+    },
     statsOverview: (opts?: CallOptions) => call<StatsOverview>("stats/overview", {}, opts),
 
     verifyUserKey: (userKey: string) => call<AuthVerifyResult>("meta/auth/verify", { user_key: userKey }),
@@ -91,6 +101,8 @@ export function createCoreApi(client: PanelClient) {
       list: (filter: { layer?: GenerationLayer; status?: GenerationStatus; limit?: number; cursor?: string }) =>
         call<GenerationLogList>("memory-generation-log/list", filter),
       get: (logId: string) => call<GenerationLog>("memory-generation-log/get", { log_id: logId }),
+      summary: (hours = 24, opts?: CallOptions) =>
+        call<GenerationSummary>("memory-generation-log/summary", { hours }, opts),
     },
 
     skill: {
