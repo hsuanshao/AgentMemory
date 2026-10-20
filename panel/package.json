@@ -1,6 +1,6 @@
 {
   "name": "memory-panel",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Monitor Panel for the Rust MemoryCore: Hono BFF + React dashboard",
   "type": "module",

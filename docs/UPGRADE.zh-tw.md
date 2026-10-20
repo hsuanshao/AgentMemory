@@ -21,7 +21,7 @@
 
 ```bash
 cd /path/to/agent-memory
-git fetch --tags && git checkout v0.2.0   # 或：git pull
+git fetch --tags && git checkout v0.2.1   # 或：git pull
 docker compose up -d --build
 ```
 
@@ -53,7 +53,7 @@ docker compose up -d --build
 
   ```bash
   cd /path/to/agent-memory        # 有 .env 的目錄
-  git fetch --tags && git checkout v0.2.0  # 或：git pull
+  git fetch --tags && git checkout v0.2.1  # 或：git pull
   ```
 
 ## A. 自動升級：`upgrade.sh`

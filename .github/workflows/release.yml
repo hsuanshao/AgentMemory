@@ -67,7 +67,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p "dist/$ARCHIVE"
-          cp "target/${{ matrix.target }}/release/amem" "dist/$ARCHIVE/"
+          cp "target/${{ matrix.target }}/release/amem" LICENSE "dist/$ARCHIVE/"
           tar -C dist -czf "dist/$ARCHIVE.tar.gz" "$ARCHIVE"
       - name: Runs on this machine
         if: matrix.target != 'x86_64-apple-darwin' || runner.arch == 'X64'
