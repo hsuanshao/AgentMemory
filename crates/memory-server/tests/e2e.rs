@@ -655,6 +655,7 @@ async fn the_amem_client_redacts_queues_and_delivers() {
         content: content.into(),
         tool_name: Some("shell".into()),
         tool_call_id: Some("c1".into()),
+        timestamp: None,
     };
     let turn = vec![
         Msg {
