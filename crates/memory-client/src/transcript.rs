@@ -15,6 +15,10 @@ pub struct Msg {
     pub tool_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// When the host recorded it (RFC 3339), so memories keep the date of
+    /// the conversation rather than of the capture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
 }
 
 impl Msg {
@@ -24,6 +28,7 @@ impl Msg {
             content,
             tool_name: None,
             tool_call_id: None,
+            timestamp: None,
         }
     }
 
@@ -33,7 +38,13 @@ impl Msg {
             content,
             tool_name: name,
             tool_call_id: id,
+            timestamp: None,
         }
+    }
+
+    fn at(mut self, timestamp: Option<&str>) -> Self {
+        self.timestamp = timestamp.map(str::to_owned);
+        self
     }
 
     pub fn is_text(&self) -> bool {
@@ -112,10 +123,11 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
             continue;
         }
         let kind = str_of(&entry, "type").unwrap_or_default();
+        let at = str_of(&entry, "timestamp");
         let content = entry.get("message").and_then(|m| m.get("content"));
         match (kind, content) {
             ("user", Some(Value::String(s))) => {
-                push(&mut out, Msg::text("user", strip_reminders(s)))
+                push(&mut out, Msg::text("user", strip_reminders(s)).at(at))
             }
             ("user", Some(Value::Array(blocks))) => {
                 for b in blocks {
@@ -125,7 +137,8 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
                             Msg::text(
                                 "user",
                                 strip_reminders(str_of(b, "text").unwrap_or_default()),
-                            ),
+                            )
+                            .at(at),
                         ),
                         Some("tool_result") => push(
                             &mut out,
@@ -134,7 +147,8 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
                                 block_text(b.get("content").unwrap_or(&Value::Null)),
                                 None,
                                 str_of(b, "tool_use_id").map(str::to_owned),
-                            ),
+                            )
+                            .at(at),
                         ),
                         _ => {}
                     }
@@ -148,7 +162,8 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
                             Msg::text(
                                 "assistant",
                                 str_of(b, "text").unwrap_or_default().to_owned(),
-                            ),
+                            )
+                            .at(at),
                         ),
                         Some("tool_use") => push(
                             &mut out,
@@ -157,7 +172,8 @@ pub fn claude_code(lines: &[&str]) -> Vec<Msg> {
                                 b.get("input").map(Value::to_string).unwrap_or_default(),
                                 str_of(b, "name").map(str::to_owned),
                                 str_of(b, "id").map(str::to_owned),
-                            ),
+                            )
+                            .at(at),
                         ),
                         _ => {}
                     }
@@ -200,13 +216,14 @@ pub fn antigravity(lines: &[&str], after_step: Option<i64>) -> (Vec<Msg>, Option
         }
         last = Some(last.map_or(index, |l| l.max(index)));
         let content = str_of(&step, "content").unwrap_or_default();
+        let at = str_of(&step, "created_at");
         match (
             str_of(&step, "type").unwrap_or_default(),
             str_of(&step, "source").unwrap_or_default(),
         ) {
-            ("USER_INPUT", _) => push(&mut out, Msg::text("user", user_request(content))),
+            ("USER_INPUT", _) => push(&mut out, Msg::text("user", user_request(content)).at(at)),
             ("PLANNER_RESPONSE", _) => {
-                push(&mut out, Msg::text("assistant", content.to_owned()));
+                push(&mut out, Msg::text("assistant", content.to_owned()).at(at));
                 for (i, call) in step
                     .get("tool_calls")
                     .and_then(Value::as_array)
@@ -223,7 +240,8 @@ pub fn antigravity(lines: &[&str], after_step: Option<i64>) -> (Vec<Msg>, Option
                             call.get("args").map(Value::to_string).unwrap_or_default(),
                             str_of(call, "name").map(str::to_owned),
                             Some(id),
-                        ),
+                        )
+                        .at(at),
                     );
                 }
             }
@@ -239,7 +257,8 @@ pub fn antigravity(lines: &[&str], after_step: Option<i64>) -> (Vec<Msg>, Option
                         content.to_owned(),
                         Some(kind.to_lowercase()),
                         Some(id),
-                    ),
+                    )
+                    .at(at),
                 );
             }
             _ => {}
@@ -396,6 +415,35 @@ mod tests {
         assert_eq!(msgs[2].content, r#"{"command":"cargo build"}"#);
         assert_eq!(msgs[3].content, "ok");
         assert_eq!(msgs[3].tool_call_id.as_deref(), Some("t1"));
+    }
+
+    #[test]
+    fn messages_keep_the_time_the_host_recorded() {
+        let lines = [
+            json!({"type":"user","timestamp":"2026-10-12T05:00:00.000Z","message":{"content":"fix the build"}}).to_string(),
+            json!({"type":"assistant","timestamp":"2026-10-12T05:00:03.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}).to_string(),
+            json!({"type":"assistant","timestamp":"2026-10-12T05:00:09.000Z","message":{"content":[{"type":"text","text":"Fixed."}]}}).to_string(),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"No time."}]}}).to_string(),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let msgs = claude_code(&refs);
+        let times: Vec<_> = msgs.iter().map(|m| m.timestamp.as_deref()).collect();
+        // The two assistant texts merge and keep the first one's time.
+        assert_eq!(
+            times,
+            [
+                Some("2026-10-12T05:00:00.000Z"),
+                Some("2026-10-12T05:00:03.000Z"),
+                Some("2026-10-12T05:00:09.000Z"),
+            ]
+        );
+
+        let steps = [
+            json!({"step_index":0,"type":"USER_INPUT","created_at":"2026-10-19T11:21:57Z","content":"hi"}).to_string(),
+        ];
+        let refs: Vec<&str> = steps.iter().map(String::as_str).collect();
+        let (msgs, _) = antigravity(&refs, None);
+        assert_eq!(msgs[0].timestamp.as_deref(), Some("2026-10-19T11:21:57Z"));
     }
 
     #[test]

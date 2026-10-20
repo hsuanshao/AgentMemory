@@ -202,6 +202,7 @@ pub fn claude_code_stop() {
                 content: last.to_owned(),
                 tool_name: None,
                 tool_call_id: None,
+                timestamp: None,
             });
             tail = json!(last);
         }
