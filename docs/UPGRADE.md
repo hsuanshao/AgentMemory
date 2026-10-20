@@ -113,8 +113,8 @@ This part is for people running a server older than 0.1.1. It also applies when 
 
 The script runs the following steps. Each one is safe to repeat.
 
-1. **Backup** to `backups/<timestamp>/`. This includes `.env`, the commit you had before the checkout (`previous-commit`), and an archive of memory-core's data volume. With Postgres it also takes a `pg_dump`; with the Redis profile, an archive of Redis's data. The running images are kept as `memory-core:pre-upgrade-<timestamp>` and `memory-panel:pre-upgrade-<timestamp>`. memory-core is stopped first, so the copy is consistent.
-2. **Settings**: adds the settings that are new in this version to `.env`. Today that is `MEMORY_IMAGE_TAG=local`. Your other settings are not touched.
+1. **Backup** to `backups/<timestamp>/`. This includes `.env`, the commit you had before the checkout (`previous-commit`), and an archive of memory-core's data volume. With Postgres it also takes a `pg_dump`; for your own server it uses the `pg_dump` of that server's major version (`postgres:<major>-alpine`), since an older one refuses a newer server; with the Redis profile, an archive of Redis's data. The running images are kept as `memory-core:pre-upgrade-<timestamp>` and `memory-panel:pre-upgrade-<timestamp>`. memory-core is stopped first, so the copy is consistent.
+2. **Settings**: renames settings that changed name (0.3.0: `CORE_INSTANCE_ID` → `CORE_DEPARTMENT_ID`) and adds the ones that are new (`MEMORY_IMAGE_TAG=local`) to `.env`. Your other settings are not touched.
 3. **Rebuild and start**: runs `docker compose up -d --build` and waits for `/health`.
 4. **Move the old memories.** First it shows what it found and asks two questions:
    - *Team*: the default is `default-team`, the team the first install created.

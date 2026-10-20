@@ -113,8 +113,8 @@ docker compose up -d --build
 
 腳本會依序執行下列步驟，每一步都可以安全地重複執行。
 
-1. **備份**到 `backups/<時間>/`。內容包括 `.env`、checkout 之前的 commit（`previous-commit`），以及 memory-core 資料 volume 的壓縮檔。用 Postgres 時另外做 `pg_dump`；啟用 Redis profile 時，也會把 Redis 的資料打包。目前執行中的映像會另外標成 `memory-core:pre-upgrade-<時間>` 和 `memory-panel:pre-upgrade-<時間>`。備份前會先停止 memory-core，確保資料一致。
-2. **設定**：把這一版新增的設定補進 `.env`，目前只有 `MEMORY_IMAGE_TAG=local`。其他設定都不會改動。
+1. **備份**到 `backups/<時間>/`。內容包括 `.env`、checkout 之前的 commit（`previous-commit`），以及 memory-core 資料 volume 的壓縮檔。用 Postgres 時另外做 `pg_dump`：使用自己的伺服器時，會改用和伺服器主版本相同的 `pg_dump`（`postgres:<主版本>-alpine`），因為舊版的 `pg_dump` 不接受較新的伺服器；啟用 Redis profile 時，也會把 Redis 的資料打包。目前執行中的映像會另外標成 `memory-core:pre-upgrade-<時間>` 和 `memory-panel:pre-upgrade-<時間>`。備份前會先停止 memory-core，確保資料一致。
+2. **設定**：把 `.env` 中改過名稱的設定改成新名稱（0.3.0：`CORE_INSTANCE_ID` → `CORE_DEPARTMENT_ID`），並補上新增的設定（`MEMORY_IMAGE_TAG=local`）。其他設定都不會改動。
 3. **重建並啟動**：執行 `docker compose up -d --build`，等到 `/health` 回應正常。
 4. **搬移舊記憶**。腳本會先列出找到的資料，再問你兩件事：
    - *Team*：預設是 `default-team`，也就是第一次安裝時建立的 team。

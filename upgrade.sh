@@ -81,7 +81,10 @@ backup() {
         docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-memory}" "${POSTGRES_DB:-memory}" \
           </dev/null >"$BACKUP_DIR/postgres.sql"
       else
-        docker run --rm --network host "$PG_CHECK_IMAGE" pg_dump "$AGENT_MEMORY_POSTGRES_URL" \
+        local dump_image
+        dump_image=$(pg_dump_image) ||
+          fail "Cannot read the version of the server at AGENT_MEMORY_POSTGRES_URL. Back the database up yourself, then re-run with UPGRADE_SKIP_BACKUP=1."
+        docker run --rm --network host "$dump_image" pg_dump "$AGENT_MEMORY_POSTGRES_URL" \
           </dev/null >"$BACKUP_DIR/postgres.sql" ||
           fail "pg_dump of AGENT_MEMORY_POSTGRES_URL failed. Back the database up yourself, then re-run with UPGRADE_SKIP_BACKUP=1."
       fi
@@ -99,6 +102,17 @@ backup() {
     archive_volume redis redis-data
   fi
   umask "$old_umask"
+}
+
+# pg_dump_image — the postgres image whose pg_dump matches the server at
+# AGENT_MEMORY_POSTGRES_URL. pg_dump refuses a server newer than itself, so
+# a fixed client version breaks as soon as the server is upgraded.
+pg_dump_image() {
+  local num
+  num=$(docker run --rm --network host "$PG_CHECK_IMAGE" \
+    psql "$AGENT_MEMORY_POSTGRES_URL" -tAc 'SHOW server_version_num' </dev/null) || return 1
+  [[ $num =~ ^[0-9]+$ ]] || return 1
+  echo "postgres:$((num / 10000))-alpine"
 }
 
 # archive_volume SERVICE NAME — tar the service's /data into the backup.
