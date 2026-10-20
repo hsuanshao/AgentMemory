@@ -24,8 +24,17 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt().with_env_filter(filter).init();
     }
 
-    if std::env::args().nth(1).as_deref() == Some("migrate-storage") {
-        return memory_server::migrate_storage::run(std::env::args().skip(2)).await;
+    match std::env::args().nth(1).as_deref() {
+        Some("migrate-storage") => {
+            return memory_server::migrate_storage::run(std::env::args().skip(2)).await
+        }
+        Some("generations") => {
+            return memory_server::ops_cli::generations(std::env::args().skip(2)).await
+        }
+        Some("dead-letters") => {
+            return memory_server::ops_cli::dead_letters(std::env::args().skip(2)).await
+        }
+        _ => {}
     }
 
     let config = Config::load()?;
