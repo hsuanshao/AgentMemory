@@ -5,7 +5,7 @@ export interface PanelConfig {
   readonly coreUrl: string;
   /** Bearer token sent to Core. Never exposed to the browser. */
   readonly coreApiKey: string | undefined;
-  readonly coreInstanceId: string;
+  readonly coreDepartmentId: string;
   readonly coreTimeoutMs: number;
   /** Directory holding the built SPA; `undefined` disables static serving. */
   readonly uiDistDir: string | undefined;
@@ -19,7 +19,7 @@ const DEFAULTS = {
   port: 8125,
   host: "0.0.0.0",
   coreUrl: "http://127.0.0.1:8420",
-  coreInstanceId: "default",
+  coreDepartmentId: "default",
   coreTimeoutMs: 15_000,
 } as const;
 
@@ -33,7 +33,7 @@ export function loadConfig(env: Env = process.env): PanelConfig {
     host: nonEmpty(env.HOST) ?? DEFAULTS.host,
     coreUrl: parseUrl(env.CORE_URL ?? DEFAULTS.coreUrl),
     coreApiKey: nonEmpty(env.CORE_API_KEY),
-    coreInstanceId: nonEmpty(env.CORE_INSTANCE_ID) ?? DEFAULTS.coreInstanceId,
+    coreDepartmentId: nonEmpty(env.CORE_DEPARTMENT_ID) ?? DEFAULTS.coreDepartmentId,
     coreTimeoutMs: parsePositiveInt(env.CORE_TIMEOUT_MS, DEFAULTS.coreTimeoutMs, "CORE_TIMEOUT_MS"),
     uiDistDir: nonEmpty(env.UI_DIST_DIR),
     requireUserKey: parseBool(env.PANEL_REQUIRE_USER_KEY, true),

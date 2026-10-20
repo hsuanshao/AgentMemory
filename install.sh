@@ -298,7 +298,7 @@ COMPOSE_PROFILES=$profiles
 AGENT_MEMORY_API_KEY=$AGENT_MEMORY_API_KEY
 CORE_PORT=$CORE_PORT
 PANEL_PORT=$PANEL_PORT
-CORE_INSTANCE_ID=default
+CORE_DEPARTMENT_ID=default
 MEMORY_IMAGE_TAG=${MEMORY_IMAGE_TAG:-local}
 
 AGENT_MEMORY_STORAGE_BACKEND=$STORAGE_BACKEND
@@ -348,7 +348,7 @@ create_admin() {
   local response
   response=$(curl -sS -X POST "http://127.0.0.1:$CORE_PORT/v3/internal/meta/user/init-admin" \
     -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
-    -H "x-memory-service-id: default" -H "content-type: application/json" \
+    -H "x-memory-department-id: default" -H "content-type: application/json" \
     -d "{\"username\":\"$INSTALL_ADMIN_NAME\"}")
   if [[ $response == *'"code":0'* ]]; then
     ADMIN_KEY=$(sed -n 's/.*"user_key":"\([^"]*\)".*/\1/p' <<<"$response")

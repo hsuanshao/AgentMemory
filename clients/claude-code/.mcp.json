@@ -8,7 +8,7 @@
         "AMEM_USER_KEY": "${user_config.user_key}",
         "AMEM_TEAM_ID": "${user_config.team_id}",
         "AMEM_AGENT_ID": "${user_config.agent_id}",
-        "AMEM_SERVICE_ID": "${user_config.service_id}"
+        "AMEM_DEPARTMENT_ID": "${user_config.department_id}"
       }
     }
   }

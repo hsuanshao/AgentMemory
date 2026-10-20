@@ -10,7 +10,7 @@ server:
 
 data:
   baseDir: "~/.agent-memory"   # AGENT_MEMORY_DATA_DIR
-  maxOpenInstances: 100
+  maxOpenDepartments: 100
 
 llm:
   # "openai": any OpenAI-compatible HTTP API (needs apiKey)
@@ -68,8 +68,8 @@ skill:
   maxVersions: 100
 
 metadata:
-  maxUsersPerInstance: 500
-  maxTeamsPerInstance: 100
+  maxUsersPerDepartment: 500
+  maxTeamsPerDepartment: 100
   maxActiveKeysPerUser: 20
 
 storage:

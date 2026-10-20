@@ -32,7 +32,7 @@ export interface MetaList<T> {
 // ---------- panel / health ----------
 
 export interface PanelConfig {
-  instance_id: string;
+  department_id: string;
   core_url_display: string;
 }
 

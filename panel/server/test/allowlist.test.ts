@@ -15,10 +15,10 @@ describe("resolveV3Path", () => {
   });
 
   it.each([
-    "instance/destroy",
+    "department/destroy",
     "internal/meta/user/init-admin",
     "meta/acl/grant",
-    "atomic/../instance/destroy",
+    "atomic/../department/destroy",
     "atomic/query%2f..",
     "ATOMIC/QUERY",
     "",
@@ -34,7 +34,7 @@ describe("resolveV3Path", () => {
   it("never allowlists destructive admin routes", () => {
     for (const path of CORE_V3_ALLOWLIST) {
       expect(path.startsWith("internal/")).toBe(false);
-      expect(path.startsWith("instance/")).toBe(false);
+      expect(path.startsWith("department/")).toBe(false);
     }
   });
 });

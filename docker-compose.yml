@@ -70,7 +70,7 @@ services:
     environment:
       CORE_URL: http://memory-core:8420
       CORE_API_KEY: ${AGENT_MEMORY_API_KEY}
-      CORE_INSTANCE_ID: ${CORE_INSTANCE_ID:-default}
+      CORE_DEPARTMENT_ID: ${CORE_DEPARTMENT_ID:-default}
     ports:
       - "${PANEL_PORT:-8125}:8125"
     depends_on:

@@ -4,7 +4,7 @@ import { CoreTimeoutError, CoreUnavailableError } from "./errors.js";
 export interface FetchCoreClientOptions {
   readonly baseUrl: string;
   readonly apiKey: string | undefined;
-  readonly instanceId: string;
+  readonly departmentId: string;
   readonly timeoutMs: number;
   /** Injected for tests; defaults to the global `fetch`. */
   readonly fetchFn?: typeof fetch;
@@ -21,7 +21,7 @@ export class FetchCoreClient implements CoreClient {
   callV3(path: string, body: unknown, ctx: CoreCallContext): Promise<CoreResponse> {
     const headers = this.baseHeaders(ctx);
     headers.set("content-type", "application/json");
-    headers.set("x-memory-service-id", this.options.instanceId);
+    headers.set("x-memory-department-id", this.options.departmentId);
     if (ctx.userKey) headers.set("x-memory-user-key", ctx.userKey);
     return this.send(`/v3/${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}) });
   }

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────
-# Agent Memory upgrade to 0.1.1: run it from the updated checkout of an
-# existing install (the directory holding its .env). It backs up the data,
-# adds new settings to .env, rebuilds and restarts the services, moves the
-# memories written before 0.1.1 (the "default" bucket) to a real team and
-# agent, and prints the user key and `amem login` line for the clients.
+# Agent Memory upgrade: run it from the updated checkout of an existing
+# install (the directory holding its .env). It backs up the data, renames
+# and adds settings in .env, rebuilds and restarts the services (memory-core
+# migrates the stored data as it starts) and, on an install older than
+# 0.1.1, moves the memories in the "default" bucket to a real team and
+# agent and prints the user key and `amem login` line for the clients.
 # Every step is safe to repeat. Manual equivalent: docs/UPGRADE.md.
 #
 #   ./upgrade.sh                     interactive
@@ -27,6 +28,8 @@ BACKUP_ROOT="backups"
 # Settings added since the first release, with the value an old install
 # implicitly used (an exported value wins). Missing ones are appended to .env.
 NEW_SETTINGS=("MEMORY_IMAGE_TAG=${MEMORY_IMAGE_TAG:-local}")
+# Settings renamed since, OLD=NEW.
+RENAMED_SETTINGS=("CORE_INSTANCE_ID=CORE_DEPARTMENT_ID")
 
 usage() {
   sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'
@@ -39,7 +42,8 @@ load_env() {
   [[ -n ${AGENT_MEMORY_API_KEY:-} ]] || fail "AGENT_MEMORY_API_KEY is empty in $ENV_FILE; the upgrade needs it."
   CORE_PORT=${CORE_PORT:-8420}
   PANEL_PORT=${PANEL_PORT:-8125}
-  INSTANCE=${CORE_INSTANCE_ID:-default}
+  # Read before rename_settings runs, so the old name still counts.
+  DEPARTMENT=${CORE_DEPARTMENT_ID:-${CORE_INSTANCE_ID:-default}}
 }
 
 # ── 1. backup ────────────────────────────────────────────────────────
@@ -106,6 +110,22 @@ archive_volume() {
 
 # ── 2. settings ──────────────────────────────────────────────────────
 
+rename_settings() {
+  local pair old new
+  for pair in "${RENAMED_SETTINGS[@]}"; do
+    old=${pair%%=*} new=${pair#*=}
+    if grep -q "^$old=" "$ENV_FILE"; then
+      if grep -q "^$new=" "$ENV_FILE"; then
+        sed -i.bak "/^$old=/d" "$ENV_FILE"
+      else
+        sed -i.bak "s/^$old=/$new=/" "$ENV_FILE"
+      fi
+      rm -f "$ENV_FILE.bak"
+      ok "Renamed $old to $new in $ENV_FILE"
+    fi
+  done
+}
+
 add_new_settings() {
   local setting added=()
   for setting in "${NEW_SETTINGS[@]}"; do
@@ -132,7 +152,7 @@ json_field() {
 core_upgrade() {
   curl -sS -X POST "http://127.0.0.1:$CORE_PORT/v3/internal/upgrade" \
     -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
-    -H "x-memory-service-id: $INSTANCE" -H "content-type: application/json" \
+    -H "x-memory-department-id: $DEPARTMENT" -H "content-type: application/json" \
     -d "$1"
 }
 
@@ -150,9 +170,17 @@ describe_moved() {
     "$(json_field "$1" profile_files)" "$(json_field "$1" skill_versions)"
 }
 
+# moved_nothing JSON — whether the report found no legacy rows at all.
+moved_nothing() {
+  local field
+  for field in conversations atoms profile_files skill_versions; do
+    [[ $(json_field "$1" "$field") == 0 ]] || return 1
+  done
+}
+
 migrate_legacy() {
   echo
-  bold "Moving memories written before 0.1.1"
+  bold "Memories written before 0.1.1"
   local plan
   plan=$(core_upgrade "$(upgrade_body true false)")
   if [[ $plan == *'no active system admin'* ]]; then
@@ -161,6 +189,11 @@ migrate_legacy() {
     plan=$(core_upgrade "$(upgrade_body true false)")
   fi
   [[ $plan == *'"code":0'* ]] || fail "Upgrade check failed: $(json_field "$plan" message)"
+  if moved_nothing "$plan"; then
+    info "None found; nothing to move."
+    return
+  fi
+  LEGACY_MOVED=true
 
   local admin team agent
   admin=$(json_field "$plan" username)
@@ -202,13 +235,13 @@ write_client_settings() {
 # Written by upgrade.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ). Contains a user key: keep it private.
 # Replace 127.0.0.1 with this server's address when the client runs elsewhere.
 AMEM_SERVER_URL=http://127.0.0.1:$CORE_PORT
-AMEM_SERVICE_ID=$INSTANCE
+AMEM_DEPARTMENT_ID=$DEPARTMENT
 AMEM_TEAM_ID=$TEAM_ID
 AMEM_AGENT_ID=$AGENT_ID
 AMEM_USER_KEY=$USER_KEY
 
 # On each client machine (see docs/REMOTE-CLIENTS.md to install amem):
-#   amem login --server-url http://127.0.0.1:$CORE_PORT --service-id $INSTANCE \\
+#   amem login --server-url http://127.0.0.1:$CORE_PORT --department-id $DEPARTMENT \\
 #     --team-id $TEAM_ID --agent-id $AGENT_ID --user-key -
 # then paste the key above and press Enter.
 EOF
@@ -218,6 +251,12 @@ EOF
 print_upgrade_summary() {
   echo
   bold "Upgrade complete"
+  if [[ ${LEGACY_MOVED:-false} != true ]]; then
+    info "Monitor Panel : http://localhost:$PANEL_PORT"
+    [[ -n ${BACKUP_DIR:-} ]] && info "Backup        : $BACKUP_DIR  (restore steps: docs/UPGRADE.md)"
+    info "Update amem on every client to this version; docs/UPGRADE.md lists what else changed."
+    return
+  fi
   info "Monitor Panel : http://localhost:$PANEL_PORT  (log in with the key below)"
   info "Team / agent  : $TEAM_ID / $AGENT_ID"
   [[ -n ${BACKUP_DIR:-} ]] && info "Backup        : $BACKUP_DIR  (restore steps: docs/UPGRADE.md)"
@@ -228,7 +267,7 @@ print_upgrade_summary() {
   fi
   echo
   bold "Next: point each client at the new server"
-  info "amem login --server-url http://127.0.0.1:$CORE_PORT --service-id $INSTANCE --team-id $TEAM_ID --agent-id $AGENT_ID --user-key -"
+  info "amem login --server-url http://127.0.0.1:$CORE_PORT --department-id $DEPARTMENT --team-id $TEAM_ID --agent-id $AGENT_ID --user-key -"
   info "Old clients (Bearer key only) stop working now; docs/UPGRADE.md lists what to change for each one."
 }
 
@@ -241,14 +280,15 @@ main_upgrade() {
     esac
   done
 
-  bold "Agent Memory upgrade to 0.1.1"
+  bold "Agent Memory upgrade"
   require_docker
   load_env
   backup
+  rename_settings
   add_new_settings
   start_services
   migrate_legacy
-  write_client_settings
+  [[ ${LEGACY_MOVED:-false} == true ]] && write_client_settings
   print_upgrade_summary
 }
 

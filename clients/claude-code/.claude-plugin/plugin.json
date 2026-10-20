@@ -28,10 +28,10 @@
       "title": "Agent ID",
       "description": "agt_… of an agent in that team. Leave empty to use `amem login`."
     },
-    "service_id": {
+    "department_id": {
       "type": "string",
-      "title": "Service ID",
-      "description": "Memory instance (x-memory-service-id).",
+      "title": "Department ID",
+      "description": "Department (x-memory-department-id).",
       "default": "default"
     },
     "skip_prompt_prefixes": {

@@ -24,7 +24,7 @@ export function Layout() {
         <div className="border-b border-line px-4 py-3">
           <div className="text-sm font-semibold">Memory Panel</div>
           <div className="mono mt-0.5 truncate text-muted" title={config.data?.core_url_display}>
-            {config.data ? `instance: ${config.data.instance_id}` : "…"}
+            {config.data ? `department: ${config.data.department_id}` : "…"}
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2">

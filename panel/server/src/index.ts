@@ -9,13 +9,13 @@ function main(): void {
   const core = new FetchCoreClient({
     baseUrl: config.coreUrl,
     apiKey: config.coreApiKey,
-    instanceId: config.coreInstanceId,
+    departmentId: config.coreDepartmentId,
     timeoutMs: config.coreTimeoutMs,
   });
   const app = createApp({
     core,
     verifier: config.requireUserKey ? new UserKeyVerifier(core) : undefined,
-    publicConfig: { instance_id: config.coreInstanceId, core_url_display: displayCoreUrl(config.coreUrl) },
+    publicConfig: { department_id: config.coreDepartmentId, core_url_display: displayCoreUrl(config.coreUrl) },
     uiDistDir: config.uiDistDir,
   });
 

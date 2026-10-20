@@ -25,7 +25,7 @@ ENV NODE_ENV=production \
     PORT=8125 \
     HOST=0.0.0.0 \
     CORE_URL=http://127.0.0.1:8420 \
-    CORE_INSTANCE_ID=default \
+    CORE_DEPARTMENT_ID=default \
     UI_DIST_DIR=/app/web/dist
 WORKDIR /app
 COPY --from=deps --chown=node:node /app/node_modules ./node_modules

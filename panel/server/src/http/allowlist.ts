@@ -2,7 +2,7 @@
  * Explicit allowlist of Core `/v3/*` paths the panel UI may call through the
  * BFF. Anything else is rejected with 404 so the BFF (which holds the Core
  * API key) never becomes an open proxy for destructive operations such as
- * `instance/destroy` or `internal/meta/*`.
+ * `department/destroy` or `internal/meta/*`.
  */
 export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   // monitoring
@@ -64,7 +64,7 @@ export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
 export const PUBLIC_V3_PATHS: ReadonlySet<string> = new Set(["meta/auth/verify"]);
 
 /**
- * Every call that changes data or administers the instance. In the panel
+ * Every call that changes data or administers the department. In the panel
  * only system admins configure; everyone else gets a read-only view. Core
  * applies its own (finer) rules on top.
  */

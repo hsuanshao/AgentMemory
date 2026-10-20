@@ -10,7 +10,7 @@ import { useAction } from "../../hooks/useAction";
 import { useAsync } from "../../hooks/useAsync";
 import { LIST_LIMIT, mono, SecretNotice, statusBadge, time } from "./shared";
 
-/** System admins only: users of the instance and their keys. */
+/** System admins only: users of the department and their keys. */
 export function UsersPanel() {
   const users = useAsync(() => api.admin.users({ limit: LIST_LIMIT }), []);
   const [selected, setSelected] = useState<UserPublic>();

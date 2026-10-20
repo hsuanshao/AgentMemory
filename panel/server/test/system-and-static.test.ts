@@ -15,7 +15,7 @@ describe("system routes", () => {
   it("GET /api/config exposes no secrets", async () => {
     const res = await buildApp(noCore()).request("/api/config");
     const body = await res.json();
-    expect(body).toEqual({ instance_id: "inst-1", core_url_display: "http://core.test:8420" });
+    expect(body).toEqual({ department_id: "dept-1", core_url_display: "http://core.test:8420" });
     expect(JSON.stringify(body)).not.toContain("secret-core-key");
   });
 

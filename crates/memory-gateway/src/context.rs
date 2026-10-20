@@ -60,7 +60,13 @@ impl Ctx {
     /// The memory department (`x-memory-department-id`), required on `/v3/*`.
     pub fn department(&self) -> Result<DepartmentId, ApiError> {
         let raw = self.header(DEPARTMENT_ID).ok_or_else(|| {
-            ApiError::unauthorized(&self.request_id, "missing header: x-memory-department-id")
+            let message = if self.header("x-memory-service-id").is_some() {
+                // Sent by clients older than 0.3.0.
+                "missing header: x-memory-department-id (x-memory-service-id was renamed in 0.3.0; update the client)"
+            } else {
+                "missing header: x-memory-department-id"
+            };
+            ApiError::unauthorized(&self.request_id, message)
         })?;
         SegmentId::parse(DEPARTMENT_ID, &raw).map_err(|e| self.err(e))
     }

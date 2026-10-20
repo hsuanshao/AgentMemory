@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../app-env.js";
 
 export interface PublicConfig {
-  readonly instance_id: string;
+  readonly department_id: string;
   readonly core_url_display: string;
 }
 

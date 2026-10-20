@@ -16,7 +16,7 @@ describe("POST /api/core/*", () => {
     expect(String(url)).toBe(`${CORE}/v3/atomic/query`);
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer secret-core-key");
-    expect(headers.get("x-memory-service-id")).toBe("inst-1");
+    expect(headers.get("x-memory-department-id")).toBe("dept-1");
     expect(headers.get("x-memory-user-key")).toBe("sk-mem-good");
     expect(headers.get("x-request-id")).toBe("rid-1");
     expect(JSON.parse(String(init?.body))).toEqual({ limit: 5 });
@@ -34,7 +34,7 @@ describe("POST /api/core/*", () => {
   it("returns a 404 envelope for non-allowlisted paths without calling Core", async () => {
     const fetchFn = coreFetch(() => jsonResponse(ok({})));
     const app = buildApp(fetchFn);
-    const res = await app.request("/api/core/instance/destroy", post("", { instance_id: "x" }));
+    const res = await app.request("/api/core/department/destroy", post("", { department_id: "x" }));
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ code: 404, message: "NOT_FOUND" });
     expect(fetchFn).not.toHaveBeenCalled();

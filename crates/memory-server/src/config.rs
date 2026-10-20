@@ -463,14 +463,53 @@ pub fn expand_home(path: &str) -> PathBuf {
     }
 }
 
+/// Settings renamed in 0.3.0. Unknown keys are otherwise ignored, so an old
+/// file would silently fall back to the defaults.
+const RENAMED_KEYS: [(&str, &str); 3] = [
+    ("maxOpenInstances", "maxOpenDepartments"),
+    ("maxUsersPerInstance", "maxUsersPerDepartment"),
+    ("maxTeamsPerInstance", "maxTeamsPerDepartment"),
+];
+
+fn reject_renamed_keys(raw: &str) -> Result<()> {
+    fn walk(v: &serde_yaml::Value, found: &mut Vec<String>) {
+        match v {
+            serde_yaml::Value::Mapping(map) => {
+                for (k, child) in map {
+                    if let Some((old, new)) = k
+                        .as_str()
+                        .and_then(|k| RENAMED_KEYS.iter().find(|(old, _)| *old == k))
+                    {
+                        found.push(format!("`{old}` is now `{new}`"));
+                    }
+                    walk(child, found);
+                }
+            }
+            serde_yaml::Value::Sequence(items) => items.iter().for_each(|i| walk(i, found)),
+            _ => {}
+        }
+    }
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(raw) else {
+        return Ok(()); // reported by the real parse
+    };
+    let mut found = Vec::new();
+    walk(&value, &mut found);
+    if found.is_empty() {
+        Ok(())
+    } else {
+        bail!("renamed settings: {}", found.join(", "))
+    }
+}
+
 impl Config {
     pub fn load() -> Result<Self> {
         let mut config = match find_config_file() {
             Some(path) => {
                 let raw = std::fs::read_to_string(&path)
                     .with_context(|| format!("reading {}", path.display()))?;
-                serde_yaml::from_str(&expand_vars(&raw, env))
-                    .with_context(|| format!("parsing {}", path.display()))?
+                let raw = expand_vars(&raw, env);
+                reject_renamed_keys(&raw).with_context(|| format!("parsing {}", path.display()))?;
+                serde_yaml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?
             }
             None => Config::default(),
         };
@@ -602,6 +641,15 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_renamed_in_0_3_are_rejected_by_name() {
+        let err = reject_renamed_keys("data:\n  maxOpenInstances: 10\n").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("`maxOpenInstances` is now `maxOpenDepartments`"));
+        reject_renamed_keys("data:\n  maxOpenDepartments: 10\n").unwrap();
+    }
 
     #[test]
     fn expands_variables_with_defaults() {

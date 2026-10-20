@@ -36,14 +36,14 @@ export function buildApp(fetchFn: FetchMock, opts: { requireUserKey?: boolean; u
   const core = new FetchCoreClient({
     baseUrl: CORE,
     apiKey: "secret-core-key",
-    instanceId: "inst-1",
+    departmentId: "dept-1",
     timeoutMs: opts.timeoutMs ?? 1_000,
     fetchFn,
   });
   return createApp({
     core,
     verifier: opts.requireUserKey === false ? undefined : new UserKeyVerifier(core),
-    publicConfig: { instance_id: "inst-1", core_url_display: CORE },
+    publicConfig: { department_id: "dept-1", core_url_display: CORE },
     uiDistDir: opts.uiDistDir,
   });
 }

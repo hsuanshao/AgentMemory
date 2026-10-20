@@ -397,6 +397,28 @@ async fn requests_without_bearer_token_are_rejected() {
     assert_eq!(health.status(), 200);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn clients_older_than_departments_are_told_to_update() {
+    let (_data, client) = start().await;
+    let res = client
+        .http
+        .post(format!("{}/v3/stats/overview", client.base))
+        .bearer_auth("test-key")
+        .header("x-memory-service-id", &client.department)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 401);
+    let body: Value = res.json().await.unwrap();
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("renamed in 0.3.0"),
+        "{body}"
+    );
+}
+
 impl Client {
     /// Sends the Bearer key and, unless empty, `user_key`.
     async fn call_as(&self, path: &str, user_key: &str, body: Value) -> Value {
