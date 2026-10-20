@@ -981,11 +981,11 @@ async fn named_legacy_scope_migrates_with_from_fields() {
     assert_eq!(moved["data"]["total"], 2, "{moved}");
 }
 
-/// `internal/upgrade` needs only the department key: it finds the admin,
+/// `internal/upgrade` needs only the server API key: it finds the admin,
 /// reuses or creates team and agent by name, moves the legacy data and
 /// issues a key that reaches it. Re-running it changes nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn upgrade_rehomes_legacy_data_with_the_department_key_only() {
+async fn upgrade_rehomes_legacy_data_with_the_server_key_only() {
     let (_data, client) = start().await;
     seed_legacy(&client, "legacy", "Our staging database is called KESTREL.").await;
     client

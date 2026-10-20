@@ -79,14 +79,14 @@ Install as described in the [README](../README.md#quick-start) (`./install.sh`).
 
 ## 3. Create users, teams and agents (admin)
 
-Sign in to the Memory Panel with the admin user key that `install.sh` printed. (To decide how many teams and agents you need, and what each one shares, see [MULTI-TENANCY.md](MULTI-TENANCY.md).) Then, in **Metadata**:
+Sign in to the Memory Panel with the admin user key that `install.sh` printed. (To decide how many teams and agents you need, and what each one shares, see [COLLABORATION.md](COLLABORATION.md).) Then, in **Metadata**:
 
 1. **Users → New user.** Copy the generated `sk-mem-…` key now; it is shown only once. Under the user's **Keys** you can issue more keys (one per machine is a good habit) and revoke them later.
 2. **Teams → New team.** Pick an owner (the owner becomes a team admin).
 3. Select the team → **Members → Assign user.** Add each user who should share this team's memory.
 4. Select the team → **Agents → New agent.** For example `claude-code`, `antigravity`, `hermes`.
 
-Give each user four values: **server URL**, **user key**, **team_id** (`team-…`) and **agent_id** (`agt-…`). The ids are shown in the Teams and Agents tables. If the server uses a memory instance other than `default`, include the **service id** too.
+Give each user four values: **server URL**, **user key**, **team_id** (`team-…`) and **agent_id** (`agt-…`). The ids are shown in the Teams and Agents tables. If the server uses a department other than `default`, include the **department id** too.
 
 Users who are not admins can sign in to the Panel with their own key and browse their own memory read-only.
 
@@ -135,7 +135,7 @@ amem status                 # settings (key masked) and queue size
 amem recall "release plan"  # prints what an agent would receive
 ```
 
-All hosts on this machine share these settings. You can override them per process with `AMEM_SERVER_URL`, `AMEM_USER_KEY`, `AMEM_TEAM_ID`, `AMEM_AGENT_ID` and `AMEM_SERVICE_ID`. To give each tool its own agent, use the plugin settings below or set `AMEM_AGENT_ID` in that tool's environment.
+All hosts on this machine share these settings. You can override them per process with `AMEM_SERVER_URL`, `AMEM_USER_KEY`, `AMEM_TEAM_ID`, `AMEM_AGENT_ID` and `AMEM_DEPARTMENT_ID`. To give each tool its own agent, use the plugin settings below or set `AMEM_AGENT_ID` in that tool's environment.
 
 Some prompts are not a person's turn, for example messages that an orchestrator types into the agent. Set `AMEM_SKIP_PROMPT_PREFIXES` (or `skip_prompt_prefixes` in `client.json`) to a comma-separated list of prefixes, such as `[AGEND-`. A prompt that starts with one of them, after any leading whitespace, is not used for recall, and its whole turn is not captured. Prefixes are compared at the start of the prompt only, so a person's prompt that merely contains one is still captured. The default is empty, which skips nothing.
 
@@ -150,7 +150,7 @@ claude plugin install agent-memory@agent-memory
 
 From a local checkout you can instead run `claude plugin marketplace add /path/to/AgentMemory`.
 
-When the plugin is enabled, Claude Code offers its settings: server URL, user key (stored in the system keychain), team ID, agent ID, service ID and prompt prefixes to skip. **Leave them empty to use `amem login`**, or fill them in to override it for Claude Code only. A typical use is a separate `agent_id`.
+When the plugin is enabled, Claude Code offers its settings: server URL, user key (stored in the system keychain), team ID, agent ID, department ID and prompt prefixes to skip. **Leave them empty to use `amem login`**, or fill them in to override it for Claude Code only. A typical use is a separate `agent_id`.
 
 What the plugin does:
 

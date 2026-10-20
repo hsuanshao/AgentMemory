@@ -15,14 +15,14 @@ authorization flow, pipeline) see [ARCHITECTURE.md](ARCHITECTURE.md).
 * Two trust zones:
   * **User-scoped** — the data plane (L0–L3, `recall`, `session/add`) and
     `/v3/skill/*`. Authorized by `x-memory-user-key` alone; no Bearer key is
-    needed, so remote clients never hold the instance API key.
+    needed, so remote clients never hold the server API key.
   * **Bearer-scoped** — everything else (pipeline/stats, logs, prompts,
-    knowledge, `meta/*`, `internal/*`, `instance/destroy`):
+    knowledge, `meta/*`, `internal/*`, `department/destroy`):
     `Authorization: Bearer <AGENT_MEMORY_API_KEY>` when an API key is
     configured. `/v3/meta/*` additionally needs `x-memory-user-key`
     (except `/v3/meta/auth/verify`).
-* `x-memory-service-id: <instance id>` — required on every `/v3/*` route
-  except `/v3/instance/destroy`. Installs use `default`.
+* `x-memory-department-id: <department id>` — required on every `/v3/*` route
+  except `/v3/department/destroy`. Installs use `default`.
 * Isolation: `team_id`/`agent_id`/`user_id`/`task_id`/`session_id` in the
   body, or `x-memory-team-id` / `x-memory-agent-id` / … headers. Body wins.
 * Data-plane authorization (`crates/memory-domain/src/meta/memory_access.rs`):
@@ -54,10 +54,10 @@ Skill errors use five-digit codes with the matching HTTP status, e.g. `40301` no
 
 ## Client quick start
 
-What `amem` sends, as plain HTTP. Every data-plane call carries the user key, the instance id, and the team and agent (in the body or as `x-memory-team-id` / `x-memory-agent-id` headers):
+What `amem` sends, as plain HTTP. Every data-plane call carries the user key, the department id, and the team and agent (in the body or as `x-memory-team-id` / `x-memory-agent-id` headers):
 
 ```bash
-H=(-H "x-memory-user-key: sk-mem-…" -H "x-memory-service-id: default" -H "content-type: application/json")
+H=(-H "x-memory-user-key: sk-mem-…" -H "x-memory-department-id: default" -H "content-type: application/json")
 
 # recall before a turn
 curl -sS -X POST https://memory.example.com/v3/recall "${H[@]}" \
@@ -87,9 +87,9 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | --- | --- | --- |
 | GET | `/health` | `{status, version, uptime, stores{vectorStore,embeddingService,ftsAvailable,llmConfigured}, services{pipelineWorker, stateBackend}}` |
 | POST | `/v3/pipeline/status` | `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}` |
-| POST | `/v3/stats/overview` | Layer counts for the instance: `{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
+| POST | `/v3/stats/overview` | Layer counts for the department: `{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
 | POST | `/v3/memory-generation-log/summary` | `{hours?}` (default 24, at most 720) → `{hours, from_ms, llm: {configured, model}, items: [{layer, status, count}]}`: distillation runs per layer and status |
-| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}` (`l1`, `l2`, `l3`, `skill`; default 50, at most 500) → `{items: [{kind, job, attempt, error, dead_at_ms}]}`, newest first, this instance only |
+| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}` (`l1`, `l2`, `l3`, `skill`; default 50, at most 500) → `{items: [{kind, job, attempt, error, dead_at_ms}]}`, newest first, this department only |
 | POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}` (default 10, at most 1000) → `{requeued}`: queues the oldest matching dead letters again as first attempts |
 
 `WorkerMetrics`: `{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`.
@@ -146,7 +146,7 @@ Every L1, L2 and L3 run that reaches the LLM leaves a generation log with a `sta
 `/v3/meta/asset/{create,get,update,delete,list,list-accessible,touch-usage}`,
 `/v3/meta/agent-fixed-asset/{set,list,list-with-detail,summary-by-agents}`,
 `/v3/meta/acl/{grant,revoke,list,check}`,
-`/v3/meta/auth/verify`, `/v3/meta/instance-quota/get`,
+`/v3/meta/auth/verify`, `/v3/meta/department-quota/get`,
 `/v3/meta/config/user/{get,set}`.
 
 Meta list responses: `{items, total, limit, offset}`.
@@ -156,7 +156,7 @@ Meta list responses: `{items, total, limit, offset}`.
 `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`
 — first-run bootstrap: a system admin plus `default-team` and `default-agent-<username>`
 (409 `already_initialized` once any user exists),
-`/v3/internal/meta/user/list-by-instance`,
+`/v3/internal/meta/user/list-by-department`,
 `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` →
 `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`
 — upgrade helper that moves data written to the legacy `default` buckets
@@ -177,14 +177,14 @@ finds the team (default `default-team`) and agent (default
 default-scope migration into them for that admin and, with `issue_key`,
 returns a new user key once. A dry run creates nothing (`team_id`/`agent_id`
 are `null` when they would be created). Repeatable.
-`/v3/instance/destroy` `{instance_id}`.
+`/v3/department/destroy` `{department_id}`.
 
 ## Design decisions
 
 * No vendor-specific integrations: analytics, external task sources and
   upstream model-group routes are not provided.
 * Correctness guarantees: `atomic/update` looks up by id;
-  recall and search always apply tenant isolation; `time_start`/`time_end`
+  recall and search always apply scope isolation; `time_start`/`time_end`
   are honoured by search; `scenario/ls` validates `path_prefix`; new L1
   records start at version 1.
 * L2 scene and L3 persona generation use structured JSON operations

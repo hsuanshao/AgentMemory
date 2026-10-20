@@ -4,7 +4,8 @@
 
 ## Contents
 
-- [From 0.1.1 or later](#from-011-or-later)
+- [To 0.3.0](#to-030)
+- [Within 0.1.1 – 0.2.x](#within-011--02x)
 - [From a version before 0.1.1](#from-a-version-before-011)
   - [What changes](#what-changes)
   - [Before you start](#before-you-start)
@@ -15,9 +16,55 @@
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
 
-## From 0.1.1 or later
+## To 0.3.0
 
-Releases after 0.1.1 change neither the data format nor how clients authenticate. In the install directory (the one holding `.env`):
+0.3.0 renames the **instance** to the **department**: one server holds departments, a department holds teams, and a team holds members and agents. The new name reaches the API, the settings and the stored data:
+
+| | Before 0.3.0 | 0.3.0 |
+| --- | --- | --- |
+| Request header | `x-memory-service-id` | `x-memory-department-id` |
+| `amem` | `service_id`, `AMEM_SERVICE_ID`, `--service-id` | `department_id`, `AMEM_DEPARTMENT_ID`, `--department-id`. `client.json` is rewritten on first use |
+| Claude Code plugin option | Service ID | Department ID |
+| `.env` | `CORE_INSTANCE_ID` | `CORE_DEPARTMENT_ID` |
+| `memory-core.yaml` | `maxOpenInstances`, `maxUsersPerInstance`, `maxTeamsPerInstance` | `maxOpenDepartments`, `maxUsersPerDepartment`, `maxTeamsPerDepartment`. memory-core refuses to start with an old name |
+| API | `/v3/instance/destroy` `{instance_id}`, `/v3/meta/instance-quota/get`, `/v3/internal/meta/user/list-by-instance` | `/v3/department/destroy` `{department_id}`, `/v3/meta/department-quota/get`, `/v3/internal/meta/user/list-by-department` |
+| `memory-server` commands | `--instance` | `--department` |
+| Stored data | `<data>/instances`, Postgres `agent_memory.instances`, Redis `…:pipe:inst:…` | Migrated by memory-core when it starts ([what changes](ops/SCHEMA-MIGRATIONS.md#3-migrations-so-far)) |
+
+**Update the server and every client together.** A client older than 0.3.0 gets `401` with "x-memory-service-id was renamed in 0.3.0; update the client".
+
+1. Stop the agents that write to the server. If you run several memory-core replicas, stop all of them: an older replica cannot read migrated data.
+2. Update the code and run the upgrade script from the install directory:
+
+   ```bash
+   cd /path/to/agent-memory
+   git fetch --tags && git checkout v0.3.0
+   ./upgrade.sh
+   ```
+
+   `upgrade.sh` backs up the data, renames `CORE_INSTANCE_ID` in `.env`, then rebuilds and starts the services. memory-core migrates the stored data as it starts.
+
+   To do it by hand instead:
+   1. Back up as in [B1](#b1-back-up).
+   2. Rename `CORE_INSTANCE_ID` to `CORE_DEPARTMENT_ID` in `.env`, and the three settings above if your `memory-core.yaml` sets them.
+   3. Run:
+
+      ```bash
+      docker compose build
+      docker compose run --rm -T memory-core migrate   # optional: migrate and report before starting
+      docker compose up -d
+      ```
+3. Update `amem` on every client machine ([REMOTE-CLIENTS §4](REMOTE-CLIENTS.md#4-install-amem-on-each-client-machine)). In Claude Code, if you had set **Service ID**, set **Department ID** to the same value.
+4. Check:
+   - `curl -s http://127.0.0.1:8420/health` shows the new `version`;
+   - `docker compose logs memory-core | grep -i migrat` lists the steps that ran;
+   - on a client, `amem status` shows the expected `department_id` and `amem recall test` answers without an error.
+
+The migration only goes forward. To return to 0.2.x, restore the backup as in [E](#e-roll-back).
+
+## Within 0.1.1 – 0.2.x
+
+Releases from 0.1.1 to 0.2.x change neither the data format nor how clients authenticate. In the install directory (the one holding `.env`):
 
 ```bash
 cd /path/to/agent-memory
@@ -31,13 +78,13 @@ To go back, check out the previous tag and run the same `docker compose up -d --
 
 ## From a version before 0.1.1
 
-This part is for people running a server older than 0.1.1. Every step is a command you run yourself, and you don't need an AI agent for any of it. You can let `./upgrade.sh` do the whole thing ([A](#a-automatic-upgradesh)), or run the same steps by hand ([B](#b-manual-the-same-steps-by-hand)). Either way, finish with the clients ([C](#c-update-the-clients)).
+This part is for people running a server older than 0.1.1. It also applies when going straight to 0.3.0: `upgrade.sh` does both upgrades in one run. Every step is a command you run yourself, and you don't need an AI agent for any of it. You can let `./upgrade.sh` do the whole thing ([A](#a-automatic-upgradesh)), or run the same steps by hand ([B](#b-manual-the-same-steps-by-hand)). Either way, finish with the clients ([C](#c-update-the-clients)).
 
 ## What changes
 
 | | Before 0.1.1 | 0.1.1 |
 | --- | --- | --- |
-| Client authentication | The instance key (`Authorization: Bearer …`) | A per-user key (`x-memory-user-key: sk-mem-…`). The instance key is only for operations and admin tasks |
+| Client authentication | The server API key (`Authorization: Bearer …`) | A per-user key (`x-memory-user-key: sk-mem-…`). The server API key is only for operations and admin tasks |
 | Team / agent on writes | Optional. When left out, data went to a shared `default` bucket | Required. The user must be a member of the team, and the agent must belong to it |
 | Old data | — | The `default` bucket is no longer served. Move its contents once with the upgrade |
 | Clients | Your own scripts and plugins | The `amem` client and plugins for Claude Code, Codex, Antigravity and Hermes |
@@ -96,7 +143,7 @@ All commands run in the install directory. Load the settings into your shell fir
 ```bash
 source .env   # without set -a: docker compose must keep reading .env itself
 CORE=http://127.0.0.1:${CORE_PORT:-8420}
-H=(-H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-service-id: ${CORE_INSTANCE_ID:-default}" -H "content-type: application/json")
+H=(-H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: ${CORE_DEPARTMENT_ID:-default}" -H "content-type: application/json")
 ```
 
 ### B1. Back up
@@ -188,7 +235,7 @@ Every client needs four values: the server URL, a **user key**, a **team id** an
    | Codex CLI | Install the plugin and trust its hooks with `/hooks`: [REMOTE-CLIENTS.md §7](REMOTE-CLIENTS.md#7-codex-cli) |
    | Your own scripts | Keep the Bearer key for admin calls only. On data calls (`/v3/recall`, `/v3/conversation/add`, `/v3/session/add`, …), send `x-memory-user-key: sk-mem-…` plus `team_id` and `agent_id` in the body, or the `x-memory-team-id` / `x-memory-agent-id` headers. See [API.md](API.md) |
 
-Each agent keeps its own scenes and persona; nothing is shared between agents. People who use the same agent share its scenes and persona, while their conversations and facts stay private. Give each client its own agent unless you want them to share one. See [MULTI-TENANCY.md](MULTI-TENANCY.md#2-what-is-private-and-what-is-shared).
+Each agent keeps its own scenes and persona; nothing is shared between agents. People who use the same agent share its scenes and persona, while their conversations and facts stay private. Give each client its own agent unless you want them to share one. See [COLLABORATION.md](COLLABORATION.md#2-what-is-private-and-what-is-shared).
 
 ## D. Check the result
 

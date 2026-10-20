@@ -79,14 +79,14 @@
 
 ## 3. 建立使用者、團隊與 Agent（管理者）
 
-用 `install.sh` 顯示的管理員 user key 登入 Memory Panel（要規劃需要幾個 team 和 agent、各自共用什麼，請見 [MULTI-TENANCY.zh-tw.md](MULTI-TENANCY.zh-tw.md)），在 **Metadata** 中：
+用 `install.sh` 顯示的管理員 user key 登入 Memory Panel（要規劃需要幾個 team 和 agent、各自共用什麼，請見 [COLLABORATION.zh-tw.md](COLLABORATION.zh-tw.md)），在 **Metadata** 中：
 
 1. **Users → New user**：立刻複製產生的 `sk-mem-…` key，它只會顯示一次。在該使用者的 **Keys** 可以再發新 key（建議每台機器一把），之後也能撤銷。
 2. **Teams → New team**：選擇 owner（owner 會成為 team admin）。
 3. 選取 team → **Members → Assign user**：加入要共用這個 team 記憶的使用者。
 4. 選取 team → **Agents → New agent**：例如 `claude-code`、`antigravity`、`hermes`。
 
-交給每位使用者四個值：**伺服器 URL**、**user key**、**team_id**（`team-…`）、**agent_id**（`agt-…`）。id 可以在 Teams 與 Agents 表格中看到。若伺服器使用的記憶 instance 不是 `default`，也要提供 **service id**。
+交給每位使用者四個值：**伺服器 URL**、**user key**、**team_id**（`team-…`）、**agent_id**（`agt-…`）。id 可以在 Teams 與 Agents 表格中看到。若伺服器使用的部門不是 `default`，也要提供 **department id**。
 
 非管理者也可以用自己的 key 登入 Panel，以唯讀方式瀏覽自己的記憶。
 
@@ -135,7 +135,7 @@ amem status                 # 顯示設定（key 會遮蔽）與佇列數量
 amem recall "release plan"  # 印出 agent 會收到的內容
 ```
 
-同一台機器上的所有工具共用這份設定。也可以用 `AMEM_SERVER_URL`、`AMEM_USER_KEY`、`AMEM_TEAM_ID`、`AMEM_AGENT_ID`、`AMEM_SERVICE_ID` 針對單一程序覆寫。若要讓每個工具使用不同的 agent，請使用下面各 plugin 的設定，或在該工具的環境變數中設定 `AMEM_AGENT_ID`。
+同一台機器上的所有工具共用這份設定。也可以用 `AMEM_SERVER_URL`、`AMEM_USER_KEY`、`AMEM_TEAM_ID`、`AMEM_AGENT_ID`、`AMEM_DEPARTMENT_ID` 針對單一程序覆寫。若要讓每個工具使用不同的 agent，請使用下面各 plugin 的設定，或在該工具的環境變數中設定 `AMEM_AGENT_ID`。
 
 有些 prompt 不是人打的，例如 orchestrator 輸入給 agent 的訊息。把 `AMEM_SKIP_PROMPT_PREFIXES`（或 `client.json` 的 `skip_prompt_prefixes`）設成以逗號分隔的前綴清單，例如 `[AGEND-`。去掉開頭空白後以其中一個前綴開頭的 prompt 不會拿來 recall，整輪也不會被 capture。只比對 prompt 的開頭，所以人打的 prompt 只是中間出現前綴時照常 capture。預設為空，也就是不略過任何 prompt。
 
@@ -150,7 +150,7 @@ claude plugin install agent-memory@agent-memory
 
 若有本機 checkout，也可以改用 `claude plugin marketplace add /path/to/AgentMemory`。
 
-啟用 plugin 時，Claude Code 會詢問設定：Server URL、User key（存在系統金鑰圈）、Team ID、Agent ID、Service ID、要略過的 prompt 前綴。**全部留空就會沿用 `amem login` 的設定**；填寫的話只對 Claude Code 生效，常見用法是另外指定 `agent_id`。
+啟用 plugin 時，Claude Code 會詢問設定：Server URL、User key（存在系統金鑰圈）、Team ID、Agent ID、Department ID、要略過的 prompt 前綴。**全部留空就會沿用 `amem login` 的設定**；填寫的話只對 Claude Code 生效，常見用法是另外指定 `agent_id`。
 
 Plugin 的行為：
 

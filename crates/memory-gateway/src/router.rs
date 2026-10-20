@@ -173,7 +173,7 @@ fn ops_routes() -> Router<SharedState> {
 
 /// Two trust zones. The memory data plane, skills and session turns are
 /// authorized per user (`x-memory-user-key`, see `authz`), so remote
-/// clients never hold the department API key. Everything else (ops, metadata,
+/// clients never hold the server API key. Everything else (ops, metadata,
 /// internal bootstrap) still requires the Bearer key.
 pub fn build_router(state: SharedState) -> Router {
     let user_auth = || middleware::from_fn_with_state(state.clone(), authz::require_user);

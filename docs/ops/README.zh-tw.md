@@ -10,3 +10,4 @@
 | [RELEASE.zh-tw.md](RELEASE.zh-tw.md) | 版本號與它出現在哪些檔案、發版檢查清單，CI 與自動發版 |
 | [DISTILLATION.zh-tw.md](DISTILLATION.zh-tw.md) | 監看背景蒸餾：執行狀態、Panel 卡片、`memory-server generations` 與 `dead-letters`、常見的 LLM 失敗原因、更換模型、重跑 dead letter |
 | [STORAGE-MIGRATION.zh-tw.md](STORAGE-MIGRATION.zh-tw.md) | SQLite → PostgreSQL 搬移的運作方式，以及儲存 schema 改變時要更新哪些地方 |
+| [SCHEMA-MIGRATIONS.zh-tw.md](SCHEMA-MIGRATIONS.zh-tw.md) | 版本之間儲存資料的遷移：各儲存位置的版本記在哪裡、何時執行、`memory-server migrate`，以及如何新增遷移 |

@@ -221,7 +221,7 @@ uninstall_server() {
   if [[ $DRY_RUN == true ]]; then
     info "Dry run: nothing was changed."
   elif [[ $PURGE_DATA == true ]]; then
-    ok "Server removed with its data. You can now delete this directory (it holds .env with the department API key)."
+    ok "Server removed with its data. You can now delete this directory (it holds .env with the server API key)."
   else
     ok "Server stopped and removed. Data volumes kept; './uninstall.sh server --purge-data' deletes them."
   fi

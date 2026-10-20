@@ -18,7 +18,7 @@ How `memory-server migrate-storage` works, and what to update when the storage s
 
 | Piece | Role |
 | --- | --- |
-| `crates/memory-infrastructure/src/sqlite_to_postgres.rs` | The copy: table list, per-instance transaction, verification, report |
+| `crates/memory-infrastructure/src/sqlite_to_postgres.rs` | The copy: table list, per-department transaction, verification, report |
 | `crates/memory-server/src/migrate_storage.rs` | The `migrate-storage` subcommand: loads the normal server configuration, connects with the server's embedding dimension, prints the report |
 | `migrate-to-postgres.sh` | Operator workflow around it: backup, `.env` changes, dry run, copy, switch, health check |
 | `crates/memory-infrastructure/tests/sqlite_to_postgres.rs` | End-to-end check against a live Postgres ([TESTING.md §2](TESTING.md#2-postgres-and-redis-integration-tests)) |
@@ -27,9 +27,9 @@ The subcommand goes through `Config::load()`, so it reads exactly what the serve
 
 ## 2. What a run does
 
-For each `<data>/instances/<id>/memory.db`, sorted by instance id:
+For each `<data>/departments/<id>/memory.db`, sorted by department id:
 
-1. **Count** the rows of every table in SQLite, and in the instance's Postgres schema. The target is looked up in the registry (`agent_memory.instances`) without creating it, so a dry run writes nothing.
+1. **Count** the rows of every table in SQLite, and in the department's Postgres schema. The target is looked up in the registry (`agent_memory.departments`) without creating it, so a dry run writes nothing.
 2. **Plan** (`plan()`):
    - every target table empty → copy;
    - every target table equal to the source → `already_migrated`, skip;
@@ -41,7 +41,7 @@ For each `<data>/instances/<id>/memory.db`, sorted by instance id:
 5. **Verify**: count every table again inside the transaction; any mismatch returns an error, and the transaction rolls back.
 6. **Commit.**
 
-Instances are independent: one that fails leaves earlier ones committed. A re-run skips those (step 2) and retries the rest.
+Departments are independent: one that fails leaves earlier ones committed. A re-run skips those (step 2) and retries the rest.
 
 ## 3. Copying rows
 
@@ -80,14 +80,14 @@ An embedding is copied only when the target has an `embedding` column (embedding
 ## 5. Safety properties
 
 - **No source row is written.** The SQLite databases are opened with the normal setup, which may create a missing table (`CREATE … IF NOT EXISTS`), and are otherwise only read.
-- **All or nothing per instance**, enforced by the transaction and the count check.
+- **All or nothing per department**, enforced by the transaction and the count check.
 - **Never overwrites or merges** a non-empty target (step 2).
 - **Repeatable**: a re-run finishes what is missing and skips what is done.
 - **The source must be quiet.** Pages are read in separate SQLite read transactions, so a server writing during the copy could produce an inconsistent snapshot; the count check would then usually fail. That is why the operator flow stops memory-core first. The subcommand itself cannot tell whether a server is running.
 
 ## 6. When the schema changes
 
-The SQLite and Postgres DDL mirror each other table for table (`sqlite/schema.rs`, `postgres/schema.rs`). A schema change touches the migration too:
+The SQLite and Postgres DDL mirror each other table for table (`sqlite/schema.rs`, `postgres/schema.rs`). A change to existing data also needs a versioned migration ([SCHEMA-MIGRATIONS.md](SCHEMA-MIGRATIONS.md)). A schema change touches this copy too:
 
 | Change | Also update |
 | --- | --- |
@@ -104,4 +104,4 @@ The unit test `covers_every_sqlite_table_and_column` fails when `TABLES` no long
 
 - **Pipeline state is not part of the copy.** It belongs to the coordination backend. With `local` coordination it stays in `/data/system.db`, and the cursors still match because sequence numbers are kept. Switching coordination from `local` to Redis does not carry that state over: a session that receives new turns afterwards starts from its first turn, so earlier turns may be distilled again. A future `migrate-coordination` could copy `session_states` and `profile_states` into Redis.
 - **One direction only.** There is no Postgres → SQLite copy. The way back is the untouched SQLite files plus the saved `.env`, and it loses what was written after the switch.
-- **Memory use** is bounded by one page (1,000 rows) per table, but each instance is a single transaction. A very large instance means a long transaction on the target.
+- **Memory use** is bounded by one page (1,000 rows) per table, but each department is a single transaction. A very large department means a long transaction on the target.

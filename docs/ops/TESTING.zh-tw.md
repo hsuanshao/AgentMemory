@@ -48,7 +48,7 @@ docker stop amem-pg amem-redis
 | `memory-infrastructure/tests/sqlite_to_postgres.rs` | Postgres | 透過 SQLite adapter 寫入的資料，在 `migrate` 之後透過 Postgres adapter 讀回：搜尋、向量、版本、key、序號、重跑 |
 | `memory-server/tests/e2e.rs`（`the_pipeline_runs_on_the_postgres_backend`、`legacy_default_data_migrates_on_postgres`、`redis_coordination_runs_the_pipeline`） | Postgres／Redis | 整個伺服器跑在這些後端上，包含舊版範圍的資料搬移 |
 
-每個測試都使用隨機命名的 instance，結束後會刪除，所以同一個資料庫可以重複使用。失敗的測試可能會留下它的 schema（`am_<hash>`）；把容器刪掉重來即可。
+每個測試都使用隨機命名的部門，結束後會刪除，所以同一個資料庫可以重複使用。失敗的測試可能會留下它的 schema（`am_<hash>`）；把容器刪掉重來即可。
 
 ## 3. Panel
 
@@ -106,9 +106,9 @@ INSTALL_STORAGE=sqlite INSTALL_COORDINATION=local INSTALL_LLM=openai INSTALL_ADM
 
 # 3. 透過 API 寫入資料（team、agent、幾筆對話），例如
 API=$(grep '^AGENT_MEMORY_API_KEY=' .env | cut -d= -f2)
-H=(-H "Authorization: Bearer $API" -H "x-memory-service-id: default"
+H=(-H "Authorization: Bearer $API" -H "x-memory-department-id: default"
    -H "x-memory-user-key: <管理員 key>" -H "content-type: application/json")
-curl -s -X POST localhost:28520/v3/internal/meta/user/list-by-instance "${H[@]}" -d '{}'   # 取得管理員的 user_id
+curl -s -X POST localhost:28520/v3/internal/meta/user/list-by-department "${H[@]}" -d '{}'   # 取得管理員的 user_id
 curl -s -X POST localhost:28520/v3/meta/team/create  "${H[@]}" -d '{"name":"platform","owner_user_id":"usr-…"}'
 curl -s -X POST localhost:28520/v3/meta/agent/create "${H[@]}" -d '{"team_id":"team-…","owner_user_id":"usr-…","name":"codex"}'
 curl -s -X POST localhost:28520/v3/conversation/add  "${H[@]}" \

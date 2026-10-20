@@ -1,5 +1,5 @@
 //! One-step upgrade from a pre-0.1.1 install, driven by the operator with the
-//! department API key only (no admin user key, which old installs printed once
+//! server API key only (no admin user key, which old installs printed once
 //! and may have lost): pick the system admin, make sure a team and an agent
 //! exist, move the legacy `default` buckets there and, on request, issue a
 //! fresh user key for the clients. Safe to repeat: names are looked up

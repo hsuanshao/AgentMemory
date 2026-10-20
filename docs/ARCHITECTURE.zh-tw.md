@@ -52,7 +52,7 @@ flowchart LR
 | memory-core | HTTP API、授權、記憶管線、召回 | `crates/memory-*` |
 | amem | 所有整合共用的 client 執行檔：召回、寫入、離線佇列、MCP server | `crates/memory-client` |
 | 整合 | 呼叫 `amem` 的輕量 host adapter | `clients/claude-code`、`clients/codex`、`clients/antigravity`、`clients/hermes` |
-| Monitor Panel | 管理與檢視介面。Instance key 只在 BFF；瀏覽器只持有 user key | `panel/server`、`panel/web` |
+| Monitor Panel | 管理與檢視介面。伺服器 API key 只在 BFF；瀏覽器只持有 user key | `panel/server`、`panel/web` |
 | Scripts | 給維運人員的安裝、升級、移除工具 | `install.sh`、`upgrade.sh`、`uninstall.sh` |
 
 ## 2. 程式結構（Clean Architecture）
@@ -101,8 +101,8 @@ flowchart TD
 
 ```mermaid
 erDiagram
-  INSTANCE ||--o{ USER : has
-  INSTANCE ||--o{ TEAM : has
+  DEPARTMENT ||--o{ USER : has
+  DEPARTMENT ||--o{ TEAM : has
   USER ||--o{ USER_KEY : "authenticates with"
   TEAM ||--o{ TEAM_MEMBER : has
   USER ||--o{ TEAM_MEMBER : "is"
@@ -117,9 +117,9 @@ erDiagram
   }
 ```
 
-- **Instance**（`x-memory-service-id`，預設 `default`）是硬性的租戶邊界，各自有獨立的 SQLite 檔或 Postgres schema。
+- **部門**（`x-memory-department-id`，預設 `default`）是硬性的邊界，各自有獨立的 SQLite 檔或 Postgres schema。
 - 記憶的**範圍（scope）**是 `team_id / agent_id / user_id（/ task_id）`。L0/L1 以使用者劃分；L2 場景與 L3 persona 以 team + agent 劃分。
-- **User key**（`sk-mem-…`）代表一位使用者，可以列出、撤銷，也會過期。Instance **Bearer key**（`AGENT_MEMORY_API_KEY`）代表維運人員，不代表任何使用者。
+- **User key**（`sk-mem-…`）代表一位使用者，可以列出、撤銷，也會過期。**伺服器 API key**（`AGENT_MEMORY_API_KEY`，以 Bearer 傳送）代表維運人員，不代表任何使用者。
 
 ### 兩種信任區
 
@@ -127,14 +127,14 @@ erDiagram
 flowchart LR
   R[Request /v3/...] --> Z{Route group}
   Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> U["require_user<br/>x-memory-user-key only"]
-  Z -- "ops, meta, internal,<br/>instance/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
+  Z -- "ops, meta, internal,<br/>department/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
   B -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
   U --> H[Handler]
   B --> H
   M --> H
 ```
 
-因此遠端 client 永遠不需要 instance key。User key 外洩時，影響範圍只有該使用者在其所屬 team 裡的記憶。
+因此遠端 client 永遠不需要 伺服器 API key。User key 外洩時，影響範圍只有該使用者在其所屬 team 裡的記憶。
 
 ### 資料平面授權
 
@@ -165,7 +165,7 @@ sequenceDiagram
 - **預設拒絕（fail closed）**：路徑最後一段不在已知的讀取字尾清單中，就一律當成寫入。
 - **Handler 看不到未授權的範圍**：middleware 會覆寫呼叫端送來的範圍，所以新增的 handler 不用做任何事就自動有隔離。
 
-Metadata 平面有自己更細的規則（`memory-domain/src/meta/access.rs`）：系統管理者可以管理所有東西，team admin 管理自己的 team；asset 則由可見度（`private` / `team` / `restricted` / `agent` / `task`）和 ACL 的 allow 條目決定（deny 條目會儲存但目前不會套用）。團隊、使用者與 agent 的完整說明見 [MULTI-TENANCY.zh-tw.md](MULTI-TENANCY.zh-tw.md)。Panel 在這之上再加一層較粗的規則，見 §7。
+Metadata 平面有自己更細的規則（`memory-domain/src/meta/access.rs`）：系統管理者可以管理所有東西，team admin 管理自己的 team；asset 則由可見度（`private` / `team` / `restricted` / `agent` / `task`）和 ACL 的 allow 條目決定（deny 條目會儲存但目前不會套用）。團隊、使用者與 agent 的完整說明見 [COLLABORATION.zh-tw.md](COLLABORATION.zh-tw.md)。Panel 在這之上再加一層較粗的規則，見 §7。
 
 ## 4. 記憶模型與蒸餾管線
 
@@ -296,8 +296,8 @@ sequenceDiagram
   F-->>B: envelope
 ```
 
-- **Instance key 只放在伺服器端**（`panel/server`）。瀏覽器只持有使用者自己的 key。
-- **Allowlist**（`panel/server/src/http/allowlist.ts`）讓 BFF 不會變成任意轉送的 proxy：`internal/*` 和 `instance/destroy` 永遠無法經由 Panel 呼叫。
+- **伺服器 API key 只放在伺服器端**（`panel/server`）。瀏覽器只持有使用者自己的 key。
+- **Allowlist**（`panel/server/src/http/allowlist.ts`）讓 BFF 不會變成任意轉送的 proxy：`internal/*` 和 `department/destroy` 永遠無法經由 Panel 呼叫。
 - **v1 權限模型**：只有系統管理者能建立、修改使用者、team、成員和 agent。其他人只能檢視：L0–L3 分頁仍會顯示資料，但編輯和刪除的操作會被隱藏。
 - `panel/web` 使用 React + Vite，提供健康狀態、各層筆數、管線狀態、記憶瀏覽（L0–L3）、skills，以及 metadata（使用者、team、成員、agent）。
 
@@ -305,7 +305,7 @@ sequenceDiagram
 
 | Port 類別 | `sqlite` | `postgres` |
 | --- | --- | --- |
-| L0–L3、metadata、skills、prompts、logs | 每個 instance 一個檔案；FTS5 + sqlite-vec `vec0`（不可用時改為暴力搜尋） | 每個 instance 一個 schema；tsvector + pgvector HNSW |
+| L0–L3、metadata、skills、prompts、logs | 每個部門一個檔案；FTS5 + sqlite-vec `vec0`（不可用時改為暴力搜尋） | 每個部門一個 schema；tsvector + pgvector HNSW |
 
 | Port 類別 | `local` | `redis` |
 | --- | --- | --- |
@@ -313,7 +313,7 @@ sequenceDiagram
 | Job 佇列 | 行程內 channel | ready list、delayed/processing ZSET、lease（至少送達一次） |
 | `KeyLock` | 分段的 async mutex | `SET NX PX` + 續約 |
 
-不論選哪種儲存後端，檔案（skill 資源、原始 session 回合）一律放在 `<data>/instances/<id>/`。
+不論選哪種儲存後端，檔案（skill 資源、原始 session 回合）一律放在 `<data>/departments/<id>/`。
 
 ```mermaid
 flowchart TB
@@ -370,14 +370,14 @@ flowchart LR
 ## 10. 設計細節
 
 - **儲存配置**：
-  - `<data>/system.db` 保存所有 instance 的持久化管線計時器。
-  - 使用 SQLite 時，`<data>/instances/<id>/memory.db` 保存單一 instance 的 L0–L3、metadata、skills 和 logs。
-  - `<data>/instances/<id>/{sessions,skills}/` 保存原始 session 回合和 skill 資源檔。
+  - `<data>/system.db` 保存所有部門的持久化管線計時器。
+  - 使用 SQLite 時，`<data>/departments/<id>/memory.db` 保存單一部門的 L0–L3、metadata、skills 和 logs。
+  - `<data>/departments/<id>/{sessions,skills}/` 保存原始 session 回合和 skill 資源檔。
 - **有版本的 profile**：L2 場景和 L3 persona 都是 `ProfileFile`，每次修改都能依版本復原。
 - **延遲綁定**：兩組建構循環（memory ↔ pipeline、meta ↔ chat-memory）用 `OnceLock` 註冊協作者來打破，避免相依圖變成雙向。
 - **協調用的 port**：
   - `KeyLock`（`ports/coordination.rs`）保護管線狀態的讀取、修改、寫回。
   - Worker 另外用一個獨立的 `KeyLock` 確保同一個 job 不會同時執行；共用的話，本機的分段鎖可能讓 job 等到自己。
   - `QueueBackend` 提供 pop / ack / extend / push_later / dead_letter，送達語意由後端決定。
-- **刪除 instance** 時，會依序組合各後端的清理步驟（`CompositeLifecycle`）：儲存（刪檔或刪 schema）、檔案、狀態。
+- **刪除部門**時，會依序組合各後端的清理步驟（`CompositeLifecycle`）：儲存（刪檔或刪 schema）、檔案、狀態。
 - **不做廠商整合**：刻意不提供 analytics、外部任務來源和上游模型群組路由。

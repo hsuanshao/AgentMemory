@@ -43,7 +43,7 @@ cp .env.example .env        # 至少填入 AGENT_MEMORY_API_KEY
 docker compose up -d --build
 curl -s -X POST http://localhost:8420/v3/internal/meta/user/init-admin \
   -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
-  -H "x-memory-service-id: default" -H "content-type: application/json" \
+  -H "x-memory-department-id: default" -H "content-type: application/json" \
   -d '{"username":"admin"}'
 ```
 
@@ -63,7 +63,7 @@ docker run --rm -p 8125:8125 -e CORE_URL=http://host.docker.internal:8420 \
 
 以 admin 的 user key 登入 Panel。在 **Metadata** 中，系統管理員可以建立使用者（每位都會產生一把 user key，只顯示一次）、建立團隊、把使用者指派到團隊並設定角色，以及建立 Agent。其他使用者看到的是唯讀的 Panel。
 
-Client（任何機器上的 agent）只用自己的 **user key** 驗證，不需要 `AGENT_MEMORY_API_KEY`。每次記憶呼叫都要帶上使用者所屬的 `team_id` 與 `agent_id`；成員只能讀寫自己的對話與事實；agent 的場景與 persona 則由使用它的人共用。[docs/MULTI-TENANCY.zh-tw.md](docs/MULTI-TENANCY.zh-tw.md) 從配置方式到隔離機制，完整說明團隊、使用者與 agent。完整規則見 [docs/API.zh-tw.md](docs/API.zh-tw.md)，架構說明見 [docs/ARCHITECTURE.zh-tw.md](docs/ARCHITECTURE.zh-tw.md)。
+Client（任何機器上的 agent）只用自己的 **user key** 驗證，不需要 `AGENT_MEMORY_API_KEY`。每次記憶呼叫都要帶上使用者所屬的 `team_id` 與 `agent_id`；成員只能讀寫自己的對話與事實；agent 的場景與 persona 則由使用它的人共用。[docs/COLLABORATION.zh-tw.md](docs/COLLABORATION.zh-tw.md) 從配置方式到隔離機制，完整說明部門、團隊、使用者與 agent。完整規則見 [docs/API.zh-tw.md](docs/API.zh-tw.md)，架構說明見 [docs/ARCHITECTURE.zh-tw.md](docs/ARCHITECTURE.zh-tw.md)。
 
 **伺服器與 agent 在不同機器上？** 請參考 [docs/REMOTE-CLIENTS.zh-tw.md](docs/REMOTE-CLIENTS.zh-tw.md)，內容包含 TLS、發放 key、安裝 `amem` client、Claude Code／Codex／Antigravity／Hermes 整合，以及升級時 client 端要做的事。
 
@@ -120,14 +120,14 @@ clients/                    Claude Code、Codex、Antigravity 的 plugin，以�
 panel/                      TypeScript Monitor Panel（Hono BFF + React）
 docker/core.Dockerfile      Core 映像（內建 claude 與 agy CLI）
 install.sh                  互動式安裝程式
-upgrade.sh                  將既有安裝升級到 0.1.1
+upgrade.sh                  升級既有安裝
 uninstall.sh                移除 client 或伺服器
 docs/ARCHITECTURE.zh-tw.md  架構說明（含 mermaid 架構圖）
 docs/API.zh-tw.md           API 一覽與設計取捨
 docs/REMOTE-CLIENTS.zh-tw.md  伺服器與 client 分離部署指引
 docs/UPGRADE.zh-tw.md        舊版升級指引（upgrade.sh、手動步驟、還原）
 docs/UNINSTALL.zh-tw.md      移除 client 或伺服器（uninstall.sh、手動步驟）
-docs/MULTI-TENANCY.zh-tw.md  團隊、使用者與 agent：配置方式、設定、隔離機制
+docs/COLLABORATION.zh-tw.md  部門、團隊、使用者與 agent：配置方式、設定、隔離機制
 docs/MIGRATE-TO-POSTGRES.zh-tw.md  從 SQLite 搬到 PostgreSQL（腳本、手動步驟、還原）
 docs/ops/                    給維護者：測試、發版、儲存搬移的內部設計
 ```
@@ -143,7 +143,7 @@ docs/ops/                    給維護者：測試、發版、儲存搬移的內
 | `AGENT_MEMORY_API_KEY` | 未設定 | Bearer token |
 | `AGENT_MEMORY_STORAGE_BACKEND` / `AGENT_MEMORY_POSTGRES_URL` | `sqlite` / 未設定 | 儲存後端（見「儲存與協調後端」） |
 | `AGENT_MEMORY_COORDINATION_BACKEND` / `AGENT_MEMORY_REDIS_URL` | `local` / 未設定 | 協調後端 |
-| `AGENT_MEMORY_DATA_DIR` | `~/.agent-memory` | 資料目錄（每個 instance 一個 SQLite） |
+| `AGENT_MEMORY_DATA_DIR` | `~/.agent-memory` | 資料目錄（每個部門一個 SQLite） |
 | `AGENT_MEMORY_LLM_PROVIDER` | `openai` | `openai`（HTTP API）或 `cli`（本機工具） |
 | `AGENT_MEMORY_LLM_BASE_URL` / `AGENT_MEMORY_LLM_API_KEY` / `AGENT_MEMORY_LLM_MODEL` | OpenAI | provider=openai 時使用 |
 | `AGENT_MEMORY_LLM_CLI_*` | 未設定 | provider=cli 時使用，見上節 |
@@ -154,8 +154,8 @@ docs/ops/                    給維護者：測試、發版、儲存搬移的內
 
 | 設定 | 選項 | 說明 |
 | --- | --- | --- |
-| `storage.backend`（`AGENT_MEMORY_STORAGE_BACKEND`） | `sqlite`（預設） | 每個 instance 一個 SQLite 檔；全文檢索用 FTS5，向量用 **sqlite-vec**（`vec0` KNN，隔離條件在索引內套用；擴充無法載入時退回逐筆比對） |
-| | `postgres` | 每個 instance 一個 schema（`am_<hash>`）；全文檢索用 tsvector + GIN，向量用 **pgvector HNSW**（維度 > 2000 時為精確搜尋） |
+| `storage.backend`（`AGENT_MEMORY_STORAGE_BACKEND`） | `sqlite`（預設） | 每個部門一個 SQLite 檔；全文檢索用 FTS5，向量用 **sqlite-vec**（`vec0` KNN，隔離條件在索引內套用；擴充無法載入時退回逐筆比對） |
+| | `postgres` | 每個部門一個 schema（`am_<hash>`）；全文檢索用 tsvector + GIN，向量用 **pgvector HNSW**（維度 > 2000 時為精確搜尋） |
 | `coordination.backend`（`AGENT_MEMORY_COORDINATION_BACKEND`） | `local`（預設） | 管線狀態在 `system.db`，佇列與鎖在行程內；單一節點 |
 | | `redis` | 管線狀態、工作佇列、分散式鎖都在 Redis；可同時執行多個 memory-core 副本 |
 
@@ -225,7 +225,7 @@ llm:
 詳見 [docs/API.zh-tw.md](docs/API.zh-tw.md)。重點：
 
 - L2/L3 與 Skill 抽取使用結構化 JSON 操作（而非帶工具的 agentic 迴圈），輸出契約固定、易於測試。
-- 召回與搜尋一律套用租戶隔離；管線游標使用資料庫序號，時間戳相同或補登的訊息不會被跳過。
+- 召回與搜尋一律套用範圍隔離；管線游標使用資料庫序號，時間戳相同或補登的訊息不會被跳過。
 - 未提供：分析報表、外部任務匯入、上游模型群組路由、`/v3/skill/export`。
 
 ## 授權

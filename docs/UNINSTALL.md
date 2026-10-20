@@ -79,7 +79,7 @@ If the install uses an external Postgres (`AGENT_MEMORY_POSTGRES_URL`), that dat
 
 ### Afterwards
 
-- The directory still holds `.env` with the instance key, plus `backups/` and `upgrade-client-settings.txt` if you upgraded. Delete the directory when you no longer need it.
+- The directory still holds `.env` with the server API key, plus `backups/` and `upgrade-client-settings.txt` if you upgraded. Delete the directory when you no longer need it.
 - Clients that still point at the server keep queueing captures locally. Remove them as in A.
 
 ## C. Troubleshooting

@@ -50,7 +50,7 @@ flowchart LR
 | memory-core | HTTP API, authorization, memory pipeline, recall | `crates/memory-*` |
 | amem | Client binary used by every integration: recall, capture, offline queue, MCP server | `crates/memory-client` |
 | Integrations | Thin host adapters that call `amem` | `clients/claude-code`, `clients/codex`, `clients/antigravity`, `clients/hermes` |
-| Monitor Panel | Admin and inspection UI. The BFF holds the instance key; the browser holds only a user key | `panel/server`, `panel/web` |
+| Monitor Panel | Admin and inspection UI. The BFF holds the server API key; the browser holds only a user key | `panel/server`, `panel/web` |
 | Scripts | Install, upgrade and removal for operators | `install.sh`, `upgrade.sh`, `uninstall.sh` |
 
 ## 2. Code layout (Clean Architecture)
@@ -94,8 +94,8 @@ Where to look:
 
 ```mermaid
 erDiagram
-  INSTANCE ||--o{ USER : has
-  INSTANCE ||--o{ TEAM : has
+  DEPARTMENT ||--o{ USER : has
+  DEPARTMENT ||--o{ TEAM : has
   USER ||--o{ USER_KEY : "authenticates with"
   TEAM ||--o{ TEAM_MEMBER : has
   USER ||--o{ TEAM_MEMBER : "is"
@@ -110,9 +110,9 @@ erDiagram
   }
 ```
 
-- An **instance** (`x-memory-service-id`, default `default`) is a hard tenant boundary. Each has its own SQLite file or Postgres schema.
+- A **department** (`x-memory-department-id`, default `default`) is a hard boundary. Each has its own SQLite file or Postgres schema.
 - A memory **scope** is `team_id / agent_id / user_id (/ task_id)`. L0/L1 are per user. L2 scenes and the L3 persona are per team + agent.
-- A **user key** (`sk-mem-…`) identifies one user. Keys can be listed, revoked and expire. The instance **Bearer key** (`AGENT_MEMORY_API_KEY`) identifies the operator, not a user.
+- A **user key** (`sk-mem-…`) identifies one user. Keys can be listed, revoked and expire. The **server API key** (`AGENT_MEMORY_API_KEY`, sent as Bearer) identifies the operator, not a user.
 
 ### Two trust zones
 
@@ -120,14 +120,14 @@ erDiagram
 flowchart LR
   R[Request /v3/...] --> Z{Route group}
   Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> U["require_user<br/>x-memory-user-key only"]
-  Z -- "ops, meta, internal,<br/>instance/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
+  Z -- "ops, meta, internal,<br/>department/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
   B -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
   U --> H[Handler]
   B --> H
   M --> H
 ```
 
-Remote clients therefore never need the instance key. Leaking a user key exposes only that user's memory, in the teams they belong to.
+Remote clients therefore never need the server API key. Leaking a user key exposes only that user's memory, in the teams they belong to.
 
 ### Data-plane authorization
 
@@ -158,7 +158,7 @@ Two properties matter when extending the API:
 - **Fail closed.** A route whose last path segment is not a known read suffix is treated as a write.
 - **Handlers can't see an unauthorized scope.** The middleware overwrites whatever scope the caller sent, so a new handler inherits isolation without doing anything.
 
-The metadata plane has its own, finer rules (`memory-domain/src/meta/access.rs`). System admins manage everything; team admins manage their team; visibility (`private` / `team` / `restricted` / `agent` / `task`) and ACL allow entries govern assets (deny entries are stored but not applied yet). [MULTI-TENANCY.md](MULTI-TENANCY.md) covers teams, users and agents end to end. The Panel adds a coarser rule on top, described in §7.
+The metadata plane has its own, finer rules (`memory-domain/src/meta/access.rs`). System admins manage everything; team admins manage their team; visibility (`private` / `team` / `restricted` / `agent` / `task`) and ACL allow entries govern assets (deny entries are stored but not applied yet). [COLLABORATION.md](COLLABORATION.md) covers teams, users and agents end to end. The Panel adds a coarser rule on top, described in §7.
 
 ## 4. Memory model and pipeline
 
@@ -289,8 +289,8 @@ sequenceDiagram
   F-->>B: envelope
 ```
 
-- The **instance key stays on the server** (`panel/server`). The browser only ever holds the user's key.
-- The **allowlist** (`panel/server/src/http/allowlist.ts`) keeps the BFF from becoming an open proxy: `internal/*` and `instance/destroy` are never reachable.
+- The **server API key stays on the server** (`panel/server`). The browser only ever holds the user's key.
+- The **allowlist** (`panel/server/src/http/allowlist.ts`) keeps the BFF from becoming an open proxy: `internal/*` and `department/destroy` are never reachable.
 - **v1 access model:** system admins create and edit users, teams, members and agents. Everyone else gets a read-only view: the L0–L3 tabs still show the data, but the edit and delete actions are hidden.
 - `panel/web` is React + Vite: health, layer counts, pipeline status, the memory browser (L0–L3), skills, and metadata (users, teams, members, agents).
 
@@ -298,7 +298,7 @@ sequenceDiagram
 
 | Port group | `sqlite` | `postgres` |
 | --- | --- | --- |
-| L0–L3, metadata, skills, prompts, logs | one file per instance; FTS5 + sqlite-vec `vec0` (brute-force fallback) | one schema per instance; tsvector + pgvector HNSW |
+| L0–L3, metadata, skills, prompts, logs | one file per department; FTS5 + sqlite-vec `vec0` (brute-force fallback) | one schema per department; tsvector + pgvector HNSW |
 
 | Port group | `local` | `redis` |
 | --- | --- | --- |
@@ -306,7 +306,7 @@ sequenceDiagram
 | Job queue | in-process channel | ready list, delayed/processing ZSETs, leases (at-least-once) |
 | `KeyLock` | striped async mutexes | `SET NX PX` + renewal |
 
-Files (skill resources and raw session turns) always live under `<data>/instances/<id>/`, whichever storage backend is chosen.
+Files (skill resources and raw session turns) always live under `<data>/departments/<id>/`, whichever storage backend is chosen.
 
 ```mermaid
 flowchart TB
@@ -358,9 +358,9 @@ flowchart LR
 
 ## 10. Design notes
 
-- **Storage layout.** `<data>/system.db` holds durable pipeline timers for every instance. `<data>/instances/<id>/memory.db` holds L0–L3, metadata, skills and logs of one instance on SQLite. `<data>/instances/<id>/{sessions,skills}/` holds raw session turns and skill resource files.
+- **Storage layout.** `<data>/system.db` holds durable pipeline timers for every department. `<data>/departments/<id>/memory.db` holds L0–L3, metadata, skills and logs of one department on SQLite. `<data>/departments/<id>/{sessions,skills}/` holds raw session turns and skill resource files.
 - **Versioned profiles.** L2 scenes and the L3 persona are `ProfileFile`s, so every edit can be recovered by version.
 - **Late binding.** Two construction cycles, memory ↔ pipeline and meta ↔ chat-memory, are broken with `OnceLock`-registered collaborators instead of a bidirectional dependency graph.
 - **Coordination ports.** `KeyLock` (`ports/coordination.rs`) guards pipeline-state read-modify-write. The worker uses a separate `KeyLock` for per-job exclusivity; otherwise local stripes could make a job wait on itself. `QueueBackend` gives the worker pop / ack / extend / push_later / dead_letter, so delivery semantics belong to the backend.
-- **Instance destruction** composes each backend's cleanup step (`CompositeLifecycle`): storage (drop file or schema), files, state.
+- **Department destruction** composes each backend's cleanup step (`CompositeLifecycle`): storage (drop file or schema), files, state.
 - **No vendor integrations.** Analytics, external task sources and upstream model-group routes are deliberately not provided.

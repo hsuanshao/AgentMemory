@@ -43,7 +43,7 @@ cp .env.example .env        # set at least AGENT_MEMORY_API_KEY
 docker compose up -d --build
 curl -s -X POST http://localhost:8420/v3/internal/meta/user/init-admin \
   -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
-  -H "x-memory-service-id: default" -H "content-type: application/json" \
+  -H "x-memory-department-id: default" -H "content-type: application/json" \
   -d '{"username":"admin"}'
 ```
 
@@ -63,7 +63,7 @@ docker run --rm -p 8125:8125 -e CORE_URL=http://host.docker.internal:8420 \
 
 Sign in to the Panel with the admin user key. Under **Metadata**, a system admin creates users (each gets a user key, shown once), creates teams, assigns users to teams with a role, and creates agents. Everyone else gets a read-only Panel.
 
-Clients (agents on any machine) authenticate with their **user key only**; they never need `AGENT_MEMORY_API_KEY`. Every memory call names a `team_id` and an `agent_id` the user belongs to, and members only read and write their own conversations and facts; the scenes and persona of an agent are shared by the people who use it. [docs/MULTI-TENANCY.md](docs/MULTI-TENANCY.md) explains teams, users and agents, from choosing a layout to how isolation is enforced. See [docs/API.md](docs/API.md) for the exact rules and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
+Clients (agents on any machine) authenticate with their **user key only**; they never need `AGENT_MEMORY_API_KEY`. Every memory call names a `team_id` and an `agent_id` the user belongs to, and members only read and write their own conversations and facts; the scenes and persona of an agent are shared by the people who use it. [docs/COLLABORATION.md](docs/COLLABORATION.md) explains departments, teams, users and agents, from choosing a layout to how isolation is enforced. See [docs/API.md](docs/API.md) for the exact rules and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
 **Server and agents on different machines?** Follow [docs/REMOTE-CLIENTS.md](docs/REMOTE-CLIENTS.md). It covers TLS, issuing keys, installing the `amem` client and the Claude Code, Codex, Antigravity and Hermes integrations, and the client side of an upgrade.
 
@@ -120,14 +120,14 @@ clients/                    Claude Code, Codex and Antigravity plugins, Hermes m
 panel/                      TypeScript Monitor Panel (Hono BFF + React)
 docker/core.Dockerfile      Core image (bundles the claude and agy CLIs)
 install.sh                  Interactive installer
-upgrade.sh                  Upgrade an existing install to 0.1.1
+upgrade.sh                  Upgrade an existing install
 uninstall.sh                Remove the client or the server
 docs/ARCHITECTURE.md        Architecture overview (mermaid diagrams)
 docs/API.md                 API reference and design trade-offs
 docs/REMOTE-CLIENTS.md      Server/client split deployment guide
 docs/UPGRADE.md             Upgrading an existing install (upgrade.sh, manual steps, rollback)
 docs/UNINSTALL.md           Removing the client or the server (uninstall.sh, manual steps)
-docs/MULTI-TENANCY.md       Teams, users and agents: layouts, setup, isolation internals
+docs/COLLABORATION.md       Departments, teams, users and agents: layouts, setup, isolation internals
 docs/MIGRATE-TO-POSTGRES.md Moving an install from SQLite to PostgreSQL (script, manual steps, rollback)
 docs/ops/                   For maintainers: testing, releases, storage-migration internals
 ```
@@ -143,7 +143,7 @@ Config file keys (`server`, `data`, `llm`, `memory.pipeline`, `memory.recall`, `
 | `AGENT_MEMORY_API_KEY` | Unset | Bearer token |
 | `AGENT_MEMORY_STORAGE_BACKEND` / `AGENT_MEMORY_POSTGRES_URL` | `sqlite` / unset | Storage backend (see "Storage and Coordination Backends") |
 | `AGENT_MEMORY_COORDINATION_BACKEND` / `AGENT_MEMORY_REDIS_URL` | `local` / unset | Coordination backend |
-| `AGENT_MEMORY_DATA_DIR` | `~/.agent-memory` | Data directory (one SQLite per instance) |
+| `AGENT_MEMORY_DATA_DIR` | `~/.agent-memory` | Data directory (one SQLite per department) |
 | `AGENT_MEMORY_LLM_PROVIDER` | `openai` | `openai` (HTTP API) or `cli` (local tool) |
 | `AGENT_MEMORY_LLM_BASE_URL` / `AGENT_MEMORY_LLM_API_KEY` / `AGENT_MEMORY_LLM_MODEL` | OpenAI | Used when provider=openai |
 | `AGENT_MEMORY_LLM_CLI_*` | Unset | Used when provider=cli; see "Using a Local CLI as the LLM" |
@@ -154,8 +154,8 @@ Config file keys (`server`, `data`, `llm`, `memory.pipeline`, `memory.recall`, `
 
 | Setting | Option | Description |
 | --- | --- | --- |
-| `storage.backend` (`AGENT_MEMORY_STORAGE_BACKEND`) | `sqlite` (default) | One SQLite file per instance; full-text search via FTS5, vectors via **sqlite-vec** (`vec0` KNN with isolation filters applied inside the index; falls back to brute-force comparison if the extension can't load) |
-| | `postgres` | One schema per instance (`am_<hash>`); full-text search via tsvector + GIN, vectors via **pgvector HNSW** (exact search when dimensions > 2000) |
+| `storage.backend` (`AGENT_MEMORY_STORAGE_BACKEND`) | `sqlite` (default) | One SQLite file per department; full-text search via FTS5, vectors via **sqlite-vec** (`vec0` KNN with isolation filters applied inside the index; falls back to brute-force comparison if the extension can't load) |
+| | `postgres` | One schema per department (`am_<hash>`); full-text search via tsvector + GIN, vectors via **pgvector HNSW** (exact search when dimensions > 2000) |
 | `coordination.backend` (`AGENT_MEMORY_COORDINATION_BACKEND`) | `local` (default) | Pipeline state in `system.db`, queues and locks in-process; single node |
 | | `redis` | Pipeline state, job queue and distributed locks all in Redis; multiple memory-core replicas can run concurrently |
 
@@ -225,7 +225,7 @@ By default `docker/core.Dockerfile` installs three CLIs with their official nati
 See [docs/API.md](docs/API.md) for details. Highlights:
 
 - L2/L3 and Skill extraction use structured JSON operations (rather than an agentic loop with tools), giving a fixed output contract that is easy to test.
-- Tenant isolation is always applied to recall and search; pipeline cursors use database sequence numbers, so messages with identical timestamps or backfilled messages are never skipped.
+- Scope isolation is always applied to recall and search; pipeline cursors use database sequence numbers, so messages with identical timestamps or backfilled messages are never skipped.
 - Not provided: analytics reports, external task import, upstream model-group routing, `/v3/skill/export`.
 
 ## License

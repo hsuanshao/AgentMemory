@@ -79,7 +79,7 @@ Agent Memory 分成兩部分，要分開移除：**client** 裝在每台跑 agen
 
 ### 移除之後
 
-- 目錄裡還留著含 instance key 的 `.env`；升級過的話，還有 `backups/` 和 `upgrade-client-settings.txt`。不再需要時，把整個目錄刪掉即可。
+- 目錄裡還留著含 伺服器 API key 的 `.env`；升級過的話，還有 `backups/` 和 `upgrade-client-settings.txt`。不再需要時，把整個目錄刪掉即可。
 - 仍指向這台伺服器的 client 會一直把資料存在本機佇列，請照 A 節移除。
 
 ## C. 疑難排解

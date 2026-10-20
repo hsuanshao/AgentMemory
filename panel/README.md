@@ -34,7 +34,7 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/health` | `{"status":"ok"}` (panel liveness) |
-| GET | `/api/config` | `{instance_id, core_url_display}` (contains no secrets) |
+| GET | `/api/config` | `{department_id, core_url_display}` (contains no secrets) |
 | GET | `/api/core-health` | Proxies Core `GET /health` |
 | POST | `/api/core/<path>` | Forwards to Core `POST /v3/<path>` if `<path>` is allowlisted (see `server/src/http/allowlist.ts`) |
 | GET | `/*` | SPA from `UI_DIST_DIR`, falling back to `index.html` |
@@ -42,7 +42,7 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 The BFF adds these headers to every forwarded call:
 
 * `Authorization: Bearer $CORE_API_KEY`
-* `x-memory-service-id: $CORE_INSTANCE_ID`
+* `x-memory-department-id: $CORE_DEPARTMENT_ID`
 * the browser's `x-memory-user-key`
 * `x-request-id`, taken from the browser or generated
 
@@ -55,7 +55,7 @@ Core responses pass through unchanged. The BFF generates its own errors using Co
 | Core unreachable | 502 | `{"code":502,"message":"CORE_UNAVAILABLE"}` |
 | Missing or invalid user key | 401 | Only when `PANEL_REQUIRE_USER_KEY` is on (the default) |
 
-By default, every proxied call except `meta/auth/verify` needs a user key that Core accepts. Calls that change data or administer the instance (`ADMIN_ONLY_V3_PATHS` in `server/src/http/allowlist.ts`) also need a `system_admin` key; anyone else gets `403 forbidden: system_admin_required`, and the UI hides those controls. Verdicts are cached for 60 s. Without this check, anyone who could reach the panel could use the Core API key it holds.
+By default, every proxied call except `meta/auth/verify` needs a user key that Core accepts. Calls that change data or administer the department (`ADMIN_ONLY_V3_PATHS` in `server/src/http/allowlist.ts`) also need a `system_admin` key; anyone else gets `403 forbidden: system_admin_required`, and the UI hides those controls. Verdicts are cached for 60 s. Without this check, anyone who could reach the panel could use the Core API key it holds.
 
 ## Configuration
 
@@ -65,7 +65,7 @@ By default, every proxied call except `meta/auth/verify` needs a user key that C
 | `HOST` | `0.0.0.0` | Listen address |
 | `CORE_URL` | `http://127.0.0.1:8420` | MemoryCore base URL |
 | `CORE_API_KEY` | (none) | Bearer token for Core (`AGENT_MEMORY_API_KEY` on the Core side) |
-| `CORE_INSTANCE_ID` | `default` | Sent as `x-memory-service-id` |
+| `CORE_DEPARTMENT_ID` | `default` | Sent as `x-memory-department-id` |
 | `CORE_TIMEOUT_MS` | `15000` | Timeout for each Core call |
 | `UI_DIST_DIR` | (none) | Built SPA directory. The Docker image sets it to `/app/web/dist` |
 | `PANEL_REQUIRE_USER_KEY` | `true` | Set to `false` to skip the BFF user-key check (local development only) |
@@ -113,7 +113,7 @@ docker network create memory 2>/dev/null || true
 docker run -d --name memory-panel --network memory -p 8125:8125 \
   -e CORE_URL=http://memory-core:8420 \
   -e CORE_API_KEY=change-me \
-  -e CORE_INSTANCE_ID=default \
+  -e CORE_DEPARTMENT_ID=default \
   memory-panel:dev
 ```
 

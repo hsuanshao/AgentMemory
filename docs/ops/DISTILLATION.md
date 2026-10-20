@@ -53,7 +53,7 @@ docker compose exec memory-core memory-server dead-letters
 docker compose exec memory-core memory-server dead-letters --kind l1 --json
 ```
 
-The commands call the running server's API, so they work the same on every storage and coordination backend. `--instance` selects an instance other than `default`. The API endpoints behind them are in [API.md](../API.md#health-and-monitoring).
+The commands call the running server's API, so they work the same on every storage and coordination backend. `--department` selects a department other than `default`. The API endpoints behind them are in [API.md](../API.md#health-and-monitoring).
 
 ## 3. Common failures
 

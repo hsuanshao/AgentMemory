@@ -48,7 +48,7 @@ docker stop amem-pg amem-redis
 | `memory-infrastructure/tests/sqlite_to_postgres.rs` | Postgres | Data written through the SQLite adapters is read back through the Postgres ones after `migrate`: search, vectors, versions, keys, sequences, re-runs |
 | `memory-server/tests/e2e.rs` (`the_pipeline_runs_on_the_postgres_backend`, `legacy_default_data_migrates_on_postgres`, `redis_coordination_runs_the_pipeline`) | Postgres / Redis | The whole server on those backends, including the legacy-scope migration |
 
-Each test uses a randomly named instance and drops it afterwards, so the same database can be reused. A failing test may leave its schema behind (`am_<hash>`); drop the container to start clean.
+Each test uses a randomly named department and drops it afterwards, so the same database can be reused. A failing test may leave its schema behind (`am_<hash>`); drop the container to start clean.
 
 ## 3. Panel
 
@@ -106,9 +106,9 @@ INSTALL_STORAGE=sqlite INSTALL_COORDINATION=local INSTALL_LLM=openai INSTALL_ADM
 
 # 3. seed data through the API (team, agent, a few conversations), e.g.
 API=$(grep '^AGENT_MEMORY_API_KEY=' .env | cut -d= -f2)
-H=(-H "Authorization: Bearer $API" -H "x-memory-service-id: default"
+H=(-H "Authorization: Bearer $API" -H "x-memory-department-id: default"
    -H "x-memory-user-key: <admin key>" -H "content-type: application/json")
-curl -s -X POST localhost:28520/v3/internal/meta/user/list-by-instance "${H[@]}" -d '{}'   # the admin's user_id
+curl -s -X POST localhost:28520/v3/internal/meta/user/list-by-department "${H[@]}" -d '{}'   # the admin's user_id
 curl -s -X POST localhost:28520/v3/meta/team/create  "${H[@]}" -d '{"name":"platform","owner_user_id":"usr-…"}'
 curl -s -X POST localhost:28520/v3/meta/agent/create "${H[@]}" -d '{"team_id":"team-…","owner_user_id":"usr-…","name":"codex"}'
 curl -s -X POST localhost:28520/v3/conversation/add  "${H[@]}" \

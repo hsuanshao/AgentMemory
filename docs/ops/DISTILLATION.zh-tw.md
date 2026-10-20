@@ -53,7 +53,7 @@ docker compose exec memory-core memory-server dead-letters
 docker compose exec memory-core memory-server dead-letters --kind l1 --json
 ```
 
-這些指令會呼叫正在執行的伺服器 API，所以不論使用哪種 storage 或 coordination backend，行為都一樣。`--instance` 可以選擇 `default` 以外的 instance。背後用到的 API 端點見 [API.zh-tw.md](../API.zh-tw.md#健康檢查與監控)。
+這些指令會呼叫正在執行的伺服器 API，所以不論使用哪種 storage 或 coordination backend，行為都一樣。`--department` 可以選擇 `default` 以外的部門。背後用到的 API 端點見 [API.zh-tw.md](../API.zh-tw.md#健康檢查與監控)。
 
 ## 3. 常見的失敗原因
 

@@ -93,18 +93,18 @@ fn login(args: &[String]) -> Result<(), String> {
 
 fn status() -> Result<(), String> {
     let cfg = Config::load()?;
-    println!("config:     {}", config_path().display());
-    println!("server_url: {}", cfg.server_url);
+    println!("config:        {}", config_path().display());
+    println!("server_url:    {}", cfg.server_url);
     println!("department_id: {}", cfg.department_id);
-    println!("user_key:   {}", mask(&cfg.user_key));
-    println!("team_id:    {}", cfg.team_id);
-    println!("agent_id:   {}", cfg.agent_id);
+    println!("user_key:      {}", mask(&cfg.user_key));
+    println!("team_id:       {}", cfg.team_id);
+    println!("agent_id:      {}", cfg.agent_id);
     if !cfg.skip_prompt_prefixes.is_empty() {
         println!("skip_prompt_prefixes: {}", cfg.skip_prompt_prefixes);
     }
     let queue = Queue::new(&data_dir());
     println!(
-        "queued:     {} (in {})",
+        "queued:        {} (in {})",
         queue.pending().len(),
         data_dir().join("queue").display()
     );

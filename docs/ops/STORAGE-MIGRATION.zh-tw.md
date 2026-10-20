@@ -18,7 +18,7 @@
 
 | 元件 | 角色 |
 | --- | --- |
-| `crates/memory-infrastructure/src/sqlite_to_postgres.rs` | 搬移本身：資料表清單、每個 instance 一個交易、驗證、報告 |
+| `crates/memory-infrastructure/src/sqlite_to_postgres.rs` | 搬移本身：資料表清單、每個部門一個交易、驗證、報告 |
 | `crates/memory-server/src/migrate_storage.rs` | `migrate-storage` 子指令：載入伺服器的正常設定、用伺服器的 embedding 維度連線、印出報告 |
 | `migrate-to-postgres.sh` | 包在外層的維運流程：備份、修改 `.env`、dry run、搬移、切換、健康檢查 |
 | `crates/memory-infrastructure/tests/sqlite_to_postgres.rs` | 對真實 Postgres 的端到端檢查（[TESTING.zh-tw.md §2](TESTING.zh-tw.md#2-postgres-與-redis-整合測試)） |
@@ -27,9 +27,9 @@
 
 ## 2. 一次執行做了什麼
 
-對每個 `<data>/instances/<id>/memory.db`，依 instance id 排序：
+對每個 `<data>/departments/<id>/memory.db`，依部門 id 排序：
 
-1. **計數**：數 SQLite 和該 instance 的 Postgres schema 裡每張表的筆數。目標是從 registry（`agent_memory.instances`）查詢，不會建立它，所以 dry run 不會寫入任何東西。
+1. **計數**：數 SQLite 和該部門的 Postgres schema 裡每張表的筆數。目標是從 registry（`agent_memory.departments`）查詢，不會建立它，所以 dry run 不會寫入任何東西。
 2. **判斷**（`plan()`）：
    - 目標的每張表都是空的 → 搬移；
    - 目標的每張表都和來源筆數相同 → `already_migrated`，跳過；
@@ -41,7 +41,7 @@
 5. **驗證**：在交易內再數一次每張表；只要有一張對不上就回傳錯誤，整個交易 rollback。
 6. **提交。**
 
-instance 之間互相獨立：某個 instance 失敗時，之前完成的 instance 仍保持已提交。重跑時會跳過它們（步驟 2），只重試剩下的。
+部門之間互相獨立：某個部門失敗時，之前完成的部門仍保持已提交。重跑時會跳過它們（步驟 2），只重試剩下的。
 
 ## 3. 複製資料列
 
@@ -80,14 +80,14 @@ Postgres 把關鍵字 token 和向量存在資料列本身。搬移時用**和 P
 ## 5. 安全性保證
 
 - **不寫入任何來源資料列。** 開啟 SQLite 資料庫時會走正常的初始化流程，可能會建立缺少的資料表（`CREATE … IF NOT EXISTS`），除此之外只讀取。
-- **每個 instance 全有或全無**，由交易和筆數檢查保證。
+- **每個部門全有或全無**，由交易和筆數檢查保證。
 - **絕不覆蓋或合併**非空的目標（步驟 2）。
 - **可重複執行**：重跑會補上缺的、跳過已完成的。
 - **來源必須保持靜止。** 每一頁是在各自的 SQLite 讀取交易中讀取的，如果伺服器在搬移期間寫入，可能產生不一致的快照，這時筆數檢查通常會失敗。這就是維運流程要先停掉 memory-core 的原因。子指令本身無法判斷伺服器是否還在執行。
 
 ## 6. Schema 改變時
 
-SQLite 和 Postgres 的 DDL 是一張表對一張表的對應（`sqlite/schema.rs`、`postgres/schema.rs`）。改 schema 時，搬移也要跟著改：
+SQLite 和 Postgres 的 DDL 是一張表對一張表的對應（`sqlite/schema.rs`、`postgres/schema.rs`）。改動既有的資料還需要一個有版本的遷移（[SCHEMA-MIGRATIONS.zh-tw.md](SCHEMA-MIGRATIONS.zh-tw.md)）。改 schema 時，這裡的搬移也要跟著改：
 
 | 改了什麼 | 還要更新 |
 | --- | --- |
@@ -104,4 +104,4 @@ SQLite 和 Postgres 的 DDL 是一張表對一張表的對應（`sqlite/schema.r
 
 - **管線狀態不在搬移範圍內。** 它屬於協調後端。使用 `local` 協調時，它留在 `/data/system.db`，因為序號有保留，游標仍然對得上。把協調後端從 `local` 換成 Redis 時，這些狀態不會帶過去：之後有新對話進來的 session 會從第一則對話開始處理，較早的對話可能會再被蒸餾一次。未來可以做一個 `migrate-coordination`，把 `session_states` 和 `profile_states` 複製到 Redis。
 - **只能單向。** 沒有 Postgres → SQLite 的搬移。退回的方式是使用未被修改的 SQLite 檔案和備份的 `.env`，切換後寫入的資料會遺失。
-- **記憶體用量**以每張表一頁（1,000 筆）為上限，但每個 instance 是單一交易。非常大的 instance 代表目標端會有一個很長的交易。
+- **記憶體用量**以每張表一頁（1,000 筆）為上限，但每個部門是單一交易。非常大的部門代表目標端會有一個很長的交易。

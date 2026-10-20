@@ -9,9 +9,9 @@ RPC 風格的 v3 API。本文件列出所有已實作的 endpoint 與回應慣�
 * 埠號 `8420`。所有 `/v3/*` endpoint 都是 `POST`，body 為 JSON。
 * 回應外層（envelope）：`{ "code": 0, "message": "ok", "request_id": "req-…", "data": … }`。4xx/5xx 時 HTTP 狀態碼等於 `code`；skill 錯誤使用五位數代碼（例如 `40901`），HTTP 狀態碼為對應的三位數。
 * 兩種信任區：
-  * **使用者範圍**：資料平面（L0–L3、`recall`、`session/add`）與 `/v3/skill/*`。只用 `x-memory-user-key` 授權，不需要 Bearer key，因此遠端 client 永遠不會拿到 instance API key。
-  * **Bearer 範圍**：其餘所有路由（pipeline/stats、logs、prompts、knowledge、`meta/*`、`internal/*`、`instance/destroy`）。有設定 API key 時需要 `Authorization: Bearer <AGENT_MEMORY_API_KEY>`。`/v3/meta/*` 另外還需要 `x-memory-user-key`（`/v3/meta/auth/verify` 除外）。
-* `x-memory-service-id: <instance id>`：除了 `/v3/instance/destroy`，每個 `/v3/*` 路由都必須帶。安裝程式預設使用 `default`。
+  * **使用者範圍**：資料平面（L0–L3、`recall`、`session/add`）與 `/v3/skill/*`。只用 `x-memory-user-key` 授權，不需要 Bearer key，因此遠端 client 永遠不會拿到 伺服器 API key。
+  * **Bearer 範圍**：其餘所有路由（pipeline/stats、logs、prompts、knowledge、`meta/*`、`internal/*`、`department/destroy`）。有設定 API key 時需要 `Authorization: Bearer <AGENT_MEMORY_API_KEY>`。`/v3/meta/*` 另外還需要 `x-memory-user-key`（`/v3/meta/auth/verify` 除外）。
+* `x-memory-department-id: <department id>`：除了 `/v3/department/destroy`，每個 `/v3/*` 路由都必須帶。安裝程式預設使用 `default`。
 * 隔離範圍：body 中的 `team_id`/`agent_id`/`user_id`/`task_id`/`session_id`，或 `x-memory-team-id` / `x-memory-agent-id` / … header。兩者都有時以 body 為準。
 * 資料平面授權（`crates/memory-domain/src/meta/memory_access.rs`）：
   * `team_id` 和 `agent_id` 必填（已沒有 `default` 桶），且 agent 必須屬於該 team。缺少時回 400，不相符時回 403。
@@ -39,10 +39,10 @@ Skill 錯誤使用五位數代碼，HTTP 狀態碼為對應的三位數，例如
 
 ## Client 快速上手
 
-以下是 `amem` 實際送出的請求，改用一般 HTTP 表示。每個資料平面呼叫都要帶 user key、instance id，以及 team 與 agent（放在 body，或用 `x-memory-team-id` / `x-memory-agent-id` header）：
+以下是 `amem` 實際送出的請求，改用一般 HTTP 表示。每個資料平面呼叫都要帶 user key、部門 id，以及 team 與 agent（放在 body，或用 `x-memory-team-id` / `x-memory-agent-id` header）：
 
 ```bash
-H=(-H "x-memory-user-key: sk-mem-…" -H "x-memory-service-id: default" -H "content-type: application/json")
+H=(-H "x-memory-user-key: sk-mem-…" -H "x-memory-department-id: default" -H "content-type: application/json")
 
 # 回合開始前召回
 curl -sS -X POST https://memory.example.com/v3/recall "${H[@]}" \
@@ -72,9 +72,9 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | --- | --- | --- |
 | GET | `/health` | `{status, version, uptime, stores{vectorStore,embeddingService,ftsAvailable,llmConfigured}, services{pipelineWorker, stateBackend}}` |
 | POST | `/v3/pipeline/status` | `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}` |
-| POST | `/v3/stats/overview` | 此 instance 各層的筆數：`{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
+| POST | `/v3/stats/overview` | 此部門各層的筆數：`{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
 | POST | `/v3/memory-generation-log/summary` | `{hours?}`（預設 24，最多 720）→ `{hours, from_ms, llm: {configured, model}, items: [{layer, status, count}]}`：各層、各狀態的蒸餾次數 |
-| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}`（`l1`、`l2`、`l3`、`skill`；預設 50，最多 500）→ `{items: [{kind, job, attempt, error, dead_at_ms}]}`，新的在前，只列此 instance |
+| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}`（`l1`、`l2`、`l3`、`skill`；預設 50，最多 500）→ `{items: [{kind, job, attempt, error, dead_at_ms}]}`，新的在前，只列此部門 |
 | POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}`（預設 10，最多 1000）→ `{requeued}`：把最舊的符合條件 dead letter 重新排回佇列，從第一次嘗試開始 |
 
 `WorkerMetrics`：`{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`。
@@ -131,7 +131,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 `/v3/meta/asset/{create,get,update,delete,list,list-accessible,touch-usage}`、
 `/v3/meta/agent-fixed-asset/{set,list,list-with-detail,summary-by-agents}`、
 `/v3/meta/acl/{grant,revoke,list,check}`、
-`/v3/meta/auth/verify`、`/v3/meta/instance-quota/get`、
+`/v3/meta/auth/verify`、`/v3/meta/department-quota/get`、
 `/v3/meta/config/user/{get,set}`。
 
 Meta 的列表回應格式：`{items, total, limit, offset}`。
@@ -139,7 +139,7 @@ Meta 的列表回應格式：`{items, total, limit, offset}`。
 ### 內部與維運（僅需 Bearer）
 
 * `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`：第一次啟動時的初始化，建立一位系統管理者，以及 `default-team` 與 `default-agent-<username>`。只要已有任何使用者，就回 409 `already_initialized`。
-* `/v3/internal/meta/user/list-by-instance`。
+* `/v3/internal/meta/user/list-by-department`。
 * `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` → `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`：升級輔助工具，把寫在舊 `default` 桶的資料（`default/default/default` 的 L0/L1，以及 `default/default` 的 L2/L3 和 skills）連同管線游標搬到真正的範圍。0.1.1 之前若 client 有指定 agent 或使用者，資料會寫在 `default/<agent>/<user>`；這時用 `from_team_id`／`from_agent_id`／`from_user_id` 指定來源桶（未填的部分都是 `default`）。條件：agent 必須屬於該 team、使用者必須是有效成員，而且 agent 還不能有 L2/L3（否則回 409 `target_has_profile`）。這項檢查只在仍有舊資料時進行，所以搬移成功後重跑不會有任何動作。`dry_run: true` 會 rollback，只回報筆數。
 * `/v3/internal/upgrade` `{admin_username?, team_name?, agent_name?, issue_key?, dry_run?}` → `{dry_run, user_id, username, team_id, team_name, team_created, agent_id, agent_name, agent_created, moved, session_states, profile_states, user_key?}`：`upgrade.sh` 呼叫的就是這個。它會：
   * 選定系統管理者（預設是最早建立的那位）；
@@ -148,10 +148,10 @@ Meta 的列表回應格式：`{items, total, limit, offset}`。
   * 帶 `issue_key` 時，另外發一把新的 user key，只回傳這一次。
 
   Dry run 不會建立任何東西；將會新建的 team 或 agent，其 `team_id`/`agent_id` 回傳 `null`。可以安全地重複執行。
-* `/v3/instance/destroy` `{instance_id}`。
+* `/v3/department/destroy` `{department_id}`。
 
 ## 設計決策
 
 * 不提供任何廠商專屬的整合：沒有 analytics、外部任務來源、上游模型群組路由。
-* 正確性保證：`atomic/update` 以 id 查找；召回與搜尋一律套用租戶隔離；搜尋會遵守 `time_start`/`time_end`；`scenario/ls` 會驗證 `path_prefix`；新的 L1 紀錄從版本 1 開始。
+* 正確性保證：`atomic/update` 以 id 查找；召回與搜尋一律套用範圍隔離；搜尋會遵守 `time_start`/`time_end`；`scenario/ls` 會驗證 `path_prefix`；新的 L1 紀錄從版本 1 開始。
 * L2 場景與 L3 persona 的生成採用結構化 JSON 操作，而不是 agentic tool loop。Prompt 依循既定策略：UPDATE > MERGE > CREATE、熱度、場景上限、META 標頭、場景導覽。

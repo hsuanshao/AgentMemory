@@ -4,7 +4,8 @@
 
 ## 目錄
 
-- [從 0.1.1 或之後的版本升級](#從-011-或之後的版本升級)
+- [升級到 0.3.0](#升級到-030)
+- [0.1.1 到 0.2.x 之間升級](#011-到-02x-之間升級)
 - [從 0.1.1 之前的版本升級](#從-011-之前的版本升級)
   - [有哪些改變](#有哪些改變)
   - [開始之前](#開始之前)
@@ -15,9 +16,55 @@
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
 
-## 從 0.1.1 或之後的版本升級
+## 升級到 0.3.0
 
-0.1.1 之後的版本沒有改變資料格式，也沒有改變 client 的驗證方式。在安裝目錄（放 `.env` 的那個目錄）執行：
+0.3.0 把 **instance** 改名為**部門（department）**：一台伺服器容納多個部門，部門裡有團隊，團隊裡有成員和 agent。新名稱同時用在 API、設定和儲存的資料上：
+
+| | 0.3.0 之前 | 0.3.0 |
+| --- | --- | --- |
+| 請求 header | `x-memory-service-id` | `x-memory-department-id` |
+| `amem` | `service_id`、`AMEM_SERVICE_ID`、`--service-id` | `department_id`、`AMEM_DEPARTMENT_ID`、`--department-id`。`client.json` 第一次使用時會自動改寫 |
+| Claude Code plugin 選項 | Service ID | Department ID |
+| `.env` | `CORE_INSTANCE_ID` | `CORE_DEPARTMENT_ID` |
+| `memory-core.yaml` | `maxOpenInstances`、`maxUsersPerInstance`、`maxTeamsPerInstance` | `maxOpenDepartments`、`maxUsersPerDepartment`、`maxTeamsPerDepartment`。設定檔還用舊名稱時，memory-core 會拒絕啟動 |
+| API | `/v3/instance/destroy` `{instance_id}`、`/v3/meta/instance-quota/get`、`/v3/internal/meta/user/list-by-instance` | `/v3/department/destroy` `{department_id}`、`/v3/meta/department-quota/get`、`/v3/internal/meta/user/list-by-department` |
+| `memory-server` 指令 | `--instance` | `--department` |
+| 儲存的資料 | `<data>/instances`、Postgres `agent_memory.instances`、Redis `…:pipe:inst:…` | memory-core 啟動時自動遷移（[改了哪些](ops/SCHEMA-MIGRATIONS.zh-tw.md#3-目前的遷移)） |
+
+**伺服器和所有 client 要一起更新。** 0.3.0 之前的 client 會收到 `401`，訊息是「x-memory-service-id was renamed in 0.3.0; update the client」。
+
+1. 停掉會寫入伺服器的 agent。如果跑了多個 memory-core replica，要全部停掉：舊版 replica 讀不懂遷移後的資料。
+2. 更新程式碼，在安裝目錄執行升級腳本：
+
+   ```bash
+   cd /path/to/agent-memory
+   git fetch --tags && git checkout v0.3.0
+   ./upgrade.sh
+   ```
+
+   `upgrade.sh` 會備份資料、把 `.env` 的 `CORE_INSTANCE_ID` 改名，然後重建並啟動服務。memory-core 啟動時會遷移儲存的資料。
+
+   也可以手動執行：
+   1. 依 [B1](#b1-備份) 備份。
+   2. 把 `.env` 的 `CORE_INSTANCE_ID` 改成 `CORE_DEPARTMENT_ID`；如果 `memory-core.yaml` 有設定上表那三個項目，也一起改名。
+   3. 執行：
+
+      ```bash
+      docker compose build
+      docker compose run --rm -T memory-core migrate   # 選用：啟動前先遷移並顯示結果
+      docker compose up -d
+      ```
+3. 更新每台 client 機器上的 `amem`（[REMOTE-CLIENTS 第 4 節](REMOTE-CLIENTS.zh-tw.md#4-在每台-client-機器安裝-amem)）。在 Claude Code 裡，如果之前設定過 **Service ID**，請把 **Department ID** 設成同樣的值。
+4. 確認：
+   - `curl -s http://127.0.0.1:8420/health` 顯示新的 `version`；
+   - `docker compose logs memory-core | grep -i migrat` 列出執行過的步驟；
+   - 在 client 上，`amem status` 顯示預期的 `department_id`，`amem recall test` 能正常回應、沒有錯誤。
+
+遷移只能往前。要回到 0.2.x，請依 [E](#e-還原) 還原備份。
+
+## 0.1.1 到 0.2.x 之間升級
+
+0.1.1 到 0.2.x 的版本沒有改變資料格式，也沒有改變 client 的驗證方式。在安裝目錄（放 `.env` 的那個目錄）執行：
 
 ```bash
 cd /path/to/agent-memory
@@ -31,13 +78,13 @@ docker compose up -d --build
 
 ## 從 0.1.1 之前的版本升級
 
-這部分寫給還在跑 0.1.1 之前版本的人。每個步驟都是你自己執行的指令，全程不需要透過 AI 或 agent。你可以交給 `./upgrade.sh` 一次完成（[A](#a-自動升級upgradesh)），也可以照著手動做一樣的步驟（[B](#b-手動逐步執行相同步驟)）。兩種做法最後都要更新 client（[C](#c-更新-client)）。
+這部分寫給還在跑 0.1.1 之前版本的人。直接升到 0.3.0 時也適用：`upgrade.sh` 會一次完成兩個升級。每個步驟都是你自己執行的指令，全程不需要透過 AI 或 agent。你可以交給 `./upgrade.sh` 一次完成（[A](#a-自動升級upgradesh)），也可以照著手動做一樣的步驟（[B](#b-手動逐步執行相同步驟)）。兩種做法最後都要更新 client（[C](#c-更新-client)）。
 
 ## 有哪些改變
 
 | | 0.1.1 之前 | 0.1.1 |
 | --- | --- | --- |
-| Client 驗證 | Instance key（`Authorization: Bearer …`） | 每位使用者各自的 key（`x-memory-user-key: sk-mem-…`）。Instance key 只用於維運與管理 |
+| Client 驗證 | 伺服器 API key（`Authorization: Bearer …`） | 每位使用者各自的 key（`x-memory-user-key: sk-mem-…`）。伺服器 API key 只用於維運與管理 |
 | 寫入時的 team / agent | 可省略，省略時資料寫進共用的 `default` 桶 | 必填。使用者必須是該 team 的成員，agent 也必須屬於該 team |
 | 舊資料 | — | 不再提供 `default` 桶的資料，升級時要搬移一次 |
 | Client | 自行撰寫的 script 或 plugin | `amem` client，以及 Claude Code、Codex、Antigravity、Hermes 的 plugin |
@@ -96,7 +143,7 @@ UPGRADE_AGENT_NAME=hermes ./upgrade.sh --non-interactive
 ```bash
 source .env   # 不要加 set -a：docker compose 必須自己讀 .env
 CORE=http://127.0.0.1:${CORE_PORT:-8420}
-H=(-H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-service-id: ${CORE_INSTANCE_ID:-default}" -H "content-type: application/json")
+H=(-H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: ${CORE_DEPARTMENT_ID:-default}" -H "content-type: application/json")
 ```
 
 ### B1. 備份
@@ -188,7 +235,7 @@ curl -sS -X POST "$CORE/v3/internal/migrate/default-scope" "${H[@]}" \
    | Codex CLI | 安裝 plugin，並用 `/hooks` 信任它的 hook，見 [REMOTE-CLIENTS.zh-tw.md §7](REMOTE-CLIENTS.zh-tw.md#7-codex-cli) |
    | 自己寫的 script | Bearer key 只留給管理用的呼叫。資料相關的呼叫（`/v3/recall`、`/v3/conversation/add`、`/v3/session/add` 等）要送 `x-memory-user-key: sk-mem-…`，並在 body 帶 `team_id` 和 `agent_id`（或改用 `x-memory-team-id` / `x-memory-agent-id` header）。見 [API.zh-tw.md](API.zh-tw.md) |
 
-每個 agent 都有自己的場景和 persona，agent 之間不共用任何東西。使用同一個 agent 的人會共用它的場景和 persona，但各自的對話和事實仍是私有的。除非你希望多個 client 共用，否則建議每個 client 各用一個 agent。詳見 [MULTI-TENANCY.zh-tw.md](MULTI-TENANCY.zh-tw.md#2-哪些是私有的哪些是共用的)。
+每個 agent 都有自己的場景和 persona，agent 之間不共用任何東西。使用同一個 agent 的人會共用它的場景和 persona，但各自的對話和事實仍是私有的。除非你希望多個 client 共用，否則建議每個 client 各用一個 agent。詳見 [COLLABORATION.zh-tw.md](COLLABORATION.zh-tw.md#2-哪些是私有的哪些是共用的)。
 
 ## D. 確認結果
 

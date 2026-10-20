@@ -61,7 +61,7 @@ impl RedisPipelineState {
         self.keys.key(&format!("due:{}", kind.plural()))
     }
 
-    fn department_key(&self, kind: Kind, department: &DepartmentId) -> String {
+    fn department_index(&self, kind: Kind, department: &DepartmentId) -> String {
         self.keys
             .key(&format!("department:{department}:{}", kind.plural()))
     }
@@ -87,7 +87,7 @@ impl RedisPipelineState {
         }
         .ignore();
         p.cmd("ZADD")
-            .arg(self.department_key(kind, department))
+            .arg(self.department_index(kind, department))
             .arg(order_ms)
             .arg(id)
             .ignore();
@@ -163,7 +163,7 @@ impl RedisPipelineState {
         stop: isize,
     ) -> DomainResult<Vec<String>> {
         cmd("ZRANGE")
-            .arg(self.department_key(kind, department))
+            .arg(self.department_index(kind, department))
             .arg(0)
             .arg(stop)
             .arg("REV")
@@ -181,7 +181,7 @@ impl RedisPipelineState {
         p.cmd("DEL").arg(docs).ignore();
         p.cmd("ZREM").arg(self.due_key(kind)).arg(ids).ignore();
         p.cmd("ZREM")
-            .arg(self.department_key(kind, department))
+            .arg(self.department_index(kind, department))
             .arg(ids)
             .ignore();
     }
@@ -298,8 +298,8 @@ impl PipelineStateRepository for RedisPipelineState {
         self.remove(&mut p, Kind::Session, department, &sessions);
         self.remove(&mut p, Kind::Profile, department, &profiles);
         p.cmd("DEL")
-            .arg(self.department_key(Kind::Session, department))
-            .arg(self.department_key(Kind::Profile, department))
+            .arg(self.department_index(Kind::Session, department))
+            .arg(self.department_index(Kind::Profile, department))
             .ignore();
         p.exec_async(&mut self.conn.clone())
             .await

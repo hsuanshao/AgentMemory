@@ -1,5 +1,5 @@
 //! HTTP calls to Core's user-scoped data plane. Only the user key is sent;
-//! the client never holds the department API key.
+//! the client never holds the server API key.
 
 use std::time::Duration;
 
