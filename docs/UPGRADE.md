@@ -21,7 +21,7 @@ Releases after 0.1.1 change neither the data format nor how clients authenticate
 
 ```bash
 cd /path/to/agent-memory
-git fetch --tags && git checkout v0.2.2   # or: git pull
+git fetch --tags && git checkout v0.2.3   # or: git pull
 docker compose up -d --build
 ```
 
@@ -53,7 +53,7 @@ This part is for people running a server older than 0.1.1. Every step is a comma
 
   ```bash
   cd /path/to/agent-memory        # the directory with .env
-  git fetch --tags && git checkout v0.2.2  # or: git pull
+  git fetch --tags && git checkout v0.2.3  # or: git pull
   ```
 
 ## A. Automatic: `upgrade.sh`
