@@ -34,6 +34,17 @@ pub struct ConversationMessage {
     pub version: u32,
 }
 
+/// Drops U+0000. PostgreSQL stores it in neither TEXT nor JSONB (SQLite
+/// does), and in conversation text it is only ever noise from binary tool
+/// output, so it is removed where text enters, whatever the backend.
+pub fn without_nul(text: String) -> String {
+    if text.contains('\0') {
+        text.replace('\0', "")
+    } else {
+        text
+    }
+}
+
 impl ConversationMessage {
     pub fn validate_content(content: &str) -> DomainResult<()> {
         let chars = content.chars().count();
@@ -161,5 +172,16 @@ impl Layer {
             "l3" => Ok(Self::L3),
             other => Err(DomainError::invalid(format!("unknown layer: {other}"))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn without_nul_drops_only_nul() {
+        assert_eq!(without_nul("a\0b\0".into()), "ab");
+        assert_eq!(without_nul("無 NUL".into()), "無 NUL");
     }
 }
