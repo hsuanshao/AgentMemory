@@ -55,9 +55,13 @@ impl CliLlm {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| settings.command.clone());
+        let label = match model_arg(&settings.args) {
+            Some(model) => format!("cli:{name}:{model}"),
+            None => format!("cli:{name}"),
+        };
         Self {
             permits: Semaphore::new(settings.max_concurrency.max(1)),
-            label: format!("cli:{name}"),
+            label,
             settings,
         }
     }
@@ -214,6 +218,18 @@ fn last_error_line(source: &str) -> Option<usize> {
     found
 }
 
+/// The model the arguments select (`--model X`, `--model=X`, `-m X`), so
+/// generation logs say which model ran rather than only the command.
+fn model_arg(args: &[String]) -> Option<&str> {
+    args.iter()
+        .enumerate()
+        .find_map(|(i, arg)| match arg.as_str() {
+            "--model" | "-m" => args.get(i + 1).map(String::as_str),
+            other => other.strip_prefix("--model="),
+        })
+        .filter(|m| !m.is_empty() && !m.contains(PROMPT_PLACEHOLDER))
+}
+
 fn unavailable(detail: String) -> DomainError {
     DomainError::new(ErrorKind::Unavailable, "LLM_UNAVAILABLE", detail)
 }
@@ -315,6 +331,23 @@ mod tests {
         assert_eq!(
             failure_reason(over.as_bytes(), b"", ""),
             format!("…{exact}")
+        );
+    }
+
+    #[test]
+    fn the_label_names_the_model_from_the_arguments() {
+        let label = |args: &[&str]| cli("agy", args, PromptMode::Arg).model().to_owned();
+        assert_eq!(label(&["-p", "{prompt}"]), "cli:agy");
+        assert_eq!(
+            label(&["-p", "{prompt}", "--model", "gemini-3.8-flash-high"]),
+            "cli:agy:gemini-3.8-flash-high"
+        );
+        assert_eq!(label(&["--model=sonnet", "-p"]), "cli:agy:sonnet");
+        assert_eq!(label(&["-m", "o4"]), "cli:agy:o4");
+        assert_eq!(
+            label(&["-p", "--model"]),
+            "cli:agy",
+            "no value after the flag"
         );
     }
 

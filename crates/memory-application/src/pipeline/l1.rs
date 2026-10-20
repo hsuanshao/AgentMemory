@@ -56,6 +56,8 @@ pub struct L1Outcome {
     pub written: Vec<AtomicMemory>,
     pub last_scene: Option<String>,
     pub system_prompt: String,
+    /// False when no message was worth sending to the LLM.
+    pub llm_called: bool,
 }
 
 pub struct L1Extractor {
@@ -112,6 +114,7 @@ impl L1Extractor {
                 written: Vec::new(),
                 last_scene: previous_scene.map(Into::into),
                 system_prompt,
+                llm_called: false,
             });
         }
         let reply = self
@@ -136,6 +139,7 @@ impl L1Extractor {
             written,
             last_scene: last_scene.or(previous_scene.map(Into::into)),
             system_prompt,
+            llm_called: true,
         })
     }
 

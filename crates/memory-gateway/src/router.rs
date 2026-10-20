@@ -125,12 +125,21 @@ fn skill_routes() -> Router<SharedState> {
 fn ops_routes() -> Router<SharedState> {
     Router::new()
         .route("/pipeline/status", post(ops::pipeline_status))
+        .route("/pipeline/dead-letter/list", post(ops::dead_letter_list))
+        .route(
+            "/pipeline/dead-letter/redrive",
+            post(ops::dead_letter_redrive),
+        )
         .route("/stats/overview", post(ops::stats_overview))
         .route(
             "/memory-generation-log/list",
             post(ops::generation_log_list),
         )
         .route("/memory-generation-log/get", post(ops::generation_log_get))
+        .route(
+            "/memory-generation-log/summary",
+            post(ops::generation_log_summary),
+        )
         .route("/memory-prompt/create", post(ops::prompt_create))
         .route("/memory-prompt/get", post(ops::prompt_get))
         .route("/memory-prompt/update", post(ops::prompt_update))

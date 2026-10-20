@@ -9,7 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use memory_domain::error::DomainResult;
+use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::Layer;
 use memory_domain::pipeline::{
     next_l2_due, persona_trigger, PersonaState, PipelineSettings, Warmup,
@@ -25,12 +25,13 @@ use super::l2::SceneExtractor;
 use super::l3::{L3Outcome, PersonaGenerator};
 use super::memory_prompts::MemoryPromptService;
 use super::metrics::{MetricsSnapshot, PipelineMetrics};
+use super::prompts::{self, CustomStrategy};
 use crate::memory::service::{ConversationObserver, MemoryService};
 use crate::ports::coordination::KeyLock;
 use crate::ports::memory::{AtomRepository, ConversationRepository};
 use crate::ports::pipeline::{
-    GenerationRef, JobQueue, PipelineJob, PipelineStateRepository, ProfileState, QueueStats,
-    SessionState,
+    DeadLetter, DeadLetterFilter, GenerationRef, JobQueue, PipelineJob, PipelineStateRepository,
+    ProfileState, QueueStats, SessionState,
 };
 use crate::ports::system::{Clock, LlmClient};
 
@@ -41,6 +42,26 @@ const L2_ATOM_BATCH: usize = 100;
 #[async_trait]
 pub trait SkillJobRunner: Send + Sync {
     async fn run_skill_task(&self, instance: &InstanceId, task_id: &str) -> DomainResult<()>;
+}
+
+/// What `record_failure` needs about a generation that did not finish.
+struct Failure<'a> {
+    layer: Layer,
+    team_id: &'a str,
+    agent_id: &'a str,
+    user_id: Option<&'a str>,
+    session_id: Option<&'a str>,
+    strategy: Option<&'a CustomStrategy>,
+    input_refs: Vec<GenerationRef>,
+    started_at_ms: i64,
+}
+
+fn refs<'a>(layer: &str, ids: impl Iterator<Item = &'a String>) -> Vec<GenerationRef> {
+    ids.map(|id| GenerationRef {
+        layer: layer.into(),
+        record_id: id.clone(),
+    })
+    .collect()
 }
 
 pub struct PipelineDeps {
@@ -98,6 +119,37 @@ impl PipelineService {
 
     pub fn register_skill_runner(&self, runner: Arc<dyn SkillJobRunner>) {
         let _ = self.skill_runner.set(runner);
+    }
+
+    /// The LLM distillation uses, as generation logs record it.
+    pub fn llm_model(&self) -> &str {
+        self.deps.llm.model()
+    }
+
+    pub fn llm_configured(&self) -> bool {
+        self.deps.llm.is_configured()
+    }
+
+    /// Jobs that failed every retry, newest first.
+    pub async fn dead_letters(
+        &self,
+        filter: &DeadLetterFilter,
+        limit: usize,
+    ) -> DomainResult<Vec<DeadLetter>> {
+        self.deps.queue.dead_letters(filter, limit).await
+    }
+
+    /// Queues dead letters again as first attempts; returns how many.
+    pub async fn redrive_dead_letters(
+        &self,
+        filter: &DeadLetterFilter,
+        limit: usize,
+    ) -> DomainResult<usize> {
+        let requeued = self.deps.queue.redrive(filter, limit).await?;
+        if requeued > 0 {
+            info!(requeued, kind = ?filter.kind, "dead letters redriven");
+        }
+        Ok(requeued)
     }
 
     pub fn metrics(&self) -> &Arc<PipelineMetrics> {
@@ -315,7 +367,7 @@ impl PipelineService {
                 Layer::L1,
             )
             .await?;
-        let outcome = self
+        let extracted = self
             .deps
             .l1
             .extract(
@@ -326,7 +378,28 @@ impl PipelineService {
                 snapshot.last_scene_name.as_deref(),
                 strategy.as_ref(),
             )
-            .await?;
+            .await;
+        let outcome = match extracted {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                self.record_failure(
+                    instance,
+                    Failure {
+                        layer: Layer::L1,
+                        team_id: scope.team_id.as_str(),
+                        agent_id: scope.agent_id.as_str(),
+                        user_id: Some(scope.user_id.as_str()),
+                        session_id: Some(session_id),
+                        strategy: strategy.as_ref(),
+                        input_refs: refs("l0", batch.iter().map(|m| &m.id)),
+                        started_at_ms: started,
+                    },
+                    &err,
+                )
+                .await;
+                return Err(err);
+            }
+        };
 
         {
             let _guard = self
@@ -346,7 +419,7 @@ impl PipelineService {
             "L1 extraction finished"
         );
 
-        if !outcome.written.is_empty() {
+        if outcome.llm_called {
             self.deps
                 .logs
                 .record(
@@ -380,6 +453,8 @@ impl PipelineService {
                     },
                 )
                 .await;
+        }
+        if !outcome.written.is_empty() {
             self.schedule_l2(
                 instance,
                 &ProfileScope::from(scope),
@@ -459,11 +534,32 @@ impl PipelineService {
                 Layer::L2,
             )
             .await?;
-        let outcome = self
+        let consolidated = self
             .deps
             .l2
             .consolidate(instance, profile, &atoms, strategy.as_ref())
-            .await?;
+            .await;
+        let outcome = match consolidated {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                self.record_failure(
+                    instance,
+                    Failure {
+                        layer: Layer::L2,
+                        team_id: profile.team_id.as_str(),
+                        agent_id: profile.agent_id.as_str(),
+                        user_id: None,
+                        session_id: None,
+                        strategy: strategy.as_ref(),
+                        input_refs: refs("l1", atoms.iter().map(|a| &a.id)),
+                        started_at_ms: started,
+                    },
+                    &err,
+                )
+                .await;
+                return Err(err);
+            }
+        };
 
         let state = {
             let _guard = self
@@ -492,7 +588,7 @@ impl PipelineService {
             state
         };
 
-        if !outcome.changed_files.is_empty() {
+        {
             self.deps
                 .logs
                 .record(
@@ -581,7 +677,7 @@ impl PipelineService {
                 Layer::L3,
             )
             .await?;
-        let outcome = self
+        let generated = self
             .deps
             .l3
             .generate(
@@ -591,7 +687,28 @@ impl PipelineService {
                 &trigger,
                 strategy.as_ref(),
             )
-            .await?;
+            .await;
+        let outcome = match generated {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                self.record_failure(
+                    instance,
+                    Failure {
+                        layer: Layer::L3,
+                        team_id: profile.team_id.as_str(),
+                        agent_id: profile.agent_id.as_str(),
+                        user_id: None,
+                        session_id: None,
+                        strategy: strategy.as_ref(),
+                        input_refs: Vec::new(),
+                        started_at_ms: started,
+                    },
+                    &err,
+                )
+                .await;
+                return Err(err);
+            }
+        };
         let L3Outcome::Generated {
             scene_files,
             system_prompt,
@@ -647,6 +764,32 @@ impl PipelineService {
             )
             .await;
         Ok(())
+    }
+
+    /// Records a generation whose LLM call (or parsing its answer) failed,
+    /// so failures show up next to successes in the generation logs.
+    async fn record_failure(&self, instance: &InstanceId, f: Failure<'_>, err: &DomainError) {
+        let system_prompt = prompts::compose(f.layer, f.strategy);
+        self.deps
+            .logs
+            .record(
+                instance,
+                GenerationRecord {
+                    layer: f.layer,
+                    team_id: f.team_id,
+                    agent_id: f.agent_id,
+                    user_id: f.user_id,
+                    session_id: f.session_id,
+                    strategy: f.strategy,
+                    system_prompt: &system_prompt,
+                    model: self.deps.llm.model(),
+                    input_refs: f.input_refs,
+                    output_refs: Vec::new(),
+                    started_at_ms: f.started_at_ms,
+                    error: Some(err.to_string()),
+                },
+            )
+            .await;
     }
 
     pub async fn status(

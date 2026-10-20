@@ -4,7 +4,7 @@
 //! (in-process here, Redis for multi-node) and per-job exclusivity is a
 //! [`KeyLock`] (local or distributed).
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -13,7 +13,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use memory_application::pipeline::service::PipelineService;
 use memory_application::ports::coordination::KeyLock;
-use memory_application::ports::pipeline::{JobQueue, PipelineJob, QueueStats};
+use memory_application::ports::pipeline::{
+    DeadLetter, DeadLetterFilter, JobQueue, PipelineJob, QueueStats,
+};
 use memory_domain::error::{DomainError, DomainResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Semaphore};
@@ -21,6 +23,8 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
 const POP_WAIT: Duration = Duration::from_secs(1);
+/// Dead letters the in-process backend keeps (newest win).
+const LOCAL_DEAD_LETTER_CAP: usize = 1_000;
 
 #[derive(Debug, Clone, Copy)]
 pub struct WorkerSettings {
@@ -83,7 +87,17 @@ pub trait QueueBackend: Send + Sync {
     fn extend_interval(&self) -> Option<Duration> {
         None
     }
-    async fn dead_letter(&self, envelope: Envelope) -> DomainResult<()>;
+    async fn dead_letter(&self, letter: DeadLetter) -> DomainResult<()>;
+    /// Stored dead letters, oldest first.
+    async fn dead_letters(&self) -> DomainResult<Vec<DeadLetter>>;
+    /// Removes and returns up to `limit` dead letters matching `filter`,
+    /// oldest first. A letter is returned by at most one caller, even with
+    /// several nodes redriving at once.
+    async fn take_dead_letters(
+        &self,
+        filter: &DeadLetterFilter,
+        limit: usize,
+    ) -> DomainResult<Vec<DeadLetter>>;
     /// `(pending, dead_lettered)`.
     async fn counts(&self) -> DomainResult<(usize, usize)>;
 }
@@ -117,6 +131,33 @@ impl JobQueue for WorkerQueue {
             dead_letter,
         })
     }
+
+    async fn dead_letters(
+        &self,
+        filter: &DeadLetterFilter,
+        limit: usize,
+    ) -> DomainResult<Vec<DeadLetter>> {
+        let mut letters = self.backend.dead_letters().await?;
+        letters.retain(|l| filter.matches(l));
+        letters.reverse();
+        letters.truncate(limit);
+        Ok(letters)
+    }
+
+    async fn redrive(&self, filter: &DeadLetterFilter, limit: usize) -> DomainResult<usize> {
+        let taken = self.backend.take_dead_letters(filter, limit).await?;
+        let mut requeued = 0;
+        for letter in taken {
+            if let Err(err) = self.backend.push_new(letter.job.clone()).await {
+                // Keep it rather than lose it; the next redrive tries again.
+                warn!(error = %err, "redrive failed; keeping the dead letter");
+                self.backend.dead_letter(letter).await?;
+                return Err(err);
+            }
+            requeued += 1;
+        }
+        Ok(requeued)
+    }
 }
 
 /// Single-node backend: an in-memory channel.
@@ -125,7 +166,8 @@ pub struct LocalQueue {
     rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<Envelope>>,
     queued: Mutex<HashSet<String>>,
     pending: Arc<AtomicUsize>,
-    dead_letter: AtomicUsize,
+    /// Lost on restart, like everything else in this backend.
+    dead: Mutex<VecDeque<DeadLetter>>,
 }
 
 impl LocalQueue {
@@ -136,7 +178,7 @@ impl LocalQueue {
             rx: tokio::sync::Mutex::new(rx),
             queued: Mutex::new(HashSet::new()),
             pending: Arc::new(AtomicUsize::new(0)),
-            dead_letter: AtomicUsize::new(0),
+            dead: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -202,15 +244,48 @@ impl QueueBackend for LocalQueue {
         Ok(())
     }
 
-    async fn dead_letter(&self, _envelope: Envelope) -> DomainResult<()> {
-        self.dead_letter.fetch_add(1, Ordering::Relaxed);
+    async fn dead_letter(&self, letter: DeadLetter) -> DomainResult<()> {
+        let mut dead = self.dead.lock().expect("dead letter lock");
+        dead.push_back(letter);
+        while dead.len() > LOCAL_DEAD_LETTER_CAP {
+            dead.pop_front();
+        }
         Ok(())
+    }
+
+    async fn dead_letters(&self) -> DomainResult<Vec<DeadLetter>> {
+        Ok(self
+            .dead
+            .lock()
+            .expect("dead letter lock")
+            .iter()
+            .cloned()
+            .collect())
+    }
+
+    async fn take_dead_letters(
+        &self,
+        filter: &DeadLetterFilter,
+        limit: usize,
+    ) -> DomainResult<Vec<DeadLetter>> {
+        let mut dead = self.dead.lock().expect("dead letter lock");
+        let mut taken = Vec::new();
+        let mut kept = VecDeque::with_capacity(dead.len());
+        for letter in dead.drain(..) {
+            if taken.len() < limit && filter.matches(&letter) {
+                taken.push(letter);
+            } else {
+                kept.push_back(letter);
+            }
+        }
+        *dead = kept;
+        Ok(taken)
     }
 
     async fn counts(&self) -> DomainResult<(usize, usize)> {
         Ok((
             self.pending.load(Ordering::Relaxed),
-            self.dead_letter.load(Ordering::Relaxed),
+            self.dead.lock().expect("dead letter lock").len(),
         ))
     }
 }
@@ -350,7 +425,13 @@ async fn handle_result(
         .await
     } else {
         error!(kind = envelope.job.kind(), error = %err, "job dead-lettered");
-        match queue.backend.dead_letter(envelope).await {
+        let letter = DeadLetter {
+            job: envelope.job,
+            attempt: envelope.attempt,
+            error: Some(err.to_string()),
+            dead_at_ms: Utc::now().timestamp_millis(),
+        };
+        match queue.backend.dead_letter(letter).await {
             Ok(()) => true,
             Err(e) => {
                 error!(error = %e, "failed to record dead letter");

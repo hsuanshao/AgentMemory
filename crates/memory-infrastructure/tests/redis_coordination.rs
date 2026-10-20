@@ -16,7 +16,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::pipeline::{
-    PipelineJob, PipelineStateRepository, ProfileState, SessionState,
+    DeadLetter, DeadLetterFilter, PipelineJob, PipelineStateRepository, ProfileState, SessionState,
 };
 use memory_domain::profile::ProfileScope;
 use memory_domain::scope::{InstanceId, MemoryScope, SegmentId};
@@ -214,6 +214,15 @@ async fn delete_profile_and_instance_remove_documents_and_indexes() {
     assert_eq!(store.list_sessions(&id("ins2"), 10).await.unwrap().len(), 1);
 }
 
+fn letter(job: PipelineJob, attempt: u32) -> DeadLetter {
+    DeadLetter {
+        job,
+        attempt,
+        error: Some("LLM_UNAVAILABLE: quota reached".into()),
+        dead_at_ms: 1,
+    }
+}
+
 fn job(task: &str) -> PipelineJob {
     PipelineJob::SkillExtract {
         instance: id("ins"),
@@ -283,8 +292,69 @@ async fn queue_delays_jobs_and_records_dead_letters() {
         q.ack(&d.receipt).await.unwrap();
     }
 
-    q.dead_letter(retry).await.unwrap();
+    q.dead_letter(letter(retry.job, retry.attempt))
+        .await
+        .unwrap();
     assert_eq!(q.counts().await.unwrap(), (0, 1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dead_letters_are_listed_and_taken_once() {
+    let Some((url, keys)) = redis().await else {
+        return;
+    };
+    let q = Arc::new(RedisQueue::new(conn(&url).await, &keys, LEASE));
+    for i in 0..20 {
+        q.dead_letter(letter(job(&format!("t{i}")), 3))
+            .await
+            .unwrap();
+    }
+    // A letter in the old shape, written before errors were recorded.
+    let mut c = conn(&url).await;
+    let old = serde_json::json!({"job": job("old"), "attempt": 3}).to_string();
+    let _: i64 = redis::cmd("RPUSH")
+        .arg(keys.child("queue").key("dead"))
+        .arg(&old)
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    let all = q.dead_letters().await.unwrap();
+    assert_eq!(all.len(), 21);
+    assert_eq!(
+        all[0].error.as_deref(),
+        Some("LLM_UNAVAILABLE: quota reached")
+    );
+    assert_eq!(all[20].error, None, "old letters parse without an error");
+
+    let skills = DeadLetterFilter {
+        instance: Some(id("ins")),
+        kind: Some("skill".into()),
+    };
+    let none = DeadLetterFilter {
+        instance: Some(id("elsewhere")),
+        kind: None,
+    };
+    assert!(q.take_dead_letters(&none, 50).await.unwrap().is_empty());
+
+    // Two nodes redriving at once never take the same letter.
+    let (a, b) = tokio::join!(
+        {
+            let q = Arc::clone(&q);
+            let f = skills.clone();
+            async move { q.take_dead_letters(&f, 15).await.unwrap() }
+        },
+        {
+            let q = Arc::clone(&q);
+            let f = skills.clone();
+            async move { q.take_dead_letters(&f, 15).await.unwrap() }
+        },
+    );
+    let mut seen = HashSet::new();
+    for l in a.iter().chain(&b) {
+        assert!(seen.insert(l.job.serial_key()), "taken twice: {:?}", l.job);
+    }
+    assert_eq!(seen.len(), 21, "every letter taken exactly once");
+    assert_eq!(q.counts().await.unwrap(), (0, 0));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -508,12 +578,7 @@ async fn dead_letters_are_capped_to_the_newest() {
     };
     let q = RedisQueue::new(conn(&url).await, &keys, LEASE);
     for attempt in 0..10_005 {
-        q.dead_letter(Envelope {
-            job: job("t"),
-            attempt,
-        })
-        .await
-        .unwrap();
+        q.dead_letter(letter(job("t"), attempt)).await.unwrap();
     }
     assert_eq!(q.counts().await.unwrap(), (0, 10_000));
 }

@@ -1022,3 +1022,135 @@ async fn upgrade_rehomes_legacy_data_with_the_instance_key_only() {
     let missing = upgrade(json!({"admin_username": "nobody"})).await;
     assert_eq!(missing["code"], 404, "{missing}");
 }
+
+async fn dead_letters(client: &Client) -> Vec<Value> {
+    client
+        .call("/v3/pipeline/dead-letter/list", json!({}))
+        .await["data"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// An LLM endpoint that is always overloaded.
+async fn spawn_failing_llm() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/v1/chat/completions",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        "model is at capacity",
+                    )
+                }),
+            ),
+        )
+        .await
+        .unwrap()
+    });
+    format!("http://{addr}/v1")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_generations_are_logged_and_dead_letters_redriven() {
+    let base_url = spawn_failing_llm().await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.llm.model = "fake-model".into();
+        // The first failure dead-letters the job: no backoff to wait for.
+        config.worker.max_retries = 0;
+    })
+    .await;
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "We release v2 next Monday; I always run integration tests first."},
+                {"role": "assistant", "content": "Noted, I will remind you."}
+            ]})),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+
+    let mut letters = Vec::new();
+    for _ in 0..100 {
+        letters = dead_letters(&client).await;
+        if !letters.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(letters.len(), 1, "the L1 job is dead-lettered");
+    assert_eq!(letters[0]["kind"], "l1");
+    assert_eq!(letters[0]["job"]["L1"]["session_id"], "s1");
+    let error = letters[0]["error"].as_str().unwrap();
+    assert!(error.contains("503"), "{error}");
+    assert!(letters[0]["dead_at_ms"].as_i64().unwrap() > 0);
+
+    // The failure is in the generation logs, with the model and the error.
+    let failed = client
+        .call(
+            "/v3/memory-generation-log/list",
+            json!({"status": "failed"}),
+        )
+        .await["data"]["items"]
+        .clone();
+    assert_eq!(failed[0]["layer"], "l1");
+    assert_eq!(failed[0]["model"], "fake-model");
+    assert_eq!(failed[0]["session_id"], "s1");
+    assert!(
+        failed[0]["error_message"]
+            .as_str()
+            .unwrap()
+            .contains("model is at capacity"),
+        "{failed}"
+    );
+    let summary = client
+        .call("/v3/memory-generation-log/summary", json!({"hours": 1}))
+        .await["data"]
+        .clone();
+    assert_eq!(summary["llm"]["model"], "fake-model");
+    assert!(
+        summary["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["layer"] == "l1" && i["status"] == "failed" && i["count"] == 1),
+        "{summary}"
+    );
+
+    // A kind that does not exist is refused; a matching redrive requeues it,
+    // and with the LLM still down it comes back as a dead letter.
+    let bad = client
+        .call("/v3/pipeline/dead-letter/redrive", json!({"kind": "l9"}))
+        .await;
+    assert_ne!(bad["code"], 0, "{bad}");
+    let none = client
+        .call("/v3/pipeline/dead-letter/redrive", json!({"kind": "l2"}))
+        .await;
+    assert_eq!(none["data"]["requeued"], 0);
+    let redriven = client
+        .call("/v3/pipeline/dead-letter/redrive", json!({"kind": "l1"}))
+        .await;
+    assert_eq!(redriven["data"]["requeued"], 1, "{redriven}");
+    for _ in 0..100 {
+        let n = client
+            .call(
+                "/v3/memory-generation-log/list",
+                json!({"status": "failed"}),
+            )
+            .await["data"]["items"]
+            .as_array()
+            .map_or(0, Vec::len);
+        if n == 2 && dead_letters(&client).await.len() == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the redriven job did not run again");
+}

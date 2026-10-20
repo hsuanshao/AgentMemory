@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use memory_application::common::Page;
 use memory_application::ports::pipeline::{
-    GenerationLog, GenerationLogFilter, GenerationLogRepository, MemoryPrompt,
+    GenerationCount, GenerationLog, GenerationLogFilter, GenerationLogRepository, MemoryPrompt,
     MemoryPromptRepository, PromptLogEntry, PromptSetting, PromptSettingFilter, PromptTarget,
 };
 use memory_domain::error::DomainResult;
@@ -404,5 +404,35 @@ impl GenerationLogRepository for PostgresGenerationLogStore {
             &[],
         )
         .await
+    }
+
+    async fn summarize(
+        &self,
+        instance: &InstanceId,
+        from_ms: i64,
+    ) -> DomainResult<Vec<GenerationCount>> {
+        let s = self.db.schema(instance).await?;
+        let rows = fetch_all(
+            &mut *self.db.conn().await?,
+            &format!(
+                "SELECT layer, status, COUNT(*) AS n FROM {s}.generation_logs \
+                 WHERE started_at_ms >= ? GROUP BY layer, status ORDER BY layer, status"
+            ),
+            &args![from_ms],
+        )
+        .await?;
+        let mut out = Vec::new();
+        for row in &rows {
+            let layer: String = get(row, "layer")?;
+            let n: i64 = get(row, "n")?;
+            if let Ok(layer) = Layer::parse(&layer) {
+                out.push(GenerationCount {
+                    layer,
+                    status: get(row, "status")?,
+                    count: n as usize,
+                });
+            }
+        }
+        Ok(out)
     }
 }

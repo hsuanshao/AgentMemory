@@ -11,7 +11,7 @@ use tracing::warn;
 
 use super::prompts::CustomStrategy;
 use crate::ports::pipeline::{
-    GenerationLog, GenerationLogFilter, GenerationLogRepository, GenerationRef,
+    GenerationCount, GenerationLog, GenerationLogFilter, GenerationLogRepository, GenerationRef,
 };
 use crate::ports::system::{Clock, IdGenerator};
 
@@ -56,8 +56,12 @@ impl GenerationLogService {
     /// Best-effort: a failing log write never fails the generation itself.
     pub async fn record(&self, instance: &InstanceId, r: GenerationRecord<'_>) {
         let finished = self.clock.now().timestamp_millis();
+        // `empty`: the LLM answered but nothing was written (nothing worth
+        // keeping, or an answer that changed nothing).
         let status = if r.error.is_some() {
             "failed"
+        } else if r.output_refs.is_empty() {
+            "empty"
         } else {
             "succeeded"
         };
@@ -123,6 +127,16 @@ impl GenerationLogService {
             })
             .flatten();
         Ok(GenerationLogPage { items, next_cursor })
+    }
+
+    /// Generations started in the last `hours`, per layer and status.
+    pub async fn summary(
+        &self,
+        instance: &InstanceId,
+        hours: i64,
+    ) -> DomainResult<(i64, Vec<GenerationCount>)> {
+        let from_ms = (self.clock.now() - Duration::hours(hours)).timestamp_millis();
+        Ok((from_ms, self.repo.summarize(instance, from_ms).await?))
     }
 
     pub async fn get(&self, instance: &InstanceId, log_id: &str) -> DomainResult<GenerationLog> {

@@ -10,7 +10,7 @@ use memory_application::admin::KnowledgeInput;
 use memory_application::common::Page;
 use memory_application::pipeline::memory_prompts::{ApplyTarget, PromptAction};
 use memory_application::ports::pipeline::{
-    ProfileState, PromptSettingFilter, PromptTarget, SessionState,
+    DeadLetterFilter, ProfileState, PromptSettingFilter, PromptTarget, SessionState,
 };
 use memory_domain::memory::Layer;
 use memory_domain::scope::{InstanceId, SegmentId};
@@ -111,6 +111,108 @@ pub async fn pipeline_status(
             "worker": status.worker,
             "queue": status.queue,
             "scopes": scope_rows(status.sessions, status.profiles, every_n),
+        }),
+    ))
+}
+
+/// `{kind?, limit?}` → the job filter for this instance's dead letters.
+fn dead_letter_filter(
+    ctx: &Ctx,
+    instance: InstanceId,
+    body: &Value,
+) -> Result<DeadLetterFilter, ApiError> {
+    let kind = match body.get("kind").and_then(Value::as_str) {
+        None | Some("") => None,
+        Some(k @ ("l1" | "l2" | "l3" | "skill")) => Some(k.to_owned()),
+        Some(other) => {
+            return Err(ApiError::bad_request(
+                &ctx.request_id,
+                format!("kind must be l1, l2, l3 or skill, got {other}"),
+            ))
+        }
+    };
+    Ok(DeadLetterFilter {
+        instance: Some(instance),
+        kind,
+    })
+}
+
+fn limit(body: &Value, default: u64, max: u64) -> usize {
+    body.get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(default)
+        .clamp(1, max) as usize
+}
+
+pub async fn dead_letter_list(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    let filter = dead_letter_filter(&ctx, ctx.instance()?, &body)?;
+    let items = s
+        .services
+        .pipeline
+        .dead_letters(&filter, limit(&body, 50, 500))
+        .await
+        .map_err(|e| ctx.err(e))?;
+    let items: Vec<Value> = items
+        .into_iter()
+        .map(|d| {
+            json!({
+                "kind": d.job.kind(),
+                "job": d.job,
+                "attempt": d.attempt,
+                "error": d.error,
+                "dead_at_ms": d.dead_at_ms,
+            })
+        })
+        .collect();
+    Ok(ok(&ctx.request_id, json!({ "items": items })))
+}
+
+pub async fn dead_letter_redrive(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    let filter = dead_letter_filter(&ctx, ctx.instance()?, &body)?;
+    let requeued = s
+        .services
+        .pipeline
+        .redrive_dead_letters(&filter, limit(&body, 10, 1000))
+        .await
+        .map_err(|e| ctx.err(e))?;
+    Ok(ok(&ctx.request_id, json!({ "requeued": requeued })))
+}
+
+pub async fn generation_log_summary(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    let instance = ctx.instance()?;
+    let hours = body
+        .get("hours")
+        .and_then(Value::as_i64)
+        .unwrap_or(24)
+        .clamp(1, 24 * 30);
+    let (from_ms, items) = s
+        .services
+        .generation_logs
+        .summary(&instance, hours)
+        .await
+        .map_err(|e| ctx.err(e))?;
+    Ok(ok(
+        &ctx.request_id,
+        json!({
+            "hours": hours,
+            "from_ms": from_ms,
+            "llm": {
+                "configured": s.services.pipeline.llm_configured(),
+                "model": s.services.pipeline.llm_model(),
+            },
+            "items": items,
         }),
     ))
 }

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use memory_application::common::Page;
 use memory_application::ports::pipeline::{
-    GenerationLog, GenerationLogFilter, GenerationLogRepository, MemoryPrompt,
+    GenerationCount, GenerationLog, GenerationLogFilter, GenerationLogRepository, MemoryPrompt,
     MemoryPromptRepository, PipelineStateRepository, ProfileState, PromptLogEntry, PromptSetting,
     PromptSettingFilter, PromptTarget, SessionState,
 };
@@ -551,6 +551,37 @@ impl GenerationLogRepository for SqliteGenerationLogStore {
         self.pool
             .get(instance)?
             .call(|c| c.query_row("SELECT COUNT(*) FROM generation_logs", [], |r| r.get(0)))
+            .await
+    }
+
+    async fn summarize(
+        &self,
+        instance: &InstanceId,
+        from_ms: i64,
+    ) -> DomainResult<Vec<GenerationCount>> {
+        self.pool
+            .get(instance)?
+            .call(move |c| {
+                let mut stmt = c.prepare(
+                    "SELECT layer, status, COUNT(*) FROM generation_logs \
+                     WHERE started_at_ms >= ? GROUP BY layer, status ORDER BY layer, status",
+                )?;
+                let rows = stmt.query_map(params![from_ms], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get(1)?, r.get::<_, i64>(2)?))
+                })?;
+                let mut out = Vec::new();
+                for row in rows {
+                    let (layer, status, count) = row?;
+                    if let Ok(layer) = Layer::parse(&layer) {
+                        out.push(GenerationCount {
+                            layer,
+                            status,
+                            count: count as usize,
+                        });
+                    }
+                }
+                Ok(out)
+            })
             .await
     }
 }

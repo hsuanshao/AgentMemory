@@ -11,9 +11,9 @@
 use std::time::Duration;
 
 use ::redis::aio::ConnectionManager;
-use ::redis::{pipe, Script};
+use ::redis::{cmd, pipe, Script};
 use async_trait::async_trait;
-use memory_application::ports::pipeline::PipelineJob;
+use memory_application::ports::pipeline::{DeadLetter, DeadLetterFilter, PipelineJob};
 use memory_domain::error::DomainResult;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -136,6 +136,28 @@ pub struct RedisQueue {
 }
 
 impl RedisQueue {
+    /// Stored dead letters with their exact stored text (for `LREM`), oldest
+    /// first. Letters written before errors were recorded parse too.
+    async fn raw_dead_letters(&self) -> DomainResult<Vec<(String, DeadLetter)>> {
+        let raw: Vec<String> = cmd("LRANGE")
+            .arg(self.dead())
+            .arg(0)
+            .arg(-1)
+            .query_async(&mut self.conn.clone())
+            .await
+            .map_err(unavailable)?;
+        Ok(raw
+            .into_iter()
+            .filter_map(|r| match from_json::<DeadLetter>(&r) {
+                Ok(letter) => Some((r, letter)),
+                Err(err) => {
+                    warn!(error = %err, "skipping an unreadable dead letter");
+                    None
+                }
+            })
+            .collect())
+    }
+
     /// `lease`: how long a popped job may go without `ack`/`extend` before
     /// it is redelivered.
     pub fn new(conn: ConnectionManager, prefix: &KeySpace, lease: Duration) -> Self {
@@ -288,12 +310,12 @@ impl QueueBackend for RedisQueue {
         Some(self.lease / 3)
     }
 
-    async fn dead_letter(&self, envelope: Envelope) -> DomainResult<()> {
+    async fn dead_letter(&self, letter: DeadLetter) -> DomainResult<()> {
         pipe()
             .atomic()
             .cmd("RPUSH")
             .arg(self.dead())
-            .arg(to_json(&envelope)?)
+            .arg(to_json(&letter)?)
             .ignore()
             .cmd("LTRIM")
             .arg(self.dead())
@@ -303,6 +325,43 @@ impl QueueBackend for RedisQueue {
             .exec_async(&mut self.conn.clone())
             .await
             .map_err(unavailable)
+    }
+
+    async fn dead_letters(&self) -> DomainResult<Vec<DeadLetter>> {
+        Ok(self
+            .raw_dead_letters()
+            .await?
+            .into_iter()
+            .map(|(_, letter)| letter)
+            .collect())
+    }
+
+    async fn take_dead_letters(
+        &self,
+        filter: &DeadLetterFilter,
+        limit: usize,
+    ) -> DomainResult<Vec<DeadLetter>> {
+        let mut taken = Vec::new();
+        for (raw, letter) in self.raw_dead_letters().await? {
+            if taken.len() == limit {
+                break;
+            }
+            if !filter.matches(&letter) {
+                continue;
+            }
+            // LREM decides the race: only the node that removes it requeues it.
+            let removed: i64 = cmd("LREM")
+                .arg(self.dead())
+                .arg(1)
+                .arg(&raw)
+                .query_async(&mut self.conn.clone())
+                .await
+                .map_err(unavailable)?;
+            if removed == 1 {
+                taken.push(letter);
+            }
+        }
+        Ok(taken)
     }
 
     async fn counts(&self) -> DomainResult<(usize, usize)> {

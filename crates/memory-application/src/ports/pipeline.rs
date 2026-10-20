@@ -145,6 +145,48 @@ impl PipelineJob {
             Self::SkillExtract { .. } => "skill",
         }
     }
+
+    pub fn instance(&self) -> &InstanceId {
+        match self {
+            Self::L1 { instance, .. }
+            | Self::L2 { instance, .. }
+            | Self::L3 { instance, .. }
+            | Self::SkillExtract { instance, .. } => instance,
+        }
+    }
+}
+
+/// A job that failed on every attempt and was set aside instead of
+/// retried. It stays until it is redriven or pushed out by newer ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeadLetter {
+    pub job: PipelineJob,
+    /// Retries it had used up.
+    pub attempt: u32,
+    /// Why the last attempt failed. Absent on letters written before it was
+    /// recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// When it was set aside (epoch ms); 0 when unknown.
+    #[serde(default)]
+    pub dead_at_ms: i64,
+}
+
+/// Which dead letters to list or redrive.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DeadLetterFilter {
+    pub instance: Option<InstanceId>,
+    /// A job kind (`PipelineJob::kind`).
+    pub kind: Option<String>,
+}
+
+impl DeadLetterFilter {
+    pub fn matches(&self, letter: &DeadLetter) -> bool {
+        self.instance
+            .as_ref()
+            .is_none_or(|i| i == letter.job.instance())
+            && self.kind.as_deref().is_none_or(|k| k == letter.job.kind())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -158,6 +200,15 @@ pub struct QueueStats {
 pub trait JobQueue: Send + Sync {
     async fn enqueue(&self, job: PipelineJob) -> DomainResult<()>;
     async fn stats(&self) -> DomainResult<QueueStats>;
+    /// Dead letters matching `filter`, newest first, at most `limit`.
+    async fn dead_letters(
+        &self,
+        filter: &DeadLetterFilter,
+        limit: usize,
+    ) -> DomainResult<Vec<DeadLetter>>;
+    /// Queues matching dead letters again as first attempts, oldest first,
+    /// at most `limit`. Returns how many were requeued.
+    async fn redrive(&self, filter: &DeadLetterFilter, limit: usize) -> DomainResult<usize>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -308,4 +359,17 @@ pub trait GenerationLogRepository: Send + Sync {
         limit: usize,
     ) -> DomainResult<Vec<GenerationLog>>;
     async fn count(&self, instance: &InstanceId) -> DomainResult<usize>;
+    /// How many generations started since `from_ms`, per layer and status.
+    async fn summarize(
+        &self,
+        instance: &InstanceId,
+        from_ms: i64,
+    ) -> DomainResult<Vec<GenerationCount>>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GenerationCount {
+    pub layer: Layer,
+    pub status: String,
+    pub count: usize,
 }
