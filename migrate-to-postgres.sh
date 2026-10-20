@@ -31,7 +31,11 @@ usage() {
 
 load_env() {
   [[ -f $ENV_FILE ]] || fail "No $ENV_FILE here. Run this from an existing install."
+  # A URL given when calling the script wins over .env, where every install
+  # has the setting, usually empty.
+  local url=${AGENT_MEMORY_POSTGRES_URL:-}
   read_env_file "$ENV_FILE"
+  AGENT_MEMORY_POSTGRES_URL=${url:-${AGENT_MEMORY_POSTGRES_URL:-}}
   IFS=, read -r -a PROFILES <<<"${COMPOSE_PROFILES:-}"
   CORE_PORT=${CORE_PORT:-8420}
   case ${AGENT_MEMORY_STORAGE_BACKEND:-sqlite} in
