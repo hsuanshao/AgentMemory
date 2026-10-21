@@ -1,4 +1,9 @@
-# Agent Memory
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/imgs/svg/agentmemory-lockup-dark-transparent.svg">
+    <img src="./docs/imgs/svg/agentmemory-lockup-light-transparent.svg" alt="AgentMemory" width="420">
+  </picture>
+</h1>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/hsuanshao/AgentMemory/ci.yml?branch=main&label=CI)](https://github.com/hsuanshao/AgentMemory/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/releases/latest)
@@ -12,7 +17,7 @@
 
 **自架、為團隊設計的 AI agent 長期記憶。** AgentMemory 讓 Claude Code、Codex、Antigravity、Hermes 以及任何 MCP client 擁有跨 session 的記憶：擷取每一次對話，在背景蒸餾成事實、場景與 persona，並在每次輸入 prompt 前召回相關內容。全部都在你自己的伺服器上執行。
 
-![Agent-memory](./docs/imgs/agent-memory.jpg "agent memory")
+![AgentMemory 讓 Claude Code、Antigravity、Hermes 等 agent 共用同一份長期記憶](./docs/imgs/agent-memory.jpg)
 
 ## 為什麼選擇 AgentMemory
 

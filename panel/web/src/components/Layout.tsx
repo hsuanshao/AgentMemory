@@ -22,7 +22,10 @@ export function Layout() {
     <div className="flex h-full">
       <aside className="flex w-52 shrink-0 flex-col border-r border-line bg-surface">
         <div className="border-b border-line px-4 py-3">
-          <div className="text-sm font-semibold">Memory Panel</div>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <img src="/favicon.svg" alt="" className="h-5 w-5" />
+            Memory Panel
+          </div>
           <div className="mono mt-0.5 truncate text-muted" title={config.data?.core_url_display}>
             {config.data ? `department: ${config.data.department_id}` : "…"}
           </div>

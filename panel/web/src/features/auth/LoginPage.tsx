@@ -36,7 +36,10 @@ export function LoginPage() {
     <div className="flex min-h-full items-center justify-center p-6">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-md border border-line bg-surface p-6 shadow-xs">
         <div>
-          <h1 className="text-base font-semibold">Memory Panel</h1>
+          <h1 className="flex items-center gap-2 text-base font-semibold">
+            <img src="/favicon.svg" alt="" className="h-6 w-6" />
+            Memory Panel
+          </h1>
           <p className="mt-1 text-xs text-muted">Sign in with a MemoryCore user key.</p>
         </div>
         <Field label="User key">

@@ -1,4 +1,9 @@
-# Agent Memory
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/imgs/svg/agentmemory-lockup-dark-transparent.svg">
+    <img src="./docs/imgs/svg/agentmemory-lockup-light-transparent.svg" alt="AgentMemory" width="420">
+  </picture>
+</h1>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/hsuanshao/AgentMemory/ci.yml?branch=main&label=CI)](https://github.com/hsuanshao/AgentMemory/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/releases/latest)
@@ -12,7 +17,7 @@ English | [繁體中文](./README.zh-tw.md)
 
 **Self-hosted, team-aware long-term memory for AI agents.** AgentMemory gives Claude Code, Codex, Antigravity, Hermes and any MCP client a memory that persists across sessions. It captures each conversation, distils it into facts, scenes and a persona in the background, and recalls what is relevant before every prompt. It all runs on your own servers.
 
-![Agent-memory](./docs/imgs/agent-memory.jpg "agent memory")
+![AgentMemory connects Claude Code, Antigravity, Hermes and other agents to one shared long-term memory](./docs/imgs/agent-memory.jpg)
 
 ## Why AgentMemory
 
