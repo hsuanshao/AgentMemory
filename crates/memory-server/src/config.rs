@@ -402,6 +402,15 @@ pub struct WorkerConfig {
     pub concurrency: usize,
     pub max_retries: u32,
     pub scan_interval_ms: u64,
+    /// Dead letters older than this (since they first died) are removed.
+    pub dead_letter_ttl_hours: u64,
+    /// A dead letter redriven this often is removed instead.
+    pub dead_letter_max_redrives: u32,
+    /// Wait before a dead letter is redriven on its own; doubled each time.
+    pub dead_letter_redrive_after_minutes: u64,
+    pub dead_letter_sweep_seconds: u64,
+    /// Dead letters requeued per sweep, at most.
+    pub dead_letter_redrive_batch: usize,
 }
 
 impl Default for WorkerConfig {
@@ -410,6 +419,11 @@ impl Default for WorkerConfig {
             concurrency: 8,
             max_retries: 3,
             scan_interval_ms: 2000,
+            dead_letter_ttl_hours: 24,
+            dead_letter_max_redrives: 3,
+            dead_letter_redrive_after_minutes: 60,
+            dead_letter_sweep_seconds: 300,
+            dead_letter_redrive_batch: 10,
         }
     }
 }

@@ -31,8 +31,8 @@ use crate::memory::service::{ConversationObserver, MemoryService};
 use crate::ports::coordination::KeyLock;
 use crate::ports::memory::{AtomRepository, ConversationRepository};
 use crate::ports::pipeline::{
-    DeadLetter, DeadLetterFilter, GenerationRef, JobQueue, PipelineJob, PipelineStateRepository,
-    ProfileState, QueueStats, SeqRange, SessionState,
+    failure_is_deterministic, DeadLetter, DeadLetterFilter, GenerationRef, JobQueue, PipelineJob,
+    PipelineStateRepository, ProfileState, QueueStats, SeqRange, SessionState,
 };
 use crate::ports::system::{Clock, LlmClient};
 
@@ -344,7 +344,8 @@ impl PipelineService {
 
     /// Executes one job. Errors are retried by the worker.
     /// Runs one job. When the LLM call of an L1 or L2 run fails on its
-    /// `last_attempt`, the input is dropped: the cursor moves past it so the
+    /// `last_attempt`, or in a way that would repeat
+    /// (`failure_is_deterministic`), the input is dropped: the cursor moves past it so the
     /// session or profile goes on, the run is logged as `dropped`, and the
     /// failure carries the job that redoes exactly that input.
     pub async fn run(&self, job: &PipelineJob, last_attempt: bool) -> Result<(), JobFailure> {
@@ -441,7 +442,9 @@ impl PipelineService {
         let outcome = match extracted {
             Ok(outcome) => outcome,
             Err(err) => {
-                let drop = last_attempt && range.is_none();
+                // A failure that would repeat is not worth the retries.
+                let drop =
+                    (last_attempt || failure_is_deterministic(&err.to_string())) && range.is_none();
                 self.record_failure(
                     department,
                     Failure {
@@ -659,7 +662,9 @@ impl PipelineService {
         let outcome = match consolidated {
             Ok(outcome) => outcome,
             Err(err) => {
-                let drop = last_attempt && range.is_none();
+                // A failure that would repeat is not worth the retries.
+                let drop =
+                    (last_attempt || failure_is_deterministic(&err.to_string())) && range.is_none();
                 self.record_failure(
                     department,
                     Failure {

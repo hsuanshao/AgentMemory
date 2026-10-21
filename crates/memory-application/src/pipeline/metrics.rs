@@ -12,6 +12,8 @@ pub struct PipelineMetrics {
     failed: AtomicU64,
     retried: AtomicU64,
     dead_lettered: AtomicU64,
+    redriven: AtomicU64,
+    expired: AtomicU64,
     last: Mutex<LastEvent>,
 }
 
@@ -28,6 +30,10 @@ pub struct MetricsSnapshot {
     pub tasks_failed: u64,
     pub tasks_retried: u64,
     pub tasks_dead_lettered: u64,
+    /// Dead letters the sweeper requeued on its own.
+    pub dead_letters_redriven: u64,
+    /// Dead letters the sweeper removed (too old or redriven too often).
+    pub dead_letters_expired: u64,
     pub last_task_at: Option<String>,
     pub last_error: Option<String>,
 }
@@ -53,6 +59,11 @@ impl PipelineMetrics {
         self.last.lock().expect("metrics lock").last_error = Some(error);
     }
 
+    pub fn swept(&self, redriven: usize, expired: usize) {
+        self.redriven.fetch_add(redriven as u64, Ordering::Relaxed);
+        self.expired.fetch_add(expired as u64, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> MetricsSnapshot {
         let last = self.last.lock().expect("metrics lock").clone();
         MetricsSnapshot {
@@ -61,6 +72,8 @@ impl PipelineMetrics {
             tasks_failed: self.failed.load(Ordering::Relaxed),
             tasks_retried: self.retried.load(Ordering::Relaxed),
             tasks_dead_lettered: self.dead_lettered.load(Ordering::Relaxed),
+            dead_letters_redriven: self.redriven.load(Ordering::Relaxed),
+            dead_letters_expired: self.expired.load(Ordering::Relaxed),
             last_task_at: last.last_task_at,
             last_error: last.last_error,
         }

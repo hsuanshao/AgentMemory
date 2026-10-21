@@ -183,6 +183,9 @@ async fn redis_instance_keys_and_documents_are_renamed() {
             attempt: 3,
             error: Some("boom".into()),
             dead_at_ms: 1,
+            redrives: 0,
+            first_dead_at_ms: None,
+            model: None,
         })
         .await
         .unwrap();

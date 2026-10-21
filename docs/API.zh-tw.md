@@ -74,7 +74,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | POST | `/v3/pipeline/status` | `{limit?}`（預設 50，最多 500）→ `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}`。每一列範圍都有唯一的 `key`、各個 id、`team_name` / `agent_name` / `username`，以及 `can_read_memory` |
 | POST | `/v3/stats/overview` | 此部門各層的筆數：`{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
 | POST | `/v3/memory-generation-log/summary` | `{hours?}`（預設 24，最多 720）→ `{hours, from_ms, llm: {configured, model}, items: [{layer, status, count}]}`：各層、各狀態的蒸餾次數 |
-| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}`（`l1`、`l2`、`l3`、`skill`；預設 50，最多 500）→ `{items: [{kind, job, attempt, error, dead_at_ms}]}`，新的在前，只列此部門 |
+| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}`（`l1`、`l2`、`l3`、`skill`；預設 50，最多 500）→ `{items: [{kind, job, attempt, error, dead_at_ms, redrives, first_dead_at_ms, model}]}`，新的在前，只列此部門 |
 | POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}`（預設 10，最多 1000）→ `{requeued}`：把最舊的符合條件 dead letter 重新排回佇列，從第一次嘗試開始。帶 user key 時只有系統管理者可以執行 |
 
 `WorkerMetrics`：`{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`。

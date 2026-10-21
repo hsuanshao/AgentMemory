@@ -272,6 +272,12 @@ export interface DeadLetter {
   error?: string | null;
   /** 0 when written before the time was recorded. */
   dead_at_ms: number;
+  /** Times it was requeued from the dead letters (by hand or automatically). */
+  redrives?: number;
+  /** When it first died; it expires a day later (server default). */
+  first_dead_at_ms?: number;
+  /** The LLM it failed with. */
+  model?: string | null;
 }
 
 // ---------- skills ----------

@@ -220,6 +220,73 @@ pub struct DeadLetter {
     /// When it was set aside (epoch ms); 0 when unknown.
     #[serde(default)]
     pub dead_at_ms: i64,
+    /// How many times it was requeued from the dead letters, by hand or by
+    /// the sweeper.
+    #[serde(default)]
+    pub redrives: u32,
+    /// When it first became a dead letter (epoch ms), kept across redrives;
+    /// `dead_at_ms` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_dead_at_ms: Option<i64>,
+    /// The LLM it failed with, as `PipelineService::llm_model` names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// Whether a failure would happen again with the same input and model:
+/// the model tried to use a tool, which distillation never allows (#37), or
+/// its answer was not the JSON the step asks for. Retrying those only spends
+/// LLM time; anything else (quota, timeouts, outages) may pass later.
+pub fn failure_is_deterministic(error: &str) -> bool {
+    error.contains("auto-denied") || error.contains("llm_output_invalid")
+}
+
+/// What the dead-letter sweeper does with a letter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeadLetterAction {
+    Keep,
+    /// Remove it. Its failures stay in the generation logs.
+    Expire,
+    Redrive,
+}
+
+/// How long dead letters live and when they are requeued on their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeadLetterPolicy {
+    /// Since it first became a dead letter.
+    pub ttl_ms: i64,
+    /// A letter redriven this often is not redriven again; it expires.
+    pub max_redrives: u32,
+    /// Wait before the first redrive; doubled after each one.
+    pub redrive_after_ms: i64,
+}
+
+impl DeadLetterPolicy {
+    /// Expire after `ttl_ms` or `max_redrives`. Otherwise redrive once the
+    /// backoff has passed, except a deterministic failure while the model
+    /// that produced it is still configured: that would fail the same way.
+    /// A letter that does not name its model (written before 0.3.2) is
+    /// assumed to have failed with the current one.
+    pub fn decide(&self, letter: &DeadLetter, now_ms: i64, model: &str) -> DeadLetterAction {
+        let first = letter.first_dead_at_ms.unwrap_or(letter.dead_at_ms);
+        if now_ms - first >= self.ttl_ms || letter.redrives >= self.max_redrives {
+            return DeadLetterAction::Expire;
+        }
+        let wait = self
+            .redrive_after_ms
+            .saturating_mul(1_i64 << letter.redrives.min(20));
+        if now_ms - letter.dead_at_ms < wait {
+            return DeadLetterAction::Keep;
+        }
+        let deterministic = letter
+            .error
+            .as_deref()
+            .is_some_and(failure_is_deterministic);
+        if deterministic && letter.model.as_deref().is_none_or(|m| m == model) {
+            return DeadLetterAction::Keep;
+        }
+        DeadLetterAction::Redrive
+    }
 }
 
 /// Which dead letters to list or redrive.
@@ -435,4 +502,92 @@ pub struct GenerationCount {
     pub layer: Layer,
     pub status: String,
     pub count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memory_domain::scope::SegmentId;
+
+    const HOUR: i64 = 3_600_000;
+    const POLICY: DeadLetterPolicy = DeadLetterPolicy {
+        ttl_ms: 24 * HOUR,
+        max_redrives: 3,
+        redrive_after_ms: HOUR,
+    };
+
+    fn letter(error: &str, dead_at_ms: i64, redrives: u32, model: Option<&str>) -> DeadLetter {
+        DeadLetter {
+            job: PipelineJob::SkillExtract {
+                department: SegmentId::default_bucket(),
+                task_id: "t-1".into(),
+            },
+            attempt: 3,
+            error: Some(error.into()),
+            dead_at_ms,
+            redrives,
+            first_dead_at_ms: Some(0),
+            model: model.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn transient_failures_are_redriven_with_a_doubling_wait() {
+        let quota = |at, redrives| letter("LLM returned 429", at, redrives, Some("m"));
+        assert_eq!(
+            POLICY.decide(&quota(0, 0), HOUR - 1, "m"),
+            DeadLetterAction::Keep
+        );
+        assert_eq!(
+            POLICY.decide(&quota(0, 0), HOUR, "m"),
+            DeadLetterAction::Redrive
+        );
+        // The second redrive waits two hours after the letter died again.
+        assert_eq!(
+            POLICY.decide(&quota(HOUR, 1), 2 * HOUR, "m"),
+            DeadLetterAction::Keep
+        );
+        assert_eq!(
+            POLICY.decide(&quota(HOUR, 1), 3 * HOUR, "m"),
+            DeadLetterAction::Redrive
+        );
+    }
+
+    #[test]
+    fn letters_expire_after_a_day_or_three_redrives() {
+        let quota = |at, redrives| letter("LLM returned 429", at, redrives, Some("m"));
+        assert_eq!(
+            POLICY.decide(&quota(20 * HOUR, 0), 24 * HOUR, "m"),
+            DeadLetterAction::Expire
+        );
+        assert_eq!(
+            POLICY.decide(&quota(HOUR, 3), 2 * HOUR, "m"),
+            DeadLetterAction::Expire
+        );
+    }
+
+    #[test]
+    fn deterministic_failures_wait_for_another_model() {
+        let denied = "LLM_UNAVAILABLE: `agy` produced no output; stderr: … so it was auto-denied";
+        let refused = letter(denied, 0, 0, Some("cli:agy:flash"));
+        assert_eq!(
+            POLICY.decide(&refused, 2 * HOUR, "cli:agy:flash"),
+            DeadLetterAction::Keep
+        );
+        assert_eq!(
+            POLICY.decide(&refused, 2 * HOUR, "cli:agy:pro"),
+            DeadLetterAction::Redrive
+        );
+        let invalid = letter("llm_output_invalid: not JSON", 0, 0, Some("m"));
+        assert_eq!(
+            POLICY.decide(&invalid, 2 * HOUR, "m"),
+            DeadLetterAction::Keep
+        );
+        // Without a recorded model, the current one is assumed.
+        let unknown = letter(denied, 0, 0, None);
+        assert_eq!(
+            POLICY.decide(&unknown, 2 * HOUR, "cli:agy:pro"),
+            DeadLetterAction::Keep
+        );
+    }
 }

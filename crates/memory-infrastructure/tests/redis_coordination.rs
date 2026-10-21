@@ -224,6 +224,9 @@ fn letter(job: PipelineJob, attempt: u32) -> DeadLetter {
         attempt,
         error: Some("LLM_UNAVAILABLE: quota reached".into()),
         dead_at_ms: 1,
+        redrives: 0,
+        first_dead_at_ms: None,
+        model: None,
     }
 }
 
@@ -249,8 +252,8 @@ async fn queue_coalesces_waiting_duplicates_until_popped() {
     assert_eq!(
         first.envelope,
         Envelope {
-            job: job("t"),
-            attempt: 0
+            attempt: 0,
+            ..Envelope::new(job("t"))
         }
     );
     q.push_new(job("t")).await.unwrap();
@@ -274,8 +277,8 @@ async fn queue_delays_jobs_and_records_dead_letters() {
     };
     let q = RedisQueue::new(conn(&url).await, &keys, LEASE);
     let retry = Envelope {
-        job: job("t"),
         attempt: 2,
+        ..Envelope::new(job("t"))
     };
     q.push_later(retry.clone(), Duration::from_millis(400))
         .await
@@ -338,19 +341,23 @@ async fn dead_letters_are_listed_and_taken_once() {
         department: Some(id("elsewhere")),
         kind: None,
     };
-    assert!(q.take_dead_letters(&none, 50).await.unwrap().is_empty());
+    assert!(q
+        .take_dead_letters(&|l| none.matches(l), 50)
+        .await
+        .unwrap()
+        .is_empty());
 
     // Two nodes redriving at once never take the same letter.
     let (a, b) = tokio::join!(
         {
             let q = Arc::clone(&q);
             let f = skills.clone();
-            async move { q.take_dead_letters(&f, 15).await.unwrap() }
+            async move { q.take_dead_letters(&|l| f.matches(l), 15).await.unwrap() }
         },
         {
             let q = Arc::clone(&q);
             let f = skills.clone();
-            async move { q.take_dead_letters(&f, 15).await.unwrap() }
+            async move { q.take_dead_letters(&|l| f.matches(l), 15).await.unwrap() }
         },
     );
     let mut seen = HashSet::new();
@@ -374,8 +381,8 @@ async fn concurrent_consumers_never_receive_the_same_job() {
         producer
             .push_later(
                 Envelope {
-                    job: job(&format!("delayed-{i}")),
                     attempt: 1,
+                    ..Envelope::new(job(&format!("delayed-{i}")))
                 },
                 Duration::from_millis(150),
             )
@@ -413,8 +420,8 @@ async fn unacked_jobs_are_redelivered_after_their_lease() {
     let crashed = RedisQueue::new(conn(&url).await, &keys, lease);
     let survivor = RedisQueue::new(conn(&url).await, &keys, lease);
     let retry = Envelope {
-        job: job("t"),
         attempt: 2,
+        ..Envelope::new(job("t"))
     };
     crashed
         .push_later(retry.clone(), Duration::ZERO)

@@ -89,7 +89,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | POST | `/v3/pipeline/status` | `{limit?}` (default 50, at most 500) → `{worker: WorkerMetrics, queue: {pending, running, dead_letter}, scopes: ScopeState[]}`. Each scope row has a unique `key`, the ids, `team_name` / `agent_name` / `username`, and `can_read_memory` |
 | POST | `/v3/stats/overview` | Layer counts for the department: `{l0, l1: {total, episodic, persona, instruction}, l2, l3, skills, generation_logs}` |
 | POST | `/v3/memory-generation-log/summary` | `{hours?}` (default 24, at most 720) → `{hours, from_ms, llm: {configured, model}, items: [{layer, status, count}]}`: distillation runs per layer and status |
-| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}` (`l1`, `l2`, `l3`, `skill`; default 50, at most 500) → `{items: [{kind, job, attempt, error, dead_at_ms}]}`, newest first, this department only |
+| POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}` (`l1`, `l2`, `l3`, `skill`; default 50, at most 500) → `{items: [{kind, job, attempt, error, dead_at_ms, redrives, first_dead_at_ms, model}]}`, newest first, this department only |
 | POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}` (default 10, at most 1000) → `{requeued}`: queues the oldest matching dead letters again as first attempts. With a user key, system admins only |
 
 `WorkerMetrics`: `{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`.

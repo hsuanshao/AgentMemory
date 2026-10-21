@@ -14,13 +14,14 @@ use chrono::Utc;
 use memory_application::pipeline::service::{JobFailure, PipelineService};
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::pipeline::{
-    DeadLetter, DeadLetterFilter, JobQueue, PipelineJob, QueueStats,
+    failure_is_deterministic, DeadLetter, DeadLetterAction, DeadLetterFilter, DeadLetterPolicy,
+    JobQueue, PipelineJob, QueueStats,
 };
 use memory_domain::error::{DomainError, DomainResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 const POP_WAIT: Duration = Duration::from_secs(1);
 /// Dead letters the in-process backend keeps (newest win).
@@ -33,6 +34,11 @@ pub struct WorkerSettings {
     pub base_backoff: Duration,
     pub busy_requeue_delay: Duration,
     pub scan_interval: Duration,
+    pub dead_letters: DeadLetterPolicy,
+    /// How often the dead-letter sweeper runs.
+    pub sweep_interval: Duration,
+    /// Dead letters the sweeper requeues per run, at most.
+    pub redrive_batch: usize,
 }
 
 impl Default for WorkerSettings {
@@ -43,15 +49,49 @@ impl Default for WorkerSettings {
             base_backoff: Duration::from_secs(5),
             busy_requeue_delay: Duration::from_millis(200),
             scan_interval: Duration::from_secs(2),
+            dead_letters: DeadLetterPolicy {
+                ttl_ms: 24 * 3_600_000,
+                max_redrives: 3,
+                redrive_after_ms: 3_600_000,
+            },
+            sweep_interval: Duration::from_secs(300),
+            redrive_batch: 10,
         }
     }
 }
 
-/// A queued job and how many times it has failed.
+/// A queued job and how many times it has failed. A job requeued from the
+/// dead letters carries how often that happened and when it first died, so
+/// the next dead letter keeps counting.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Envelope {
     pub job: PipelineJob,
     pub attempt: u32,
+    #[serde(default)]
+    pub redrives: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_dead_at_ms: Option<i64>,
+}
+
+impl Envelope {
+    /// A job's first attempt.
+    pub fn new(job: PipelineJob) -> Self {
+        Self {
+            job,
+            attempt: 0,
+            redrives: 0,
+            first_dead_at_ms: None,
+        }
+    }
+
+    /// A dead letter, requeued as a first attempt.
+    pub fn redrive(letter: DeadLetter) -> Self {
+        Self {
+            first_dead_at_ms: Some(letter.first_dead_at_ms.unwrap_or(letter.dead_at_ms)),
+            redrives: letter.redrives + 1,
+            ..Self::new(letter.job)
+        }
+    }
 }
 
 /// A popped job plus the receipt that acknowledges it. Until acked, a
@@ -94,12 +134,12 @@ pub trait QueueBackend: Send + Sync {
     async fn dead_letter(&self, letter: DeadLetter) -> DomainResult<()>;
     /// Stored dead letters, oldest first.
     async fn dead_letters(&self) -> DomainResult<Vec<DeadLetter>>;
-    /// Removes and returns up to `limit` dead letters matching `filter`,
+    /// Removes and returns up to `limit` dead letters `select` accepts,
     /// oldest first. A letter is returned by at most one caller, even with
-    /// several nodes redriving at once.
+    /// several nodes taking at once.
     async fn take_dead_letters(
         &self,
-        filter: &DeadLetterFilter,
+        select: &(dyn for<'a> Fn(&'a DeadLetter) -> bool + Sync),
         limit: usize,
     ) -> DomainResult<Vec<DeadLetter>>;
     /// `(pending, dead_lettered)`.
@@ -118,6 +158,59 @@ impl WorkerQueue {
             backend,
             running: AtomicUsize::new(0),
         })
+    }
+
+    /// Queues taken dead letters again as first attempts, counting the
+    /// redrive. One that cannot be queued is put back.
+    async fn requeue_letters(&self, letters: Vec<DeadLetter>) -> DomainResult<usize> {
+        let mut requeued = 0;
+        for letter in letters {
+            if let Err(err) = self
+                .backend
+                .push_later(Envelope::redrive(letter.clone()), Duration::ZERO)
+                .await
+            {
+                // Keep it rather than lose it; the next redrive tries again.
+                warn!(error = %err, "redrive failed; keeping the dead letter");
+                self.backend.dead_letter(letter).await?;
+                return Err(err);
+            }
+            requeued += 1;
+        }
+        Ok(requeued)
+    }
+
+    /// One sweep: expires dead letters `policy` is done with, then requeues
+    /// up to `batch` that are due. Returns `(redriven, expired)`.
+    pub async fn sweep_dead_letters(
+        &self,
+        policy: &DeadLetterPolicy,
+        model: &str,
+        batch: usize,
+    ) -> DomainResult<(usize, usize)> {
+        let now = Utc::now().timestamp_millis();
+        let decide = |l: &DeadLetter| policy.decide(l, now, model);
+        let expired = self
+            .backend
+            .take_dead_letters(&|l| decide(l) == DeadLetterAction::Expire, usize::MAX)
+            .await?;
+        for l in &expired {
+            info!(
+                kind = l.job.kind(),
+                redrives = l.redrives,
+                error = l.error.as_deref().unwrap_or("-"),
+                "dead letter expired"
+            );
+        }
+        let due = self
+            .backend
+            .take_dead_letters(&|l| decide(l) == DeadLetterAction::Redrive, batch)
+            .await?;
+        let redriven = self.requeue_letters(due).await?;
+        if redriven > 0 {
+            info!(redriven, "dead letters redriven by the sweeper");
+        }
+        Ok((redriven, expired.len()))
     }
 }
 
@@ -149,18 +242,11 @@ impl JobQueue for WorkerQueue {
     }
 
     async fn redrive(&self, filter: &DeadLetterFilter, limit: usize) -> DomainResult<usize> {
-        let taken = self.backend.take_dead_letters(filter, limit).await?;
-        let mut requeued = 0;
-        for letter in taken {
-            if let Err(err) = self.backend.push_new(letter.job.clone()).await {
-                // Keep it rather than lose it; the next redrive tries again.
-                warn!(error = %err, "redrive failed; keeping the dead letter");
-                self.backend.dead_letter(letter).await?;
-                return Err(err);
-            }
-            requeued += 1;
-        }
-        Ok(requeued)
+        let taken = self
+            .backend
+            .take_dead_letters(&|l| filter.matches(l), limit)
+            .await?;
+        self.requeue_letters(taken).await
     }
 }
 
@@ -205,7 +291,7 @@ impl QueueBackend for LocalQueue {
             return Ok(());
         }
         self.pending.fetch_add(1, Ordering::Relaxed);
-        Self::send(&self.tx, Envelope { job, attempt: 0 })
+        Self::send(&self.tx, Envelope::new(job))
     }
 
     async fn push_later(&self, envelope: Envelope, delay: Duration) -> DomainResult<()> {
@@ -269,14 +355,14 @@ impl QueueBackend for LocalQueue {
 
     async fn take_dead_letters(
         &self,
-        filter: &DeadLetterFilter,
+        select: &(dyn for<'a> Fn(&'a DeadLetter) -> bool + Sync),
         limit: usize,
     ) -> DomainResult<Vec<DeadLetter>> {
         let mut dead = self.dead.lock().expect("dead letter lock");
         let mut taken = Vec::new();
         let mut kept = VecDeque::with_capacity(dead.len());
         for letter in dead.drain(..) {
-            if taken.len() < limit && filter.matches(&letter) {
+            if taken.len() < limit && select(&letter) {
                 taken.push(letter);
             } else {
                 kept.push_back(letter);
@@ -415,7 +501,9 @@ async fn handle_result(
         metrics.completed(Utc::now().to_rfc3339());
         return true;
     };
-    let retry = envelope.attempt < settings.max_retries;
+    // A failure that would repeat is not retried (L1/L2 dropped its input).
+    let retry =
+        envelope.attempt < settings.max_retries && !failure_is_deterministic(&err.to_string());
     metrics.failed(format!("{} job failed: {err}", envelope.job.kind()), retry);
     if retry {
         // 5s, 15s, 45s …
@@ -424,8 +512,8 @@ async fn handle_result(
         requeue(
             queue,
             Envelope {
-                job: envelope.job,
                 attempt: envelope.attempt + 1,
+                ..envelope
             },
             delay,
         )
@@ -438,6 +526,9 @@ async fn handle_result(
             attempt: envelope.attempt,
             error: Some(err.to_string()),
             dead_at_ms: Utc::now().timestamp_millis(),
+            redrives: envelope.redrives,
+            first_dead_at_ms: envelope.first_dead_at_ms,
+            model: Some(pipeline.llm_model().to_owned()),
         };
         match queue.backend.dead_letter(letter).await {
             Ok(()) => true,
@@ -447,6 +538,32 @@ async fn handle_result(
             }
         }
     }
+}
+
+/// Periodically expires and requeues dead letters (`DeadLetterPolicy`).
+/// Taking a letter is exclusive, so several nodes may sweep at once.
+pub fn spawn_dead_letter_sweeper(
+    queue: Arc<WorkerQueue>,
+    pipeline: Arc<PipelineService>,
+    settings: WorkerSettings,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(settings.sweep_interval);
+        loop {
+            ticker.tick().await;
+            match queue
+                .sweep_dead_letters(
+                    &settings.dead_letters,
+                    pipeline.llm_model(),
+                    settings.redrive_batch,
+                )
+                .await
+            {
+                Ok((redriven, expired)) => pipeline.metrics().swept(redriven, expired),
+                Err(err) => warn!(error = %err, "dead letter sweep failed"),
+            }
+        }
+    })
 }
 
 /// Periodically fires due L1 idle timers and L2 schedules.
@@ -475,6 +592,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_sweeper_expires_and_redrives_dead_letters() {
+        const HOUR: i64 = 3_600_000;
+        let policy = DeadLetterPolicy {
+            ttl_ms: 24 * HOUR,
+            max_redrives: 3,
+            redrive_after_ms: HOUR,
+        };
+        let now = Utc::now().timestamp_millis();
+        let letter = |task: &str, error: &str, age: i64, redrives: u32, model: &str| DeadLetter {
+            job: PipelineJob::SkillExtract {
+                department: SegmentId::default_bucket(),
+                task_id: task.into(),
+            },
+            attempt: 3,
+            error: Some(error.into()),
+            dead_at_ms: now - age,
+            redrives,
+            first_dead_at_ms: Some(now - age),
+            model: Some(model.into()),
+        };
+        let backend = LocalQueue::new();
+        for l in [
+            letter("old", "LLM returned 503", 25 * HOUR, 0, "m"),
+            letter("worn", "LLM returned 503", 2 * HOUR, 3, "m"),
+            letter("due", "LLM returned 503", 2 * HOUR, 0, "m"),
+            letter("fresh", "LLM returned 503", 10 * 60_000, 0, "m"),
+            letter("refused", "stderr: … auto-denied", 2 * HOUR, 0, "m"),
+            letter(
+                "other-model",
+                "stderr: … auto-denied",
+                2 * HOUR,
+                0,
+                "old-model",
+            ),
+        ] {
+            backend.dead_letter(l).await.unwrap();
+        }
+        let queue = WorkerQueue::new(backend.clone());
+
+        let (redriven, expired) = queue.sweep_dead_letters(&policy, "m", 10).await.unwrap();
+        assert_eq!((redriven, expired), (2, 2));
+        let kept: Vec<_> = backend
+            .dead_letters()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| match l.job {
+                PipelineJob::SkillExtract { task_id, .. } => task_id,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(kept, ["fresh", "refused"]);
+
+        // Requeued as first attempts that remember their history.
+        for _ in 0..2 {
+            let d = backend
+                .pop(Duration::from_millis(200))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!((d.envelope.attempt, d.envelope.redrives), (0, 1));
+            assert_eq!(d.envelope.first_dead_at_ms, Some(now - 2 * HOUR));
+        }
+    }
+
+    #[tokio::test]
     async fn local_queue_coalesces_waiting_duplicates() {
         let q = LocalQueue::new();
         q.push_new(job()).await.unwrap();
@@ -494,8 +677,8 @@ mod tests {
         let q = LocalQueue::new();
         q.push_later(
             Envelope {
-                job: job(),
                 attempt: 2,
+                ..Envelope::new(job())
             },
             Duration::from_millis(30),
         )

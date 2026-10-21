@@ -185,6 +185,16 @@ const DEAD_COLUMNS: ReadonlyArray<Column<DeadLetter>> = [
   },
   { key: "kind", header: "Kind", render: (d) => <Badge tone="err">{d.kind}</Badge> },
   {
+    key: "redrives",
+    header: "Re-runs",
+    className: "text-right",
+    render: (d) => (
+      <span className="mono text-muted" title="Requeued from the dead letters; expires after 3, or a day after it first failed">
+        {d.redrives ?? 0}
+      </span>
+    ),
+  },
+  {
     key: "what",
     header: "Job · last error",
     render: (d) => (

@@ -242,6 +242,9 @@ pub async fn dead_letter_list(
                 "attempt": d.attempt,
                 "error": d.error,
                 "dead_at_ms": d.dead_at_ms,
+                "redrives": d.redrives,
+                "first_dead_at_ms": d.first_dead_at_ms.unwrap_or(d.dead_at_ms),
+                "model": d.model,
             })
         })
         .collect();

@@ -21,6 +21,7 @@ use memory_application::pipeline::memory_prompts::MemoryPromptService;
 use memory_application::pipeline::metrics::PipelineMetrics;
 use memory_application::pipeline::service::{PipelineDeps, PipelineService, SkillJobRunner};
 use memory_application::ports::meta::KnowledgeRepository;
+use memory_application::ports::pipeline::DeadLetterPolicy;
 use memory_application::ports::system::{Clock, EmbeddingProvider, IdGenerator, LlmClient};
 use memory_application::skill::extraction::{ExtractionSettings, SkillExtractionService};
 use memory_application::skill::service::{SkillService, SkillSettings};
@@ -35,7 +36,9 @@ use memory_infrastructure::openai::{
     EmbeddingSettings, LlmSettings, NoEmbedding, OpenAiEmbedding, OpenAiLlm,
 };
 use memory_infrastructure::system::{RandomIds, SystemClock};
-use memory_infrastructure::worker::{spawn_scanner, spawn_worker, WorkerQueue, WorkerSettings};
+use memory_infrastructure::worker::{
+    spawn_dead_letter_sweeper, spawn_scanner, spawn_worker, WorkerQueue, WorkerSettings,
+};
 use tokio::task::JoinHandle;
 
 use crate::backends::{build_coordination, build_storage};
@@ -301,19 +304,28 @@ pub async fn build(config: &Config) -> Result<App> {
         upgrade,
     };
 
+    let w = &config.worker;
     let worker = WorkerSettings {
-        concurrency: config.worker.concurrency,
-        max_retries: config.worker.max_retries,
-        scan_interval: Duration::from_millis(config.worker.scan_interval_ms),
+        concurrency: w.concurrency,
+        max_retries: w.max_retries,
+        scan_interval: Duration::from_millis(w.scan_interval_ms),
+        dead_letters: DeadLetterPolicy {
+            ttl_ms: (w.dead_letter_ttl_hours * 3_600_000) as i64,
+            max_redrives: w.dead_letter_max_redrives,
+            redrive_after_ms: (w.dead_letter_redrive_after_minutes * 60_000) as i64,
+        },
+        sweep_interval: Duration::from_secs(w.dead_letter_sweep_seconds.max(1)),
+        redrive_batch: w.dead_letter_redrive_batch,
         ..Default::default()
     };
     let background = vec![
         spawn_worker(
-            queue,
+            Arc::clone(&queue),
             Arc::clone(&coordination.job_locks),
             pipeline.clone(),
             worker,
         ),
+        spawn_dead_letter_sweeper(queue, pipeline.clone(), worker),
         spawn_scanner(pipeline, worker.scan_interval),
     ];
 

@@ -1529,3 +1529,71 @@ async fn a_failing_l2_batch_is_dropped() {
         .clone();
     assert_eq!(dropped.as_array().unwrap().len(), 1, "{dropped}");
 }
+
+/// A refused tool call would fail the same way again: it is not retried,
+/// even with retries configured, and the input is dropped at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tool_refusal_is_dropped_without_retries() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/v1/chat/completions",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        "a tool required the \"command\" permission, so it was auto-denied",
+                    )
+                }),
+            ),
+        )
+        .await
+        .unwrap()
+    });
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = format!("http://{addr}/v1");
+        config.llm.api_key = "fake".into();
+        // Retries would take 5 + 15 + 45 s; none must happen.
+        config.worker.max_retries = 3;
+    })
+    .await;
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "run `git status` for me"},
+                {"role": "assistant", "content": "Done."}
+            ]})),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    let mut letters = Vec::new();
+    for _ in 0..50 {
+        letters = dead_letters(&client).await;
+        if !letters.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        letters.len(),
+        1,
+        "dead-lettered within 5 s, so never retried"
+    );
+    assert_eq!(letters[0]["attempt"], 0);
+    assert!(letters[0]["job"]["L1"]["range"].is_object());
+    assert!(letters[0]["model"].is_string(), "{letters:?}");
+    let logs = client
+        .call("/v3/memory-generation-log/list", json!({"layer": "l1"}))
+        .await["data"]["items"]
+        .clone();
+    let statuses: Vec<_> = logs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["status"].clone())
+        .collect();
+    assert_eq!(statuses, [json!("dropped")]);
+}

@@ -13,7 +13,7 @@ use std::time::Duration;
 use ::redis::aio::ConnectionManager;
 use ::redis::{cmd, pipe, Script};
 use async_trait::async_trait;
-use memory_application::ports::pipeline::{DeadLetter, DeadLetterFilter, PipelineJob};
+use memory_application::ports::pipeline::{DeadLetter, PipelineJob};
 use memory_domain::error::DomainResult;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -229,7 +229,7 @@ impl RedisQueue {
 impl QueueBackend for RedisQueue {
     async fn push_new(&self, job: PipelineJob) -> DomainResult<()> {
         let marker = format!("{}{}", self.dedupe_prefix(), dedupe_key(&job));
-        let item = Item::new(Envelope { job, attempt: 0 });
+        let item = Item::new(Envelope::new(job));
         let added: i64 = self
             .push_new
             .key(marker)
@@ -338,7 +338,7 @@ impl QueueBackend for RedisQueue {
 
     async fn take_dead_letters(
         &self,
-        filter: &DeadLetterFilter,
+        select: &(dyn for<'a> Fn(&'a DeadLetter) -> bool + Sync),
         limit: usize,
     ) -> DomainResult<Vec<DeadLetter>> {
         let mut taken = Vec::new();
@@ -346,7 +346,7 @@ impl QueueBackend for RedisQueue {
             if taken.len() == limit {
                 break;
             }
-            if !filter.matches(&letter) {
+            if !select(&letter) {
                 continue;
             }
             // LREM decides the race: only the node that removes it requeues it.

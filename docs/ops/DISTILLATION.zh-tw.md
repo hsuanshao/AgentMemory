@@ -25,7 +25,7 @@ memory-core 會在背景蒸餾對話：L1 擷取記憶，L2 整理成 scene，L3
 
 每筆紀錄也會記下使用的模型。CLI provider 會記成指令加上參數選用的模型，例如 `cli:agy:gemini-3.8-flash-high`。
 
-失敗的 job 會在 5、15、45 秒後重試（`worker.maxRetries`，預設 3 次）。每次嘗試都失敗，就會成為 **dead letter**，並保留最後一次的錯誤。Dead letter 不會自動重試，處理方式見第 5 節。
+失敗的 job 會在 5、15、45 秒後重試（`worker.maxRetries`，預設 3 次）。會重複發生的失敗不會重試：模型想使用工具（蒸餾永遠不允許，見 #37），或回應不是該步驟要求的 JSON。每次嘗試都失敗，或失敗會重複發生時，這個 job 就會成為 **dead letter**，並保留最後一次的錯誤和失敗時使用的模型。dead letter 之後會怎麼處理，見第 5 節。
 
 **L1 和 L2 會 drop 無法蒸餾的那一批。** L1 依序處理一個 session，L2 依序處理一個 agent 的 atom，兩者都從游標開始，而游標只有成功時才會前進。如果某一批每次嘗試都失敗，之後每次執行都會先遇到同一批，後面的內容就全部被擋住。所以在最後一次嘗試仍失敗時：
 - 游標會越過這一批，之後的對話或 atom 照常蒸餾；
@@ -85,7 +85,17 @@ OpenAI 相容 provider 則是 `AGENT_MEMORY_LLM_MODEL`。換之前先確認模�
 
 ## 5. Dead letter 與重跑
 
-修好原因之後，把 dead letter 重新排回佇列：
+**Dead letter 會自動處理。** 每 5 分鐘有一個清理程序（sweeper）檢查一次：
+
+| Dead letter 的狀況 | 處理方式 |
+| --- | --- |
+| 第一次失敗超過一天，或已經重跑 3 次 | **移除**。它的失敗紀錄仍保留在生成紀錄中（`failed` / `dropped`，附錯誤和輸入 id），失去的只有重做的入口 |
+| 暫時性失敗（額度、逾時、服務中斷） | 失敗後 1 小時**自動重跑**，之後依序間隔 2 小時、4 小時。每次最多 10 筆 |
+| 會重複發生的失敗（工具被拒絕、回應無效） | 等到設定的模型變更後，才像其他 dead letter 一樣重跑；同一個模型只會再失敗一次。在開始記錄模型之前寫入的 dead letter，視為用目前的模型失敗 |
+
+不論手動或自動，每次重跑都算進 3 次。相關設定在 `memory-core.yaml` 的 `worker` 區段：`deadLetterTtlHours`（24）、`deadLetterMaxRedrives`（3）、`deadLetterRedriveAfterMinutes`（60）、`deadLetterSweepSeconds`（300）、`deadLetterRedriveBatch`（10）。Panel 會顯示每筆的重跑次數；`/health` 會統計 `dead_letters_redriven` 和 `dead_letters_expired`。
+
+修好原因之後，可以不等自動重跑，手動把 dead letter 排回佇列：
 
 ```bash
 docker compose exec memory-core memory-server dead-letters redrive --limit 10
