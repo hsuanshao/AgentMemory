@@ -88,7 +88,7 @@ coordination:
 
 worker:
   concurrency: 8
-  maxRetries: 3                       # retries of a transient failure; tool refusals and invalid answers are not retried
+  maxRetries: 3                       # retries of a failure; a refused tool call is not retried
   scanIntervalMs: 2000
   deadLetterTtlHours: 24              # dead letters are removed this long after they first died...
   deadLetterMaxRedrives: 3            # ...or once redriven this often; the generation logs keep their failures

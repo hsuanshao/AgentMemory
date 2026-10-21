@@ -25,7 +25,7 @@ Every L1, L2 and L3 run that reaches the LLM leaves a generation log:
 
 Each log also records the model. For a CLI provider that is the command plus the model its arguments select, for example `cli:agy:gemini-3.8-flash-high`.
 
-A failed job is retried after 5, 15 and 45 seconds (`worker.maxRetries`, default 3). A failure that would happen again is not retried: the model tried to use a tool (distillation never allows one, see #37), or its answer was not the JSON the step asks for. If every attempt fails, or the failure would repeat, the job becomes a **dead letter**, kept with its last error and the model it failed with. Section 5 explains what happens to dead letters.
+A failed job is retried after 5, 15 and 45 seconds (`worker.maxRetries`, default 3). A failure that would happen again is not retried: the model tried to use a tool, which distillation never allows (see #37). An answer that is not the step's JSON is retried, because the next one may be fine. If every attempt fails, or the failure would repeat, the job becomes a **dead letter**, kept with its last error and the model it failed with. Section 5 explains what happens to dead letters.
 
 **L1 and L2 drop what they cannot distil.** L1 works through a session and L2 through an agent's atoms, each from a cursor that moves only on success. A batch that fails every attempt would otherwise block everything after it, because each later run starts with the same batch again. So on the last attempt:
 - the cursor moves past the batch, and later turns or atoms are distilled as usual;
@@ -90,10 +90,13 @@ For an OpenAI-compatible provider it is `AGENT_MEMORY_LLM_MODEL`. Before switchi
 | A dead letter… | What happens |
 | --- | --- |
 | first failed more than a day ago, or was already redriven 3 times | It is **removed**. Its failures stay in the generation logs (`failed` / `dropped`, with the error and the input ids), so nothing about it is lost but the redo handle |
-| failed for a passing reason (quota, timeout, outage) | It is **redriven** on its own 1 h after it died, then 2 h, then 4 h. At most 10 per sweep |
-| failed in a way that would repeat (tool refused, invalid answer) | It waits until the configured model changes, then is redriven like the others; with the same model it would only fail again. A letter written before this was recorded is taken to have failed with the current model |
+| failed for a passing reason (quota, timeout, outage, an invalid answer) | It is **redriven** on its own 1 h after it died, then 2 h, then 4 h. At most 10 per sweep |
+| failed in a way that would repeat (tool refused) | It waits until the configured model changes, then is redriven like the others; with the same model it would only fail again. A letter written before this was recorded is taken to have failed with the current model |
 
 Each redrive, by hand or automatic, counts towards the 3. Settings (`memory-core.yaml`, section `worker`): `deadLetterTtlHours` (24), `deadLetterMaxRedrives` (3), `deadLetterRedriveAfterMinutes` (60), `deadLetterSweepSeconds` (300), `deadLetterRedriveBatch` (10). The Panel shows each letter's re-runs; `/health` counts `dead_letters_redriven` and `dead_letters_expired`.
+
+- **Letters from before 0.2.3** carry no time, so they count as older than a day and are removed by the first sweep after an upgrade. Redrive any you still want before upgrading.
+- **A redrive by hand is an admin's override:** it is allowed even for a letter already redriven 3 times. That counts as one more redrive, so if it fails again the next sweep removes it.
 
 Once the cause is fixed, you can redrive sooner by hand:
 

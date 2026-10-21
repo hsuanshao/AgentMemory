@@ -161,18 +161,23 @@ impl WorkerQueue {
     }
 
     /// Queues taken dead letters again as first attempts, counting the
-    /// redrive. One that cannot be queued is put back.
+    /// redrive. When queueing fails, every letter not yet queued (the
+    /// failing one included) goes back to the dead letters, so none is lost.
     async fn requeue_letters(&self, letters: Vec<DeadLetter>) -> DomainResult<usize> {
+        let mut letters = letters.into_iter();
         let mut requeued = 0;
-        for letter in letters {
+        while let Some(letter) = letters.next() {
             if let Err(err) = self
                 .backend
                 .push_later(Envelope::redrive(letter.clone()), Duration::ZERO)
                 .await
             {
-                // Keep it rather than lose it; the next redrive tries again.
-                warn!(error = %err, "redrive failed; keeping the dead letter");
-                self.backend.dead_letter(letter).await?;
+                // Keep them rather than lose them; the next redrive tries again.
+                let rest: Vec<_> = std::iter::once(letter).chain(letters).collect();
+                warn!(error = %err, kept = rest.len(), "redrive failed; keeping the dead letters");
+                for letter in rest {
+                    self.backend.dead_letter(letter).await?;
+                }
                 return Err(err);
             }
             requeued += 1;
@@ -655,6 +660,87 @@ mod tests {
             assert_eq!((d.envelope.attempt, d.envelope.redrives), (0, 1));
             assert_eq!(d.envelope.first_dead_at_ms, Some(now - 2 * HOUR));
         }
+    }
+
+    /// A local queue whose `push_later` fails once `pushes` are used up.
+    struct FailingPushes {
+        inner: Arc<LocalQueue>,
+        pushes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl QueueBackend for FailingPushes {
+        async fn push_new(&self, job: PipelineJob) -> DomainResult<()> {
+            self.inner.push_new(job).await
+        }
+        async fn push_later(&self, envelope: Envelope, delay: Duration) -> DomainResult<()> {
+            // Single-threaded test: load, then take one.
+            if self.pushes.load(Ordering::SeqCst) == 0 {
+                return Err(DomainError::unavailable("queue unreachable"));
+            }
+            self.pushes.fetch_sub(1, Ordering::SeqCst);
+            self.inner.push_later(envelope, delay).await
+        }
+        async fn pop(&self, wait: Duration) -> DomainResult<Option<Delivery>> {
+            self.inner.pop(wait).await
+        }
+        async fn ack(&self, receipt: &str) -> DomainResult<()> {
+            self.inner.ack(receipt).await
+        }
+        async fn extend(&self, receipt: &str) -> DomainResult<()> {
+            self.inner.extend(receipt).await
+        }
+        async fn dead_letter(&self, letter: DeadLetter) -> DomainResult<()> {
+            self.inner.dead_letter(letter).await
+        }
+        async fn dead_letters(&self) -> DomainResult<Vec<DeadLetter>> {
+            self.inner.dead_letters().await
+        }
+        async fn take_dead_letters(
+            &self,
+            select: &(dyn for<'a> Fn(&'a DeadLetter) -> bool + Sync),
+            limit: usize,
+        ) -> DomainResult<Vec<DeadLetter>> {
+            self.inner.take_dead_letters(select, limit).await
+        }
+        async fn counts(&self) -> DomainResult<(usize, usize)> {
+            self.inner.counts().await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_redrive_keeps_every_letter_not_yet_queued() {
+        let inner = LocalQueue::new();
+        for task in ["a", "b", "c"] {
+            inner
+                .dead_letter(DeadLetter {
+                    job: PipelineJob::SkillExtract {
+                        department: SegmentId::default_bucket(),
+                        task_id: task.into(),
+                    },
+                    attempt: 3,
+                    error: Some("LLM returned 503".into()),
+                    dead_at_ms: 1,
+                    redrives: 0,
+                    first_dead_at_ms: None,
+                    model: None,
+                })
+                .await
+                .unwrap();
+        }
+        let queue = WorkerQueue::new(Arc::new(FailingPushes {
+            inner: inner.clone(),
+            pushes: AtomicUsize::new(1),
+        }));
+        let all = DeadLetterFilter::default();
+        assert!(queue.redrive(&all, 10).await.is_err());
+        // "a" was queued; "b" (the failing push) and "c" (never tried) are kept.
+        assert_eq!(inner.dead_letters().await.unwrap().len(), 2);
+        assert!(inner
+            .pop(Duration::from_millis(200))
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]

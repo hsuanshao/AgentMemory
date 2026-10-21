@@ -233,12 +233,13 @@ pub struct DeadLetter {
     pub model: Option<String>,
 }
 
-/// Whether a failure would happen again with the same input and model:
-/// the model tried to use a tool, which distillation never allows (#37), or
-/// its answer was not the JSON the step asks for. Retrying those only spends
-/// LLM time; anything else (quota, timeouts, outages) may pass later.
+/// Whether a failure would happen again with the same input and model: the
+/// model tried to use a tool, which distillation never allows (#37).
+/// Retrying that only spends LLM time. Anything else may pass on another
+/// try: quota, timeouts and outages, and also an answer that was not the
+/// step's JSON (a model sometimes truncates it).
 pub fn failure_is_deterministic(error: &str) -> bool {
-    error.contains("auto-denied") || error.contains("llm_output_invalid")
+    error.contains("auto-denied")
 }
 
 /// What the dead-letter sweeper does with a letter.
@@ -578,10 +579,12 @@ mod tests {
             POLICY.decide(&refused, 2 * HOUR, "cli:agy:pro"),
             DeadLetterAction::Redrive
         );
+        // A bad answer may come out right next time: redriven like a
+        // transient failure.
         let invalid = letter("llm_output_invalid: not JSON", 0, 0, Some("m"));
         assert_eq!(
             POLICY.decide(&invalid, 2 * HOUR, "m"),
-            DeadLetterAction::Keep
+            DeadLetterAction::Redrive
         );
         // Without a recorded model, the current one is assumed.
         let unknown = letter(denied, 0, 0, None);
