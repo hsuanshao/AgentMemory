@@ -71,7 +71,7 @@ cargo test --workspace --locked
 - CI must pass. A maintainer reviews, and may ask for changes, including to the docs.
 - Releases are cut by maintainers ([RELEASE.md](../docs/ops/RELEASE.md)). You don't need to bump versions.
 
-Contributions are released under the project's [MIT License](../LICENSE).
+Contributions are released under the license of the directory they change: the [Business Source License 1.1](../LICENSE) for the server, and the MIT License for `crates/memory-client/` and `clients/`. The maintainer may also offer the server under commercial licenses ([COMMERCIAL.md](../COMMERCIAL.md)); by contributing you agree that your contribution may be included in them.
 
 ## Security
 

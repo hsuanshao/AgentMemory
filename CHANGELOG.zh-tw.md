@@ -6,6 +6,9 @@
 
 ## [未發布]
 
+### 變更
+- **授權：從 0.4.0 版開始，server 端由 MIT 改為 Business Source License 1.1。** 評估測試、個人與非營利使用，以及最多 1 個部門、10 位成員的組織可以免費使用；更大規模的正式環境使用需要商業授權。每個版本發布滿四年後轉為 Apache 2.0。`amem` client（`crates/memory-client/`）和 plugin（`clients/`）維持 MIT，0.3.2 以前的版本也維持 MIT。詳見 [COMMERCIAL.zh-tw.md](COMMERCIAL.zh-tw.md)。
+
 ## [0.3.2] - 2026-10-21
 
 ### 新增

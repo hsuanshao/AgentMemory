@@ -71,7 +71,7 @@ cargo test --workspace --locked
 - CI 必須通過。維護者會 review，可能會要求修改，包括文件。
 - 發版由維護者負責（[RELEASE.zh-tw.md](../docs/ops/RELEASE.zh-tw.md)），你不需要更新版號。
 
-你貢獻的內容會以本專案的 [MIT 授權](../LICENSE)釋出。
+你貢獻的內容會依所修改目錄的授權釋出：server 端是 [Business Source License 1.1](../LICENSE)，`crates/memory-client/` 和 `clients/` 是 MIT。維護者也可能以商業授權提供 server（[COMMERCIAL.zh-tw.md](../COMMERCIAL.zh-tw.md)）；參與貢獻即表示你同意你的貢獻可以包含在這些授權之中。
 
 ## 安全問題
 
