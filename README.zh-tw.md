@@ -228,6 +228,10 @@ llm:
 - 召回與搜尋一律套用範圍隔離；管線游標使用資料庫序號，時間戳相同或補登的訊息不會被跳過。
 - 未提供：分析報表、外部任務匯入、上游模型群組路由、`/v3/skill/export`。
 
+## 參與開發
+
+歡迎提出 issue 和 pull request。開發環境、檢查項目和慣例見 [CONTRIBUTING.zh-tw.md](.github/CONTRIBUTING.zh-tw.md)；另有[行為準則](.github/CODE_OF_CONDUCT.md)，漏洞請依 [SECURITY.md](.github/SECURITY.md) 私下回報。
+
 ## 授權
 
 MIT

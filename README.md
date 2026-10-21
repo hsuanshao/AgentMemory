@@ -228,6 +228,10 @@ See [docs/API.md](docs/API.md) for details. Highlights:
 - Scope isolation is always applied to recall and search; pipeline cursors use database sequence numbers, so messages with identical timestamps or backfilled messages are never skipped.
 - Not provided: analytics reports, external task import, upstream model-group routing, `/v3/skill/export`.
 
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the development setup, checks and conventions, the [Code of Conduct](.github/CODE_OF_CONDUCT.md), and [SECURITY.md](.github/SECURITY.md) to report a vulnerability privately.
+
 ## License
 
 MIT

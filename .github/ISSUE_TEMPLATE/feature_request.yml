@@ -1,0 +1,29 @@
+name: Feature request / 功能需求
+description: Propose a change or a new capability. / 提出改動或新功能。
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AgentMemory is self-hosted memory for agents that work in teams: departments, teams, members and agents. Please describe the problem first; the solution can be discussed.
+        請先描述問題本身，解法可以再討論。中文或英文皆可。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 問題
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal / 建議的做法
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考慮過的其他做法
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / 其他資訊
+      description: Deployment, scale, links, screenshots.

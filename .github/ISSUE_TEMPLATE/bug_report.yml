@@ -1,0 +1,66 @@
+name: Bug report / 問題回報
+description: Something does not work as documented. / 功能沒有照文件說明運作。
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems: please report privately instead, see [SECURITY.md](https://github.com/hsuanshao/AgentMemory/blob/main/.github/SECURITY.md).
+        安全問題請不要在這裡回報，請見 SECURITY.md。中文或英文皆可。
+  - type: input
+    id: version
+    attributes:
+      label: Version / 版本
+      description: "`version` from `curl -s http://<server>:8420/health`, and `amem --version` if a client is involved."
+      placeholder: "memory-core 0.3.2, amem 0.3.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / 元件
+      multiple: true
+      options:
+        - memory-core (server)
+        - Panel
+        - amem (client)
+        - Claude Code plugin
+        - Codex plugin
+        - Antigravity plugin
+        - Hermes plugin
+        - install.sh / upgrade.sh / migrate-to-postgres.sh
+        - Docs / 文件
+    validations:
+      required: true
+  - type: input
+    id: deployment
+    attributes:
+      label: Deployment / 部署方式
+      description: Storage backend, coordination backend, LLM provider (and model).
+      placeholder: "postgres + redis, cli:agy:gemini-3.8-flash-high"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / 發生了什麼
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected / 預期的結果
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 重現步驟
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / 記錄
+      description: "e.g. `docker compose logs memory-core --since 10m`. Remove keys (sk-mem-…, API keys) and personal data first. / 貼上前請移除 key 和個人資料。"
+      render: text
