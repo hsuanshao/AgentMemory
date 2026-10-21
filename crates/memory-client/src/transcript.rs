@@ -562,6 +562,32 @@ mod tests {
     }
 
     #[test]
+    fn queued_prompts_from_other_sessions_are_not_user_messages() {
+        let queued = |origin: Value, meta: bool, prompt: &str| {
+            json!({"type":"attachment","attachment":{
+                "type":"queued_command","commandMode":"prompt","isMeta":meta,
+                "origin":origin,"prompt":prompt}})
+            .to_string()
+        };
+        let lines = [
+            queued(json!({"kind":"human"}), false, "from a person"),
+            queued(
+                json!({"kind":"peer","from":"uds:/tmp/s.sock"}),
+                true,
+                "from another session",
+            ),
+            queued(json!({"kind":"peer"}), false, "peer without meta"),
+            queued(json!({"kind":"human"}), true, "meta from a person"),
+            json!({"type":"attachment","attachment":{
+                "type":"queued_command","commandMode":"prompt","prompt":"no origin"}})
+            .to_string(),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let contents: Vec<_> = claude_code(&refs).into_iter().map(|m| m.content).collect();
+        assert_eq!(contents, ["from a person", "no origin"]);
+    }
+
+    #[test]
     fn claude_code_turn_with_tools() {
         let lines = [
             json!({"type":"user","message":{"content":"<system-reminder>ctx</system-reminder>\nfix the build"}}).to_string(),
