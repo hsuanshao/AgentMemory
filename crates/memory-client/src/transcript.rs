@@ -533,6 +533,32 @@ mod tests {
     }
 
     #[test]
+    fn adjacent_queued_prompts_are_skipped_one_by_one() {
+        let queued = |prompt: &str| {
+            json!({"type":"attachment","attachment":{
+                "type":"queued_command","commandMode":"prompt","prompt":prompt}})
+            .to_string()
+        };
+        let lines = [
+            json!({"type":"user","message":{"content":"fix the build"}}).to_string(),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}]}})
+                .to_string(),
+            queued("[AGEND-MSG] id=1"),
+            queued("also run the tests"),
+            queued("[AGEND-MSG] id=2"),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}})
+                .to_string(),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let kept = drop_skipped_turns(claude_code(&refs), |p| p.starts_with("[AGEND-"));
+        let contents: Vec<_> = kept.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            ["fix the build", "Looking.", "also run the tests", "Done."]
+        );
+    }
+
+    #[test]
     fn claude_code_turn_with_tools() {
         let lines = [
             json!({"type":"user","message":{"content":"<system-reminder>ctx</system-reminder>\nfix the build"}}).to_string(),
