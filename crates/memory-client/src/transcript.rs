@@ -64,12 +64,14 @@ impl Msg {
 }
 
 /// Appends, merging consecutive text of the same role and dropping blanks.
+/// Interjected messages are never merged: each one is skipped or kept on
+/// its own.
 fn push(out: &mut Vec<Msg>, msg: Msg) {
     if msg.content.trim().is_empty() && msg.is_text() {
         return;
     }
     if let Some(last) = out.last_mut() {
-        if msg.is_text() && last.role == msg.role && last.interjected == msg.interjected {
+        if msg.is_text() && last.role == msg.role && !last.interjected && !msg.interjected {
             last.content.push_str("\n\n");
             last.content.push_str(&msg.content);
             return;
@@ -522,7 +524,8 @@ mod tests {
             [
                 ("user", "install it", false),
                 ("assistant", "Installing.", false),
-                ("user", "globally\n\nlike this", true),
+                ("user", "globally", true),
+                ("user", "like this", true),
                 ("assistant", "Installed globally.", false),
             ]
         );
