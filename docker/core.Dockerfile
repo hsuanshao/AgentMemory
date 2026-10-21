@@ -21,10 +21,16 @@ FROM rust:1-slim-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-# Cache the registry and target dir across builds (BuildKit).
+# Cache the registry and target dir across builds (BuildKit). Cargo decides
+# what to rebuild by modification time, and sources from an archive (git
+# archive, a release tarball) carry their commit time, which can be older than
+# the cached build: cargo would then ship the previous binary. This step only
+# runs when crates/ changed (BuildKit compares content), so touching the
+# sources costs nothing otherwise and forces the workspace crates to rebuild.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p memory-server \
+    find crates -type f -exec touch {} + \
+ && cargo build --release --locked -p memory-server \
  && cp target/release/memory-server /usr/local/bin/memory-server
 
 FROM debian:bookworm-slim AS runtime

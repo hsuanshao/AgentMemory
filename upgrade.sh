@@ -156,6 +156,82 @@ add_new_settings() {
   fi
 }
 
+# The new version validates its configuration at startup and refuses some
+# settings an older one accepted, e.g. distillation CLI arguments that grant
+# the model capability (#37). Check with the new image before starting it.
+# The check image gets its own tag, so the tag the running services use (and
+# the backup's pre-upgrade copy of it) still points at the old version.
+# Anything that fails between the backup and starting the new version (the
+# build, the check, a settings step) ends in roll_back: .env as it was and the
+# previous version running again.
+CHECK_TAG=upgrade-check
+check_config() {
+  info "Building the new version and checking the configuration…"
+  MEMORY_IMAGE_TAG=$CHECK_TAG docker compose build memory-core
+  local out rc=0 name="agentmemory-upgrade-check-$$" limit=()
+  # A binary without `check-config` would start the server instead and never
+  # exit; the timeout turns that into a refusal rather than a hang. macOS has
+  # no `timeout`, so the check runs without one there.
+  command -v timeout >/dev/null && limit=(timeout 120)
+  out=$(MEMORY_IMAGE_TAG=$CHECK_TAG ${limit[@]+"${limit[@]}"} \
+    docker compose run --rm --no-deps -T --name "$name" memory-core check-config 2>&1 </dev/null) || rc=$?
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker image rm -f "memory-core:$CHECK_TAG" >/dev/null 2>&1 || true
+  if ((rc != 0)); then
+    printf '%s\n' "$out" >&2
+    ((rc == 124)) && warn "The configuration check did not finish within 120 s."
+    fail "The new version refuses this configuration (above). Fix $ENV_FILE and run ./upgrade.sh again."
+  fi
+  ok "Configuration accepted."
+}
+
+# roll_back — on any failure after the backup until the new version answers
+# /health: put .env back and run the previous version again. The services may
+# be stopped (backup) or already recreated on the new image (start_services),
+# so the previous images, which the backup tagged :pre-upgrade-<stamp>, take
+# back the running tag before `docker compose up`. Runs from the EXIT trap, so
+# `set -e` exits are covered; `set +e` inside, so one failed step does not end
+# the rollback early.
+ROLL_BACK_ON_FAILURE=false
+roll_back() {
+  local rc=$? image tag=${MEMORY_IMAGE_TAG:-local} env_restored=true
+  set +e
+  if ((rc != 0)) && [[ $ROLL_BACK_ON_FAILURE == true ]]; then
+    warn "The upgrade did not finish; going back to the previous version."
+    if ! cp "$ENV_BEFORE_UPGRADE" "$ENV_FILE"; then
+      env_restored=false
+      if [[ -f $ENV_BEFORE_UPGRADE ]]; then
+        warn "Could not restore $ENV_FILE. The copy from before the upgrade is kept at $ENV_BEFORE_UPGRADE${BACKUP_DIR:+ (also $BACKUP_DIR/env)}; copy it back by hand."
+      else
+        warn "Could not restore $ENV_FILE${BACKUP_DIR:+; the copy from before the upgrade is $BACKUP_DIR/env}."
+      fi
+    fi
+    docker rm -f "agentmemory-upgrade-check-$$" >/dev/null 2>&1
+    docker image rm -f "memory-core:$CHECK_TAG" >/dev/null 2>&1
+    if [[ -n ${BACKUP_DIR:-} && -f $BACKUP_DIR/images ]]; then
+      while read -r image; do
+        docker image tag "$image" "${image%%:*}:$tag" ||
+          warn "Could not restore $image as ${image%%:*}:$tag."
+      done <"$BACKUP_DIR/images"
+    else
+      warn "No previous images were kept (UPGRADE_SKIP_BACKUP=1?); the services start on whatever image they have."
+    fi
+    if docker compose up -d --no-build >/dev/null 2>&1; then
+      if [[ $env_restored == true ]]; then
+        warn "$ENV_FILE is as it was and the previous version runs again. Backup: ${BACKUP_DIR:-none}."
+      else
+        warn "The previous version runs again, but $ENV_FILE was not restored (above). Backup: ${BACKUP_DIR:-none}."
+      fi
+      warn "If the new version had already migrated stored data, restore the backup as well (docs/UPGRADE.md, Roll back)."
+    else
+      warn "Could not start the previous version; run: docker compose up -d --no-build"
+    fi
+  fi
+  # Keep the copy when it could not be put back: it may be the only one.
+  [[ $env_restored == true ]] && rm -f "$ENV_BEFORE_UPGRADE"
+  exit "$rc"
+}
+
 # ── 3. move the legacy data ──────────────────────────────────────────
 
 # json_field JSON name — first string or number value of "name" (flat fields only)
@@ -297,10 +373,18 @@ main_upgrade() {
   bold "Agent Memory upgrade"
   require_docker
   load_env
+  # A copy of .env as it was, so a failed upgrade can put it back.
+  ENV_BEFORE_UPGRADE=$(umask 077 && mktemp)
+  trap roll_back EXIT
+  cp "$ENV_FILE" "$ENV_BEFORE_UPGRADE"
+  ROLL_BACK_ON_FAILURE=true
   backup
   rename_settings
   add_new_settings
+  check_config
+  # start_services waits for /health; only a version that answers is kept.
   start_services
+  ROLL_BACK_ON_FAILURE=false
   migrate_legacy
   [[ ${LEGACY_MOVED:-false} == true ]] && write_client_settings
   print_upgrade_summary

@@ -623,10 +623,16 @@ mod tests {
             letter("worn", "LLM returned 503", 2 * HOUR, 3, "m"),
             letter("due", "LLM returned 503", 2 * HOUR, 0, "m"),
             letter("fresh", "LLM returned 503", 10 * 60_000, 0, "m"),
-            letter("refused", "stderr: … auto-denied", 2 * HOUR, 0, "m"),
+            letter(
+                "refused",
+                "LLM_TOOL_REQUEST: `agy` produced no output",
+                2 * HOUR,
+                0,
+                "m",
+            ),
             letter(
                 "other-model",
-                "stderr: … auto-denied",
+                "LLM_TOOL_REQUEST: `agy` produced no output",
                 2 * HOUR,
                 0,
                 "old-model",

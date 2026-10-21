@@ -35,6 +35,13 @@ async fn main() -> Result<()> {
         Some("dead-letters") => {
             return memory_server::ops_cli::dead_letters(std::env::args().skip(2)).await
         }
+        // Loads and validates the configuration without starting anything,
+        // so upgrade.sh can stop before replacing a running service.
+        Some("check-config") => {
+            Config::load()?;
+            println!("configuration OK");
+            return Ok(());
+        }
         _ => {}
     }
 

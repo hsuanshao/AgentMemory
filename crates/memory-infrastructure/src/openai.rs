@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use memory_application::ports::system::{ChatMessage, EmbeddingProvider, LlmClient};
+use memory_application::ports::system::{
+    ChatMessage, EmbeddingProvider, LlmClient, LLM_TOOL_REQUEST,
+};
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use serde::Deserialize;
 use serde_json::json;
@@ -43,7 +45,21 @@ struct ChatResponse {
 
 #[derive(Deserialize)]
 struct ChatChoice {
-    message: ChatMessage,
+    message: ResponseMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+/// An assistant message as returned: `content` is null when the model only
+/// called a tool.
+#[derive(Deserialize)]
+struct ResponseMessage {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    function_call: Option<serde_json::Value>,
 }
 
 #[async_trait]
@@ -92,9 +108,67 @@ impl LlmClient for OpenAiLlm {
             .choices
             .into_iter()
             .next()
-            .map(|c| c.message.content)
             .ok_or_else(|| llm_unavailable("LLM returned no choices"))
+            .and_then(answer)
     }
+}
+
+/// Markers some chat templates use when a model writes a tool call as text.
+const TOOL_CALL_MARKUP: &[(&str, &str)] = &[
+    ("<tool_call>", "</tool_call>"),
+    ("<|tool_call|>", "<|/tool_call|>"),
+    ("<function_call>", "</function_call>"),
+];
+
+/// The answer in a choice. We never send `tools`, so a tool call means the
+/// model tried to act instead of answering (#37): that fails with
+/// `LLM_TOOL_REQUEST` and is not retried. Only an explicit tool call counts,
+/// and only when nothing else was written: an answer next to one is kept,
+/// with the tool-call markup removed.
+fn answer(choice: ChatChoice) -> DomainResult<String> {
+    let content = choice.message.content.unwrap_or_default();
+    let remainder = without_tool_markup(&content);
+    let called_tool = matches!(
+        choice.finish_reason.as_deref(),
+        Some("tool_calls" | "function_call")
+    ) || choice
+        .message
+        .tool_calls
+        .as_ref()
+        .is_some_and(|c| !c.is_empty())
+        || choice.message.function_call.is_some()
+        || remainder.len() < content.trim().len();
+    if !remainder.is_empty() {
+        // Without the markup: the steps parse from the first `{` or `[`, so a
+        // tool call left in front of the answer would break the parse.
+        return Ok(remainder);
+    }
+    if called_tool {
+        return Err(DomainError::new(
+            ErrorKind::Unprocessable,
+            LLM_TOOL_REQUEST,
+            format!(
+                "the model returned a tool call instead of an answer (finish_reason: {})",
+                choice.finish_reason.as_deref().unwrap_or("none")
+            ),
+        ));
+    }
+    Err(llm_unavailable("LLM returned no content"))
+}
+
+/// The text with every tool-call markup block removed, trimmed. An unclosed
+/// block runs to the end.
+fn without_tool_markup(text: &str) -> String {
+    let mut rest = text.to_owned();
+    for (open, close) in TOOL_CALL_MARKUP {
+        while let Some(start) = rest.find(open) {
+            let end = rest[start..]
+                .find(close)
+                .map_or(rest.len(), |i| start + i + close.len());
+            rest.replace_range(start..end, "");
+        }
+    }
+    rest.trim().to_owned()
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +288,64 @@ impl EmbeddingProvider for NoEmbedding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn choice(raw: serde_json::Value) -> ChatChoice {
+        serde_json::from_value(raw).unwrap()
+    }
+
+    #[test]
+    fn a_tool_call_without_an_answer_is_a_tool_request() {
+        for raw in [
+            json!({"message": {"content": null, "tool_calls": [{"id": "c1", "type": "function",
+                "function": {"name": "bash", "arguments": "{\"cmd\":\"ls\"}"}}]},
+                "finish_reason": "tool_calls"}),
+            json!({"message": {"content": null, "function_call": {"name": "bash"}},
+                "finish_reason": "function_call"}),
+            json!({"message": {"content": "<tool_call>{\"name\": \"bash\"}</tool_call>"},
+                "finish_reason": "stop"}),
+            json!({"message": {"content": "  <|tool_call|>{\"name\": \"ls\"}"}}),
+        ] {
+            let err = answer(choice(raw.clone())).unwrap_err();
+            assert_eq!(err.code, LLM_TOOL_REQUEST, "{raw}");
+            assert!(
+                memory_application::ports::pipeline::failure_is_deterministic(&err.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn an_answer_is_kept_even_next_to_a_tool_call() {
+        let plain = answer(choice(
+            json!({"message": {"content": "[]"}, "finish_reason": "stop"}),
+        ));
+        assert_eq!(plain.unwrap(), "[]");
+        let both = answer(choice(json!({
+            "message": {"content": "<tool_call>{}</tool_call>\n[{\"scene_name\": \"x\"}]",
+                "tool_calls": [{"id": "c1"}]},
+            "finish_reason": "tool_calls"})));
+        // Returned without the markup, so the step's parser reads the answer.
+        let both = both.unwrap();
+        assert_eq!(both, "[{\"scene_name\": \"x\"}]");
+        let parsed: serde_json::Value =
+            memory_application::pipeline::llm_json::parse_llm_json(&both, '[').unwrap();
+        assert_eq!(parsed[0]["scene_name"], "x");
+        // Mentioning tools is not calling one.
+        let prose = answer(choice(
+            json!({"message": {"content": "use the tool_calls field"}}),
+        ));
+        assert!(prose.is_ok());
+    }
+
+    #[test]
+    fn an_empty_answer_stays_retryable() {
+        let err = answer(choice(
+            json!({"message": {"content": null}, "finish_reason": "length"}),
+        ))
+        .unwrap_err();
+        assert_eq!(err.code, "LLM_UNAVAILABLE");
+        let err = answer(choice(json!({"message": {"content": "   "}}))).unwrap_err();
+        assert_eq!(err.code, "LLM_UNAVAILABLE");
+    }
 
     #[test]
     fn normalise_produces_unit_vectors_and_scrubs_nan() {

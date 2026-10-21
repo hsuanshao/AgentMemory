@@ -11,7 +11,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use memory_application::ports::system::{ChatMessage, LlmClient};
+use memory_application::ports::system::{ChatMessage, LlmClient, LLM_TOOL_REQUEST};
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -49,12 +49,183 @@ pub struct CliLlm {
     label: String,
 }
 
+/// What `codex` turns off: connectors, plugins, shell and code execution,
+/// sub-agents, browsing and image tools, and web search; the sandbox is
+/// pinned read-only. Feature names come from `codex features list` (0.163);
+/// codex rejects an unknown one, so a rename shows up as a failed run rather
+/// than a silently armed tool. `unified_exec` does not turn off on 0.163, but
+/// `shell_tool`, which carries the command tools, does.
+#[rustfmt::skip]
+const CODEX_HARDENING: &[&str] = &[
+    "--disable", "apps",
+    "--disable", "plugins",
+    "--disable", "remote_plugin",
+    "--disable", "shell_tool",
+    "--disable", "unified_exec",
+    "--disable", "code_mode_host",
+    "--disable", "multi_agent",
+    "--disable", "goals",
+    "--disable", "skill_search",
+    "--disable", "tool_suggest",
+    "--disable", "browser_use",
+    "--disable", "browser_use_external",
+    "--disable", "computer_use",
+    "--disable", "in_app_browser",
+    "--disable", "image_generation",
+    "-c", "web_search=disabled",
+    "-c", "sandbox_mode=\"read-only\"",
+];
+
+/// Put after codex's `exec`: MCP servers and profiles live in
+/// `$CODEX_HOME/config.toml`, which no argument can switch off, so the file is
+/// not read at all. Sign-in still comes from `CODEX_HOME`; settings the
+/// distillation needs go in the arguments (`-c model=…`).
+const CODEX_EXEC_HARDENING: &str = "--ignore-user-config";
+
+/// What `claude` turns off: every built-in tool, MCP servers from settings,
+/// and skills and slash commands.
+const CLAUDE_HARDENING: &[&str] = &[
+    "--tools",
+    "",
+    "--strict-mcp-config",
+    "--disable-slash-commands",
+];
+
+/// `args` with a known CLI's own tools turned off before it reads untrusted
+/// conversation text (#37); the added arguments only remove capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Hardened {
+    /// Every known switch was applied.
+    Full(Vec<String>),
+    /// Applied in part; the string says what could not be.
+    Partial(Vec<String>, &'static str),
+    /// No known way for this CLI (e.g. `agy`): its tool attempts are refused
+    /// in headless mode and the input is dropped.
+    Unknown,
+}
+
+pub fn harden(command: &str, args: &[String]) -> Hardened {
+    let owned = |list: &[&str]| list.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+    match command_name(command).as_str() {
+        "claude" => Hardened::Full(
+            owned(CLAUDE_HARDENING)
+                .into_iter()
+                .chain(args.iter().cloned())
+                .collect(),
+        ),
+        "codex" => {
+            let mut out = owned(CODEX_HARDENING);
+            match args.iter().position(|a| a == "exec" || a == "e") {
+                Some(i) => {
+                    out.extend(args[..=i].iter().cloned());
+                    out.push(CODEX_EXEC_HARDENING.to_owned());
+                    out.extend(args[i + 1..].iter().cloned());
+                    Hardened::Full(out)
+                }
+                None => {
+                    out.extend(args.iter().cloned());
+                    Hardened::Partial(out, "no `exec` in the arguments, so codex still reads config.toml (MCP servers, profiles)")
+                }
+            }
+        }
+        _ => Hardened::Unknown,
+    }
+}
+
+/// The first argument that would give the tool more than it has by default:
+/// skipped permission checks, auto-approval, allow-lists, extra MCP servers,
+/// web search, re-enabled features, profiles or a writable sandbox.
+/// Distillation never gets any of these, whatever the hardening setting (#37).
+pub fn granting_arg<'a>(command: &str, args: &'a [String]) -> Option<&'a str> {
+    let name = command_name(command);
+    args.iter().enumerate().find_map(|(i, arg)| {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with('-') => (flag, Some(value)),
+            _ => (arg.as_str(), None),
+        };
+        // codex's short options also take their value attached: `-cKEY=VALUE`,
+        // `-sMODE`, `-pNAME`.
+        let (flag, inline) = match attached_short(&name, arg) {
+            Some((short, value)) => (short, Some(value)),
+            None => (flag, inline),
+        };
+        let value = || inline.or_else(|| args.get(i + 1).map(String::as_str));
+        let grants = match flag {
+            f if f.starts_with("--dangerously") || f.starts_with("--allow-dangerously") => true,
+            "--yolo" | "--full-auto" | "--allowedTools" | "--allowed-tools" => true,
+            "--mcp-config" | "--permission-prompt-tool" => true,
+            "--permission-mode" => value().is_some_and(|v| v != "default" && v != "plan"),
+            "--tools" => name == "claude" && value().is_some_and(|v| !v.trim().is_empty()),
+            "--enable" | "--search" | "-p" | "--profile" => name == "codex",
+            "-s" | "--sandbox" => name == "codex" && value().is_some_and(|v| v != "read-only"),
+            "-c" | "--config" => name == "codex" && value().is_some_and(codex_setting_grants),
+            _ => false,
+        };
+        grants.then_some(arg.as_str())
+    })
+}
+
+/// A codex short option written with its value attached (`-cKEY=VALUE`,
+/// `-sMODE`, `-pNAME`, also `-c=KEY=VALUE`), split into the option and the
+/// value.
+fn attached_short<'a>(name: &str, arg: &'a str) -> Option<(&'static str, &'a str)> {
+    if name != "codex" {
+        return None;
+    }
+    ["-c", "-s", "-p"].into_iter().find_map(|short| {
+        let rest = arg.strip_prefix(short)?;
+        let rest = rest.strip_prefix('=').unwrap_or(rest);
+        (!rest.is_empty()).then_some((short, rest))
+    })
+}
+
+/// Whether codex runs through `exec`, where `--ignore-user-config` keeps
+/// config.toml (MCP servers, profiles) out of distillation.
+pub fn codex_without_exec(command: &str, args: &[String]) -> bool {
+    command_name(command) == "codex" && !args.iter().any(|a| a == "exec" || a == "e")
+}
+
+/// Whether a codex `-c key=value` override grants capability: MCP servers,
+/// a feature switched on, web search, a sandbox other than read-only, sandbox
+/// permissions, an approval policy or a profile. Other settings (model,
+/// reasoning effort, service tier) are fine.
+fn codex_setting_grants(setting: &str) -> bool {
+    let (key, value) = setting.split_once('=').unwrap_or((setting, ""));
+    let key = key.trim();
+    let value = value
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_ascii_lowercase();
+    let under = |prefix: &str| key == prefix || key.starts_with(&format!("{prefix}."));
+    if under("mcp_servers")
+        || under("profiles")
+        || under("sandbox_permissions")
+        || under("sandbox_workspace_write")
+    {
+        return true;
+    }
+    match key {
+        "profile" | "approval_policy" | "features" => true,
+        "sandbox_mode" => value != "read-only",
+        k if k == "web_search" || k.ends_with(".web_search") => {
+            value != "disabled" && value != "false"
+        }
+        k if k.starts_with("features.") => value != "false",
+        _ => false,
+    }
+}
+
+/// The executable's file name, without its directory.
+fn command_name(command: &str) -> String {
+    std::path::Path::new(command)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| command.to_owned())
+}
+
 impl CliLlm {
     pub fn new(settings: CliLlmSettings) -> Self {
-        let name = std::path::Path::new(&settings.command)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| settings.command.clone());
+        let name = command_name(&settings.command);
         let label = match model_arg(&settings.args) {
             Some(model) => format!("cli:{name}:{model}"),
             None => format!("cli:{name}"),
@@ -139,22 +310,30 @@ impl CliLlm {
             })?
             .map_err(|e| unavailable(format!("`{}` failed: {e}", self.settings.command)))?;
         if !output.status.success() {
-            return Err(unavailable(format!(
-                "`{}` exited with {}: {}",
-                self.settings.command,
-                output.status,
-                failure_reason(&output.stderr, &output.stdout, &prompt)
-            )));
+            return Err(failure(
+                format!(
+                    "`{}` exited with {}: {}",
+                    self.settings.command,
+                    output.status,
+                    failure_reason(&output.stderr, &output.stdout, &prompt)
+                ),
+                &output.stderr,
+                &prompt,
+            ));
         }
         let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         if text.is_empty() {
             // A tool can exit 0 and still explain itself on stderr (a refused
             // or throttled request); keep that, without the echoed prompt.
-            return Err(unavailable(format!(
-                "`{}` produced no output; stderr: {}",
-                self.settings.command,
-                failure_reason(&output.stderr, b"", &prompt)
-            )));
+            return Err(failure(
+                format!(
+                    "`{}` produced no output; stderr: {}",
+                    self.settings.command,
+                    failure_reason(&output.stderr, b"", &prompt)
+                ),
+                &output.stderr,
+                &prompt,
+            ));
         }
         Ok(text)
     }
@@ -237,13 +416,42 @@ fn unavailable(detail: String) -> DomainError {
     DomainError::new(ErrorKind::Unavailable, "LLM_UNAVAILABLE", detail)
 }
 
+/// A failed run: a refused tool call gets its own code; anything else may
+/// pass next time. The refusal is recognised by the CLI's own message as a
+/// whole line of its stderr, after its echo of the prompt, never by a word
+/// that conversation text quoted in the output could also contain.
+fn failure(detail: String, stderr: &[u8], prompt: &str) -> DomainError {
+    let stderr = String::from_utf8_lossy(stderr);
+    if after_echo(&stderr, prompt).lines().any(is_tool_refusal) {
+        DomainError::new(ErrorKind::Unprocessable, LLM_TOOL_REQUEST, detail)
+    } else {
+        unavailable(detail)
+    }
+}
+
+/// agy (jetski) 1.4: `jetski: no output produced — a tool required the
+/// "command" permission that headless mode cannot prompt for, so it was
+/// auto-denied. …`
+fn is_tool_refusal(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("jetski: ")
+        && line.contains("headless mode cannot prompt for")
+        && line.contains("so it was auto-denied")
+}
+
+/// Told to every CLI agent, since they are built to reach for tools: a tool
+/// call is refused, and some CLIs then fail the whole run (#37).
+const NO_TOOLS: &str =
+    "You have no tools in this task: do not read files, run commands, search or \
+     browse. Everything you need is in this prompt; answer from it alone.";
+
 /// Flattens chat messages into one prompt: the system prompt is wrapped in
 /// tags so tools without a system-prompt flag still keep it apart.
 pub fn render_prompt(messages: &[ChatMessage]) -> String {
     messages
         .iter()
         .map(|m| match m.role.as_str() {
-            "system" => format!("<system>\n{}\n</system>", m.content),
+            "system" => format!("<system>\n{NO_TOOLS}\n\n{}\n</system>", m.content),
             _ => m.content.clone(),
         })
         .collect::<Vec<_>>()
@@ -296,7 +504,100 @@ mod tests {
             .complete(&ask())
             .await
             .unwrap();
-        assert_eq!(out, "<system>\nbe brief\n</system>\n\nhello");
+        assert_eq!(
+            out,
+            format!("<system>\n{NO_TOOLS}\n\nbe brief\n</system>\n\nhello")
+        );
+    }
+
+    #[test]
+    fn known_clis_get_their_tools_turned_off() {
+        let args = |s: &str| s.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        let Hardened::Full(claude) = harden("/usr/local/bin/claude", &args("-p")) else {
+            panic!("claude is fully hardened");
+        };
+        assert_eq!(&claude[..2], ["--tools", ""]);
+        assert_eq!(claude.last().map(String::as_str), Some("-p"));
+        let Hardened::Full(codex) =
+            harden("codex", &args("exec --skip-git-repo-check -s read-only -"))
+        else {
+            panic!("codex with exec is fully hardened");
+        };
+        assert!(codex.windows(2).any(|w| w == ["--disable", "apps"]));
+        assert!(codex.windows(2).any(|w| w == ["--disable", "shell_tool"]));
+        assert!(codex.windows(2).any(|w| w == ["-c", "web_search=disabled"]));
+        assert!(codex
+            .windows(2)
+            .any(|w| w == ["-c", "sandbox_mode=\"read-only\""]));
+        // config.toml (MCP servers, profiles) is skipped, right after `exec`.
+        assert!(codex
+            .windows(2)
+            .any(|w| w == ["exec", "--ignore-user-config"]));
+        assert!(matches!(
+            harden("codex", &args("--version")),
+            Hardened::Partial(..)
+        ));
+        assert_eq!(harden("agy", &args("-p")), Hardened::Unknown);
+        assert_eq!(harden("ollama", &args("run m")), Hardened::Unknown);
+        // Hardening itself never trips the check for granting arguments.
+        assert_eq!(granting_arg("claude", &claude), None);
+        assert_eq!(granting_arg("codex", &codex), None);
+    }
+
+    #[test]
+    fn granting_arguments_are_found_in_either_form() {
+        let args = |s: &str| s.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(
+            granting_arg("agy", &args("-p {prompt} --dangerously-skip-permissions")),
+            Some("--dangerously-skip-permissions")
+        );
+        assert_eq!(
+            granting_arg("claude", &args("-p --permission-mode=acceptEdits")),
+            Some("--permission-mode=acceptEdits")
+        );
+        assert_eq!(
+            granting_arg("codex", &args("exec -s danger-full-access")),
+            Some("-s")
+        );
+        assert_eq!(granting_arg("codex", &args("exec -s read-only")), None);
+        // codex settings: MCP servers, web search, profiles, approval and a
+        // writable sandbox grant; model and effort settings do not.
+        for granting in [
+            "exec -c mcp_servers.x.command=\"true\"",
+            "exec -c web_search=live",
+            "exec --config=web_search=\"cached\"",
+            "exec -c features.apps=true",
+            "exec -c features={apps=true}",
+            "exec -c sandbox_mode=\"workspace-write\"",
+            "exec -c approval_policy=never",
+            "exec -c profile=work",
+            "exec -p work",
+            "--search exec",
+            "exec -cmcp_servers.x.command=\"true\"",
+            "exec -cweb_search=live",
+            "exec -sdanger-full-access",
+            "exec -pwork",
+            "exec -c=mcp_servers.x.command=\"true\"",
+            "exec -c=web_search=live",
+            "exec -s=danger-full-access",
+            "exec -p=work",
+        ] {
+            assert!(
+                granting_arg("codex", &args(granting)).is_some(),
+                "{granting}"
+            );
+        }
+        for fine in [
+            "exec -c service_tier=fast -c model_reasoning_effort=high",
+            "exec -c features.hooks=false -c web_search=disabled",
+            "exec -c sandbox_mode=\"read-only\"",
+            "exec -c=service_tier=fast -s=read-only",
+        ] {
+            assert_eq!(granting_arg("codex", &args(fine)), None, "{fine}");
+        }
+        // A flag only grants for the tool it belongs to.
+        assert_eq!(granting_arg("ollama", &args("run m --enable x")), None);
+        assert_eq!(granting_arg("claude", &args("-p --model sonnet")), None);
     }
 
     #[tokio::test]
@@ -368,6 +669,43 @@ mod tests {
             "{}",
             silent.detail
         );
+    }
+
+    #[tokio::test]
+    async fn a_refused_tool_call_is_a_tool_request() {
+        let refused = cli(
+            "sh",
+            &[
+                "-c",
+                "cat >/dev/null; echo 'jetski: no output produced — a tool required the \"command\" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow-rule.' >&2",
+            ],
+            PromptMode::Stdin,
+        )
+        .complete(&ask())
+        .await
+        .unwrap_err();
+        assert_eq!(refused.code, LLM_TOOL_REQUEST, "{}", refused.detail);
+        // The phrase in the model's output, or inside another error line, is
+        // not agy's refusal.
+        for quoting in [
+            "cat >/dev/null; echo 'it was auto-denied, the user said'; exit 1",
+            "cat >/dev/null; echo 'error: quota; earlier: so it was auto-denied' >&2",
+        ] {
+            let other = cli("sh", &["-c", quoting], PromptMode::Stdin)
+                .complete(&ask())
+                .await
+                .unwrap_err();
+            assert_eq!(other.code, "LLM_UNAVAILABLE", "{quoting}");
+        }
+        let other = cli(
+            "sh",
+            &["-c", "cat >/dev/null; echo quota >&2"],
+            PromptMode::Stdin,
+        )
+        .complete(&ask())
+        .await
+        .unwrap_err();
+        assert_eq!(other.code, "LLM_UNAVAILABLE");
     }
 
     #[test]

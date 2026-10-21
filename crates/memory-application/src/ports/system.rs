@@ -28,6 +28,12 @@ impl ChatMessage {
     }
 }
 
+/// The error code of a completion that tried to use a tool instead of
+/// answering: a CLI refused the call, or an endpoint returned a tool call.
+/// Distillation never allows tools, so the same input fails the same way
+/// again (#37).
+pub const LLM_TOOL_REQUEST: &str = "LLM_TOOL_REQUEST";
+
 /// An OpenAI-compatible chat completion endpoint.
 #[async_trait]
 pub trait LlmClient: Send + Sync {

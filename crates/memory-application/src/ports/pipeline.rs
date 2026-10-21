@@ -11,6 +11,7 @@ use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::{Deserialize, Serialize};
 
 use crate::common::Page;
+use crate::ports::system::LLM_TOOL_REQUEST;
 
 /// Per-session L1 scheduling state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -237,9 +238,20 @@ pub struct DeadLetter {
 /// model tried to use a tool, which distillation never allows (#37).
 /// Retrying that only spends LLM time. Anything else may pass on another
 /// try: quota, timeouts and outages, and also an answer that was not the
-/// step's JSON (a model sometimes truncates it).
+/// step's JSON (a model sometimes truncates it). Dead letters written before
+/// the error had its own code match when what the CLI printed (after
+/// `stderr: `) is agy's refusal line itself, as the CLI path checks it.
 pub fn failure_is_deterministic(error: &str) -> bool {
-    error.contains("auto-denied")
+    if error.starts_with(LLM_TOOL_REQUEST) {
+        return true;
+    }
+    let Some((_, printed)) = error.split_once("produced no output; stderr: ") else {
+        return false;
+    };
+    let line = printed.lines().next().unwrap_or_default();
+    line.starts_with("jetski: ")
+        && line.contains("headless mode cannot prompt for")
+        && line.contains("so it was auto-denied")
 }
 
 /// What the dead-letter sweeper does with a letter.
@@ -569,7 +581,7 @@ mod tests {
 
     #[test]
     fn deterministic_failures_wait_for_another_model() {
-        let denied = "LLM_UNAVAILABLE: `agy` produced no output; stderr: … so it was auto-denied";
+        let denied = "LLM_UNAVAILABLE: `agy` produced no output; stderr: jetski: no output produced — a tool required the \"command\" permission that headless mode cannot prompt for, so it was auto-denied.";
         let refused = letter(denied, 0, 0, Some("cli:agy:flash"));
         assert_eq!(
             POLICY.decide(&refused, 2 * HOUR, "cli:agy:flash"),
@@ -584,6 +596,31 @@ mod tests {
         let invalid = letter("llm_output_invalid: not JSON", 0, 0, Some("m"));
         assert_eq!(
             POLICY.decide(&invalid, 2 * HOUR, "m"),
+            DeadLetterAction::Redrive
+        );
+        // The new code counts as such; a quoted mention of the old message
+        // inside some other error does not.
+        let coded = letter("LLM_TOOL_REQUEST: `agy` refused a tool", 0, 0, Some("m"));
+        assert_eq!(POLICY.decide(&coded, 2 * HOUR, "m"), DeadLetterAction::Keep);
+        let quoted = letter(
+            "LLM_UNAVAILABLE: `agy` timed out; stderr: …the user wrote: so it was auto-denied",
+            0,
+            0,
+            Some("m"),
+        );
+        assert_eq!(
+            POLICY.decide(&quoted, 2 * HOUR, "m"),
+            DeadLetterAction::Redrive
+        );
+        // A transient error quoting the refusal elsewhere in its text is not one.
+        let quoting = letter(
+            "LLM_UNAVAILABLE: `agy` exited with 1: quota exceeded; earlier stderr: jetski: no output produced — a tool required the \"command\" permission that headless mode cannot prompt for, so it was auto-denied.",
+            0,
+            0,
+            Some("m"),
+        );
+        assert_eq!(
+            POLICY.decide(&quoting, 2 * HOUR, "m"),
             DeadLetterAction::Redrive
         );
         // Without a recorded model, the current one is assumed.

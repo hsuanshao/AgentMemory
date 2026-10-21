@@ -4,6 +4,7 @@
 
 ## 目錄
 
+- [0.3.2 之後（未發布）：蒸餾 CLI 的參數](#032-之後未發布蒸餾-cli-的參數)
 - [升級到 0.3.0](#升級到-030)
 - [0.1.1 到 0.2.x 之間升級](#011-到-02x-之間升級)
 - [從 0.1.1 之前的版本升級](#從-011-之前的版本升級)
@@ -15,6 +16,30 @@
   - [D. 確認結果](#d-確認結果)
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
+
+## 0.3.2 之後（未發布）：蒸餾 CLI 的參數
+
+> [!WARNING]
+> **只要 `AGENT_MEMORY_LLM_CLI_ARGS`（`llm.cli.args`）讓蒸餾用的 CLI 拿到比預設更多的能力，memory-core 就不會啟動。** 升級前請先檢查你的 `.env`。
+
+蒸餾讀的是不可信的對話內容，所以蒸餾模型永遠不會拿到工具（#37）。以下參數現在會被拒絕，錯誤訊息會指出找到的是哪一個：
+
+- `--dangerously-skip-permissions`、`--allow-dangerously-skip-permissions`、`--dangerously-bypass-approvals-and-sandbox`，以及其他所有 `--dangerously-…`；
+- `--yolo`、`--full-auto`、`--allowedTools` / `--allowed-tools`、`--mcp-config`、`--permission-prompt-tool`；
+- `default`、`plan` 以外的 `--permission-mode`；
+- claude：帶工具清單的 `--tools`；
+- codex：沒有 `exec` 的參數；`--enable …`、`--search`、`-p` / `--profile`、`read-only` 以外的 `-s` / `--sandbox`，以及這些 `-c` 設定：`mcp_servers.…`、`features.…=true`、`disabled` 以外的 `web_search`、`read-only` 以外的 `sandbox_mode`、`sandbox_permissions`、`approval_policy`、`profile`。值直接接在短參數後面的寫法（`-cKEY=VALUE`、`-sMODE`、`-pNAME`）也一樣會被檢查。`-c model_reasoning_effort=high`、`-c service_tier=fast` 這類設定沒有問題。
+
+請把它們拿掉，蒸餾不需要其中任何一個。以前因為工具被拒絕而一直失敗的 CLI，現在會直接 drop 那批輸入（0.3.2）。
+
+**`upgrade.sh` 會幫你檢查。** 備份完成後，它會先建置新版本，用你的設定執行 `memory-server check-config`，通過後才啟動新版本。如果設定被拒絕，或是在新版本通過 `/health` 之前任何一步失敗（例如建置失敗，或新版本啟動不了），它會印出錯誤、把 `.env` 還原成升級前的樣子、用原本的 image 重新執行舊版本，然後停止。如果新版本在失敗前已經遷移了儲存的資料，請再從備份還原資料（[E. 還原](#e-還原)）。要手動檢查的話，在 `git checkout` 新版本之後執行：
+
+```bash
+docker compose build memory-core
+docker compose run --rm --no-deps -T memory-core check-config
+```
+
+**另外：** 使用 `claude` 或 `codex` 時，memory-core 現在會在蒸餾前先關掉 CLI 自帶的工具（`AGENT_MEMORY_LLM_CLI_HARDENING=auto`，預設值）。**蒸餾用的 codex 不再讀 `config.toml`：** 如果有需要的設定放在那裡，請改放到 `AGENT_MEMORY_LLM_CLI_ARGS`（`-c key=value`）。見 [DISTILLATION 第 6 節](ops/DISTILLATION.zh-tw.md#6-工具與蒸餾)。
 
 ## 升級到 0.3.0
 

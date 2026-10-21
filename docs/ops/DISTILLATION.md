@@ -11,6 +11,7 @@ memory-core distils conversations in the background: L1 extracts memories, L2 fo
 - [3. Common failures](#3-common-failures)
 - [4. Changing the model](#4-changing-the-model)
 - [5. Dead letters and redrive](#5-dead-letters-and-redrive)
+- [6. Tools and distillation](#6-tools-and-distillation)
 
 ## 1. What is recorded
 
@@ -72,6 +73,8 @@ The commands call the running server's API, so they work the same on every stora
 | `` `…` timed out after … `` | The answer took longer than `llm.timeoutMs` | Raise the timeout, or use a faster model |
 | `llm_output_invalid` | The answer was not the JSON the step asks for | A model that follows instructions poorly; switch models |
 | `LLM returned 5xx` | The OpenAI-compatible endpoint failed | Check the endpoint; retries usually cover short outages |
+| `LLM_TOOL_REQUEST: …` (older letters: `… auto-denied …`) | The model tried to use a tool instead of answering (section 6) | Nothing; the input is dropped and not retried. If it happens often, use a CLI whose tools memory-core turns off, or another model |
+| `Unknown feature flag: …` | A newer `codex` renamed or removed a feature that hardening turns off (section 6) | Update memory-core, or set `AGENT_MEMORY_LLM_CLI_HARDENING=off` until it is updated |
 
 ## 4. Changing the model
 
@@ -113,3 +116,57 @@ Redrive in small batches and watch the failures between them: a backlog sent at 
 - L2, L3 and skill jobs work on the current state of their agent or task.
 
 Find what was dropped and why with **Panel → Generation logs** (`#/logs?status=dropped`) or `memory-server generations --status dropped`. The dashboard's Distillation card counts dropped runs per layer.
+
+## 6. Tools and distillation
+
+> [!WARNING]
+> **memory-core does not start when `AGENT_MEMORY_LLM_CLI_ARGS` gives the CLI more capability than its defaults**, whatever `AGENT_MEMORY_LLM_CLI_HARDENING` says. The error names the argument; remove it. See [Arguments that are refused](#arguments-that-are-refused) and [UPGRADE](../UPGRADE.md#after-032-unreleased-distillation-cli-arguments).
+
+Distillation reads conversation text, which is untrusted: anyone in a conversation can write instructions into it. So the distillation model never gets a tool or a skipped permission check (#37). Instead:
+
+- a known agent CLI has its own tools turned off before it reads a prompt;
+- every CLI is told in the prompt that it has no tools;
+- a model that still tries to use a tool fails with `LLM_TOOL_REQUEST`. That failure is not retried: L1/L2 drop the input, and its dead letter waits until the model changes ([section 5](#5-dead-letters-and-redrive)).
+
+### Agent CLIs
+
+`llm.cli.hardening: auto` is the default (`AGENT_MEMORY_LLM_CLI_HARDENING`). memory-core puts these arguments in front of `AGENT_MEMORY_LLM_CLI_ARGS`. They only remove capability:
+
+| CLI | Added arguments | Effect |
+| --- | --- | --- |
+| `claude` | `--tools "" --strict-mcp-config --disable-slash-commands` | No built-in tools, no MCP servers from settings, no skills or slash commands |
+| `codex` | `--disable` for `apps`, `plugins`, `remote_plugin`, `shell_tool`, `unified_exec`, `code_mode_host`, `multi_agent`, `goals`, `skill_search`, `tool_suggest`, `browser_use`, `browser_use_external`, `computer_use`, `in_app_browser`, `image_generation`; `-c web_search=disabled`; `-c sandbox_mode="read-only"`; and `--ignore-user-config` right after `exec` | No connectors, plugins, shell or code execution, sub-agents, browsing or web search. `config.toml` is not read, so its MCP servers and profiles are not loaded |
+| `agy` and others | nothing | No known way to turn the tools off. A tool call is refused in headless mode, and it fails with `LLM_TOOL_REQUEST` |
+
+At startup memory-core logs which arguments it added, or warns that it could not add any.
+
+**Check it.** Ask the CLI in the container how many tools it has, with the same arguments:
+
+```bash
+docker compose exec -T memory-core sh -c 'echo "How many tools do you have? Reply with just the number." | claude --tools "" --strict-mcp-config --disable-slash-commands -p'
+```
+
+The answer should be `0`. For `codex`, a refused attempt shows up in its output as `code-mode host is disabled`, and the run still answers.
+
+**codex and `config.toml`.** The distillation codex does not read `$CODEX_HOME/config.toml`; it still signs in from `CODEX_HOME`. Put the settings it needs in `AGENT_MEMORY_LLM_CLI_ARGS`, e.g. `-c model=…` or `-c model_reasoning_effort=high`. On codex 0.163 `unified_exec` cannot be turned off; `shell_tool`, which carries the command tools, is off. With hardening on, codex arguments without `exec` are refused, since only `exec` can skip `config.toml`.
+
+**`hardening: off`** passes the arguments as given and logs a warning. Use it only to get past a CLI version whose flag names changed, until memory-core is updated. Refused arguments stay refused.
+
+### Arguments that are refused
+
+memory-core checks `AGENT_MEMORY_LLM_CLI_ARGS` at startup and on `memory-server check-config`, and refuses:
+
+- `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox` and any other `--dangerously-…`;
+- `--yolo`, `--full-auto`, `--allowedTools` / `--allowed-tools`, `--mcp-config`, `--permission-prompt-tool`;
+- `--permission-mode` other than `default` or `plan`;
+- claude: `--tools` with a list of tools;
+- codex: arguments without `exec`; `--enable …`, `--search`, `-p` / `--profile`, `-s` / `--sandbox` other than `read-only`, and these `-c` settings: `mcp_servers.…`, `features.…=true`, `web_search` other than `disabled`, `sandbox_mode` other than `read-only`, `sandbox_permissions`, `approval_policy`, `profile`. Short options count with their value attached too (`-cKEY=VALUE`, `-sMODE`, `-pNAME`). Settings such as `-c model_reasoning_effort=high` or `-c service_tier=fast` are fine.
+
+### Self-hosted models (OpenAI-compatible)
+
+memory-core never sends `tools` in its request. A reply that is only a tool call therefore means the model tried to act. memory-core treats any of these, with no other text, as `LLM_TOOL_REQUEST`:
+- `finish_reason: "tool_calls"` or `"function_call"`;
+- `tool_calls` or `function_call` in the message;
+- tool-call markup such as `<tool_call>…</tool_call>`.
+
+A reply that also contains an answer is used without the tool-call markup, so a model that adds a stray tool call is not dropped for it. An empty reply without a tool call is still retried as a transient failure.

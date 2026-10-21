@@ -11,6 +11,7 @@ memory-core 會在背景蒸餾對話：L1 擷取記憶，L2 整理成 scene，L3
 - [3. 常見的失敗原因](#3-常見的失敗原因)
 - [4. 更換模型](#4-更換模型)
 - [5. Dead letter 與重跑](#5-dead-letter-與重跑)
+- [6. 工具與蒸餾](#6-工具與蒸餾)
 
 ## 1. 會記錄哪些資訊
 
@@ -72,6 +73,8 @@ docker compose exec memory-core memory-server dead-letters --kind l1 --json
 | `` `…` timed out after … `` | 回應時間超過 `llm.timeoutMs` | 調高逾時，或換一個比較快的模型 |
 | `llm_output_invalid` | 回應不是該步驟要求的 JSON | 模型不太遵守指示，換一個模型 |
 | `LLM returned 5xx` | OpenAI 相容端點出錯 | 檢查端點；短暫的中斷通常靠重試就能撐過 |
+| `LLM_TOOL_REQUEST: …`（舊的紀錄是 `… auto-denied …`） | 模型想使用工具，而不是回答（第 6 節） | 不用處理；這批輸入會被 drop，不會重試。如果常常發生，改用 memory-core 會關閉工具的 CLI，或換一個模型 |
+| `Unknown feature flag: …` | 新版 `codex` 改名或移除了某個要關閉的 feature（第 6 節） | 更新 memory-core；更新前可以先設 `AGENT_MEMORY_LLM_CLI_HARDENING=off` |
 
 ## 4. 更換模型
 
@@ -113,3 +116,57 @@ Panel 上的 **Re-run** 按鈕效果相同，每次 10 筆。重跑的 job 會�
 - L2、L3 和 skill job 處理的是 agent 或 task 當下的狀態。
 
 要查哪些內容被 drop、原因是什麼，請看 **Panel → Generation logs**（`#/logs?status=dropped`）或 `memory-server generations --status dropped`。Dashboard 的 Distillation 卡片會列出各層被 drop 的次數。
+
+## 6. 工具與蒸餾
+
+> [!WARNING]
+> **只要 `AGENT_MEMORY_LLM_CLI_ARGS` 讓 CLI 拿到比預設更多的能力，不論 `AGENT_MEMORY_LLM_CLI_HARDENING` 怎麼設，memory-core 都不會啟動。** 錯誤訊息會指出是哪個參數，請把它拿掉。見[會被拒絕的參數](#會被拒絕的參數)和 [UPGRADE](../UPGRADE.zh-tw.md#032-之後未發布蒸餾-cli-的參數)。
+
+蒸餾讀的是對話內容，而對話內容不可信，任何參與對話的人都能在裡面寫指令。所以蒸餾模型永遠不會拿到工具，也不會略過權限檢查（#37）。memory-core 的做法是：
+
+- 已知的 agent CLI，在讀到 prompt 之前先把它自帶的工具關掉；
+- 每個 CLI 都會在 prompt 裡被告知沒有工具；
+- 模型如果還是想用工具，會以 `LLM_TOOL_REQUEST` 失敗。這種失敗不會重試：L1/L2 直接 drop 那批輸入，它的 dead letter 會等到模型更換後才重跑（[第 5 節](#5-dead-letter-與重跑)）。
+
+### Agent CLI
+
+預設是 `llm.cli.hardening: auto`（環境變數 `AGENT_MEMORY_LLM_CLI_HARDENING`）。memory-core 會把以下參數加在 `AGENT_MEMORY_LLM_CLI_ARGS` 前面，這些參數只會拿掉能力：
+
+| CLI | 加上的參數 | 效果 |
+| --- | --- | --- |
+| `claude` | `--tools "" --strict-mcp-config --disable-slash-commands` | 沒有內建工具，不載入設定裡的 MCP server，沒有 skill 和 slash command |
+| `codex` | 對 `apps`、`plugins`、`remote_plugin`、`shell_tool`、`unified_exec`、`code_mode_host`、`multi_agent`、`goals`、`skill_search`、`tool_suggest`、`browser_use`、`browser_use_external`、`computer_use`、`in_app_browser`、`image_generation` 加上 `--disable`；另加 `-c web_search=disabled`、`-c sandbox_mode="read-only"`，並在 `exec` 後面加上 `--ignore-user-config` | 沒有 connector、plugin、shell 或程式執行、子 agent、瀏覽和網路搜尋。不讀 `config.toml`，所以裡面的 MCP server 和 profile 都不會載入 |
+| `agy` 和其他 CLI | 不加 | 沒有已知的關閉方式。工具呼叫在 headless 模式下會被拒絕，以 `LLM_TOOL_REQUEST` 失敗 |
+
+memory-core 啟動時會記錄加上了哪些參數，或警告沒辦法加。
+
+**驗證方式。** 在容器裡用同樣的參數問 CLI 它有幾個工具：
+
+```bash
+docker compose exec -T memory-core sh -c 'echo "How many tools do you have? Reply with just the number." | claude --tools "" --strict-mcp-config --disable-slash-commands -p'
+```
+
+回答應該是 `0`。`codex` 如果試圖用工具，輸出裡會出現 `code-mode host is disabled`，但這一次仍然會正常回答。
+
+**codex 與 `config.toml`。** 蒸餾用的 codex 不會讀 `$CODEX_HOME/config.toml`，但仍然從 `CODEX_HOME` 讀取登入資訊。需要的設定請放在 `AGENT_MEMORY_LLM_CLI_ARGS`，例如 `-c model=…` 或 `-c model_reasoning_effort=high`。在 codex 0.163 上，`unified_exec` 沒辦法關閉；負責執行指令的 `shell_tool` 已經關閉。hardening 開啟時，沒有 `exec` 的 codex 參數會被拒絕，因為只有 `exec` 能跳過 `config.toml`。
+
+**`hardening: off`** 會照原樣傳入參數，並記錄一則警告。只在 CLI 新版改了參數名稱、memory-core 還沒跟上時暫時使用。會被拒絕的參數照樣會被拒絕。
+
+### 會被拒絕的參數
+
+memory-core 啟動時、以及執行 `memory-server check-config` 時，會檢查 `AGENT_MEMORY_LLM_CLI_ARGS`，並拒絕：
+
+- `--dangerously-skip-permissions`、`--allow-dangerously-skip-permissions`、`--dangerously-bypass-approvals-and-sandbox`，以及其他所有 `--dangerously-…`；
+- `--yolo`、`--full-auto`、`--allowedTools` / `--allowed-tools`、`--mcp-config`、`--permission-prompt-tool`；
+- `default`、`plan` 以外的 `--permission-mode`；
+- claude：帶工具清單的 `--tools`；
+- codex：沒有 `exec` 的參數；`--enable …`、`--search`、`-p` / `--profile`、`read-only` 以外的 `-s` / `--sandbox`，以及這些 `-c` 設定：`mcp_servers.…`、`features.…=true`、`disabled` 以外的 `web_search`、`read-only` 以外的 `sandbox_mode`、`sandbox_permissions`、`approval_policy`、`profile`。值直接接在短參數後面的寫法（`-cKEY=VALUE`、`-sMODE`、`-pNAME`）也一樣會被檢查。`-c model_reasoning_effort=high`、`-c service_tier=fast` 這類設定沒有問題。
+
+### 自架模型（OpenAI 相容端點）
+
+memory-core 送出的 request 從來不帶 `tools`。所以如果回應只有工具呼叫，就表示模型想採取行動。以下任一情況、而且沒有其他文字時，memory-core 會判定為 `LLM_TOOL_REQUEST`：
+- `finish_reason: "tool_calls"` 或 `"function_call"`；
+- 訊息裡有 `tool_calls` 或 `function_call`；
+- 工具呼叫格式的文字，例如 `<tool_call>…</tool_call>`。
+
+回應裡如果同時有答案，就拿掉工具呼叫的部分後照常使用，模型順手多寫了一個工具呼叫不會因此被 drop。空的回應如果沒有工具呼叫，仍然視為暫時性失敗而重試。

@@ -29,7 +29,7 @@ use memory_application::upgrade::LegacyUpgrade;
 use memory_domain::pipeline::PipelineSettings;
 use memory_domain::retrieval::SearchMode;
 use memory_gateway::{AppState, GatewaySettings, HealthFacts, Services};
-use memory_infrastructure::cli_llm::{CliLlm, CliLlmSettings, PromptMode};
+use memory_infrastructure::cli_llm::{harden, CliLlm, CliLlmSettings, Hardened, PromptMode};
 use memory_infrastructure::fs::LocalFileStore;
 use memory_infrastructure::lifecycle::{CompositeLifecycle, StateCleanup};
 use memory_infrastructure::openai::{
@@ -55,7 +55,7 @@ fn llm(config: &Config) -> Arc<dyn LlmClient> {
         let cli = &config.llm.cli;
         return Arc::new(CliLlm::new(CliLlmSettings {
             command: cli.command.clone(),
-            args: cli.args.clone(),
+            args: hardened_args(&cli.command, &cli.args, &cli.hardening),
             prompt_mode: if cli.prompt_mode == "arg" {
                 PromptMode::Arg
             } else {
@@ -74,6 +74,35 @@ fn llm(config: &Config) -> Arc<dyn LlmClient> {
         max_tokens: config.llm.max_tokens,
         timeout,
     }))
+}
+
+/// The CLI's arguments with its own tools turned off first (#37), or as
+/// configured when hardening is `off` or the CLI has no known way to do it.
+fn hardened_args(command: &str, args: &[String], hardening: &str) -> Vec<String> {
+    if hardening == "off" {
+        tracing::warn!(
+            command,
+            "llm.cli.hardening is off: the distillation CLI keeps its own tools; a refused tool call drops the input"
+        );
+        return args.to_vec();
+    }
+    match harden(command, args) {
+        Hardened::Full(hardened) => {
+            tracing::info!(command, args = ?hardened, "distillation CLI runs with its tools turned off");
+            hardened
+        }
+        Hardened::Partial(hardened, missing) => {
+            tracing::warn!(command, args = ?hardened, missing, "distillation CLI runs with its tools only partly turned off");
+            hardened
+        }
+        Hardened::Unknown => {
+            tracing::warn!(
+                command,
+                "no known way to turn off this CLI's tools: a refused tool call drops the input (see docs/ops/DISTILLATION.md)"
+            );
+            args.to_vec()
+        }
+    }
 }
 
 fn embedder(config: &Config) -> Arc<dyn EmbeddingProvider> {

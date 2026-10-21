@@ -6,10 +6,21 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Added
+- memory-core turns off the built-in tools of `claude` and `codex` before they distil, with `llm.cli.hardening` (`AGENT_MEMORY_LLM_CLI_HARDENING`, default `auto`); every CLI is told in the prompt that it has no tools (#37).
+- A tool call from a self-hosted OpenAI-compatible model (`tool_calls`, `function_call` or tool-call markup, with no answer) fails with the new code `LLM_TOOL_REQUEST` and is dropped without retries, like a refused CLI tool call; an answer next to one is used without the markup (#37).
+- `memory-server check-config` validates the configuration without starting; `upgrade.sh` runs it with the new version before starting it; on a refusal, or any other failure before the new version answers `/health`, it restores `.env` and runs the previous version again on its previous image.
+- The distillation codex runs with `--ignore-user-config` and a read-only sandbox: it no longer reads `config.toml`, so MCP servers and profiles there are not loaded. Move needed settings into `AGENT_MEMORY_LLM_CLI_ARGS` (#37).
+
 ### Changed
+- **License: from 0.4.0 the server is licensed under the Business Source License 1.1** instead of MIT. Free for evaluation, personal and non-profit use, and for an organization with up to 1 department and 10 members; larger production use needs a commercial license. Each version becomes Apache 2.0 four years after release. The `amem` client (`crates/memory-client/`) and the plugins (`clients/`) stay MIT, and 0.3.2 and earlier remain MIT. See [COMMERCIAL.md](COMMERCIAL.md).
+- **memory-core refuses to start when `llm.cli.args` give the distillation CLI more than its defaults, e.g. `--dangerously-skip-permissions`, `--allowedTools` or a writable codex sandbox. The error names the argument (#37).** This includes codex `--search`, `--profile` and `-c` settings that add MCP servers, web search, features or a writable sandbox. Check `AGENT_MEMORY_LLM_CLI_ARGS` before upgrading ([UPGRADE](docs/UPGRADE.md#after-032-unreleased-distillation-cli-arguments)).
 - L1 extraction sees the session's 10 newest episodic memories (up to 3,000 characters). A memory that makes one of them out of date names it in `supersedes`, and that memory is revised in place instead of staying next to the news (#43).
 - L2 writes scene summaries and bodies as the current state rather than a log of the batch's changes, and drops settled open questions (#43).
-- **License: from 0.4.0 the server is licensed under the Business Source License 1.1** instead of MIT. Free for evaluation, personal and non-profit use, and for an organization with up to 1 department and 10 members; larger production use needs a commercial license. Each version becomes Apache 2.0 four years after release. The `amem` client (`crates/memory-client/`) and the plugins (`clients/`) stay MIT, and 0.3.2 and earlier remain MIT. See [COMMERCIAL.md](COMMERCIAL.md).
+- A refused CLI tool call is now reported as `LLM_TOOL_REQUEST` instead of `LLM_UNAVAILABLE`; dead letters written before still count as not retryable.
+
+### Fixed
+- The Docker build could keep the previous `memory-server` binary when the sources came from an archive (git archive, a release tarball) whose file times are older than the cached build; the build now always recompiles the workspace when its sources change.
 
 ## [0.3.2] - 2026-10-21
 

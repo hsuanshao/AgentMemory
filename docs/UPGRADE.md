@@ -4,6 +4,7 @@
 
 ## Contents
 
+- [After 0.3.2 (unreleased): distillation CLI arguments](#after-032-unreleased-distillation-cli-arguments)
 - [To 0.3.0](#to-030)
 - [Within 0.1.1 – 0.2.x](#within-011--02x)
 - [From a version before 0.1.1](#from-a-version-before-011)
@@ -15,6 +16,30 @@
   - [D. Check the result](#d-check-the-result)
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
+
+## After 0.3.2 (unreleased): distillation CLI arguments
+
+> [!WARNING]
+> **memory-core no longer starts when `AGENT_MEMORY_LLM_CLI_ARGS` (`llm.cli.args`) gives the distillation CLI more capability than its defaults.** Check your `.env` before you upgrade.
+
+Distillation reads untrusted conversation text, so its model never gets a tool (#37). These arguments are now refused, and the error names the one it found:
+
+- `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox` and any other `--dangerously-…`;
+- `--yolo`, `--full-auto`, `--allowedTools` / `--allowed-tools`, `--mcp-config`, `--permission-prompt-tool`;
+- `--permission-mode` other than `default` or `plan`;
+- claude: `--tools` with a list of tools;
+- codex: arguments without `exec`; `--enable …`, `--search`, `-p` / `--profile`, `-s` / `--sandbox` other than `read-only`, and these `-c` settings: `mcp_servers.…`, `features.…=true`, `web_search` other than `disabled`, `sandbox_mode` other than `read-only`, `sandbox_permissions`, `approval_policy`, `profile`. Short options count with their value attached too (`-cKEY=VALUE`, `-sMODE`, `-pNAME`). Settings such as `-c model_reasoning_effort=high` or `-c service_tier=fast` are fine.
+
+Remove them. Distillation does not need any of them. A CLI that kept failing because a tool was refused now drops that input instead (0.3.2).
+
+**`upgrade.sh` checks this for you.** After the backup it builds the new version and runs `memory-server check-config` with your settings, before it starts anything new. If the configuration is refused, or anything else fails before the new version answers `/health` (the build, or a new version that does not start), it prints the error, puts `.env` back as it was, runs the previous version again on its previous image, and stops. If the new version had already migrated stored data before failing, also restore the data from the backup ([E. Roll back](#e-roll-back)). To check by hand after `git checkout` of the new version:
+
+```bash
+docker compose build memory-core
+docker compose run --rm --no-deps -T memory-core check-config
+```
+
+**Also new:** with `claude` or `codex`, memory-core now turns off the CLI's own tools before distilling (`AGENT_MEMORY_LLM_CLI_HARDENING=auto`, the default). **The distillation codex no longer reads `config.toml`:** move settings it needs from there into `AGENT_MEMORY_LLM_CLI_ARGS` (`-c key=value`). See [DISTILLATION §6](ops/DISTILLATION.md#6-tools-and-distillation).
 
 ## To 0.3.0
 

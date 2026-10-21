@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use memory_infrastructure::cli_llm::{codex_without_exec, granting_arg};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -174,6 +175,9 @@ pub struct CliLlmConfig {
     pub working_dir: Option<String>,
     pub env: std::collections::BTreeMap<String, String>,
     pub max_concurrency: usize,
+    /// `auto` (default) turns off a known CLI's own tools before it sees
+    /// conversation text; `off` passes `args` unchanged (#37).
+    pub hardening: String,
 }
 
 impl Default for CliLlmConfig {
@@ -185,6 +189,7 @@ impl Default for CliLlmConfig {
             working_dir: None,
             env: Default::default(),
             max_concurrency: 2,
+            hardening: "auto".into(),
         }
     }
 }
@@ -572,6 +577,10 @@ impl Config {
         if let Some(args) = env("AGENT_MEMORY_LLM_CLI_ARGS") {
             self.llm.cli.args = parse_arg_list(&args);
         }
+        set(
+            &mut self.llm.cli.hardening,
+            "AGENT_MEMORY_LLM_CLI_HARDENING",
+        );
         if let Some(dir) = env("AGENT_MEMORY_LLM_CLI_WORKDIR") {
             self.llm.cli.working_dir = Some(dir);
         }
@@ -637,6 +646,25 @@ impl Config {
                     bail!(
                         "llm.cli.promptMode must be `stdin` or `arg`, got `{}`",
                         cli.prompt_mode
+                    );
+                }
+                if !matches!(cli.hardening.as_str(), "auto" | "off") {
+                    bail!(
+                        "llm.cli.hardening must be `auto` or `off`, got `{}`",
+                        cli.hardening
+                    );
+                }
+                if let Some(arg) = granting_arg(&cli.command, &cli.args) {
+                    bail!(
+                        "llm.cli.args must not give the distillation tool more capability: remove `{arg}`. \
+                         Distillation reads untrusted conversation text, so it never gets tools or \
+                         skipped permission checks (#37)"
+                    );
+                }
+                if cli.hardening == "auto" && codex_without_exec(&cli.command, &cli.args) {
+                    bail!(
+                        "llm.cli.args for codex must run `exec`: only `codex exec --ignore-user-config` keeps \
+                         config.toml (MCP servers, profiles) away from distillation (#37)"
                     );
                 }
                 if let Some(dir) = &cli.working_dir {
@@ -716,6 +744,49 @@ mod tests {
         c.llm.cli.working_dir = Some("/definitely/missing/dir".into());
         assert!(c.validate().is_err());
         c.llm.provider = "other".into();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn cli_args_that_grant_capability_are_rejected_by_name() {
+        let mut c = Config::default();
+        c.llm.provider = "cli".into();
+        c.llm.cli.command = "/usr/local/bin/codex".into();
+        c.llm.cli.args = parse_arg_list("exec -s read-only");
+        assert!(c.validate().is_ok());
+        c.llm.cli.args = parse_arg_list("--model o4");
+        let err = c.validate().unwrap_err().to_string();
+        assert!(err.contains("must run `exec`"), "{err}");
+        for args in [
+            "exec --dangerously-bypass-approvals-and-sandbox",
+            "exec -s workspace-write",
+            "exec --sandbox=danger-full-access",
+            "--enable apps exec",
+        ] {
+            c.llm.cli.args = parse_arg_list(args);
+            let err = c.validate().unwrap_err().to_string();
+            assert!(err.contains("#37"), "{args}: {err}");
+        }
+        c.llm.cli.command = "claude".into();
+        for args in [
+            "-p --dangerously-skip-permissions",
+            "-p --permission-mode bypassPermissions",
+            "-p --allowedTools Bash",
+            "-p --tools Bash,Read",
+            "-p --mcp-config servers.json",
+        ] {
+            c.llm.cli.args = parse_arg_list(args);
+            let err = c.validate().unwrap_err().to_string();
+            assert!(err.contains("remove `"), "{args}: {err}");
+        }
+        c.llm.cli.args = parse_arg_list("-p --permission-mode plan");
+        assert!(c.validate().is_ok());
+        c.llm.cli.hardening = "off".into();
+        assert!(c.validate().is_ok(), "off still allows plain args");
+        c.llm.cli.args = parse_arg_list("-p --dangerously-skip-permissions");
+        assert!(c.validate().is_err(), "off never allows granting args");
+        c.llm.cli.hardening = "sometimes".into();
+        c.llm.cli.args.clear();
         assert!(c.validate().is_err());
     }
 

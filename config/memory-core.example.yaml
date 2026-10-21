@@ -28,6 +28,7 @@ llm:
     # workingDir: "~/projects/my-app"   # project base path the tool runs in
     maxConcurrency: 2
     env: {}                   # extra environment for the tool
+    hardening: "auto"         # "auto" turns off the tools of claude and codex; "off" passes args as given
 
 memory:
   extraction:

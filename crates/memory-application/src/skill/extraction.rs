@@ -70,7 +70,8 @@ procedural know-how worth saving as a Skill (a SKILL.md playbook other agents ca
 Good skills: multi-step procedures that worked, troubleshooting paths, checklists, conventions
 learned the hard way. Not skills: one-off facts, chit-chat, user preferences (those are memories).
 
-Prefer improving an existing skill (patch/update) over creating a near-duplicate.
+Prefer improving an existing skill (patch/update) over creating a near-duplicate. The existing
+skills are the ones listed in the input; there are no others to look for.
 A SKILL.md must start with frontmatter:
 ---
 name: lowercase-kebab-name

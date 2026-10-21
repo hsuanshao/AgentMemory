@@ -6,10 +6,21 @@
 
 ## [未發布]
 
+### 新增
+- memory-core 在 `claude`、`codex` 蒸餾前先關掉它們自帶的工具，設定為 `llm.cli.hardening`（`AGENT_MEMORY_LLM_CLI_HARDENING`，預設 `auto`）；每個 CLI 也會在 prompt 裡被告知沒有工具（#37）。
+- 自架的 OpenAI 相容模型回傳工具呼叫（`tool_calls`、`function_call` 或工具呼叫格式的文字，且沒有答案）時，以新的錯誤代碼 `LLM_TOOL_REQUEST` 失敗，直接 drop、不重試，和 CLI 的工具被拒絕一樣；若同時有答案，就拿掉工具呼叫的部分後使用（#37）。
+- `memory-server check-config` 只檢查設定、不啟動；`upgrade.sh` 會在啟動新版本前用它檢查；設定被拒絕，或新版本通過 `/health` 之前任何一步失敗時，會還原 `.env`，並用原本的 image 重新執行舊版本。
+- 蒸餾用的 codex 以 `--ignore-user-config` 和唯讀 sandbox 執行：不再讀 `config.toml`，所以裡面的 MCP server 和 profile 都不會載入。需要的設定請改放到 `AGENT_MEMORY_LLM_CLI_ARGS`（#37）。
+
 ### 變更
+- **授權：從 0.4.0 版開始，server 端由 MIT 改為 Business Source License 1.1。** 評估測試、個人與非營利使用，以及最多 1 個部門、10 位成員的組織可以免費使用；更大規模的正式環境使用需要商業授權。每個版本發布滿四年後轉為 Apache 2.0。`amem` client（`crates/memory-client/`）和 plugin（`clients/`）維持 MIT，0.3.2 以前的版本也維持 MIT。詳見 [COMMERCIAL.zh-tw.md](COMMERCIAL.zh-tw.md)。
+- **`llm.cli.args` 讓蒸餾用的 CLI 拿到比預設更多的能力時，memory-core 不會啟動，例如 `--dangerously-skip-permissions`、`--allowedTools` 或可寫入的 codex sandbox。錯誤訊息會指出是哪個參數（#37）。** 包括 codex 的 `--search`、`--profile`，以及會加入 MCP server、網路搜尋、feature 或可寫入 sandbox 的 `-c` 設定。 升級前請先檢查 `AGENT_MEMORY_LLM_CLI_ARGS`（[UPGRADE](docs/UPGRADE.zh-tw.md#032-之後未發布蒸餾-cli-的參數)）。
 - L1 抽取時會看到這個 session 最新的 10 筆 episodic 記憶（最多 3,000 字元）。新記憶如果讓其中某筆過時，會在 `supersedes` 列出它，那筆記憶會被就地改寫，不再和新消息並存（#43）。
 - L2 把 scene 的摘要和內文寫成目前狀態，不再寫成這一批的變更紀錄，並移除已解決的待解問題（#43）。
-- **授權：從 0.4.0 版開始，server 端由 MIT 改為 Business Source License 1.1。** 評估測試、個人與非營利使用，以及最多 1 個部門、10 位成員的組織可以免費使用；更大規模的正式環境使用需要商業授權。每個版本發布滿四年後轉為 Apache 2.0。`amem` client（`crates/memory-client/`）和 plugin（`clients/`）維持 MIT，0.3.2 以前的版本也維持 MIT。詳見 [COMMERCIAL.zh-tw.md](COMMERCIAL.zh-tw.md)。
+- CLI 的工具被拒絕時，改回報為 `LLM_TOOL_REQUEST`，不再是 `LLM_UNAVAILABLE`；之前寫入的 dead letter 仍然視為不可重試。
+
+### 修正
+- 原始碼來自壓縮檔（git archive、release tarball）且檔案時間早於快取的建置時，Docker 建置可能沿用舊的 `memory-server` 執行檔；現在只要原始碼有變動，建置一定會重新編譯 workspace。
 
 ## [0.3.2] - 2026-10-21
 
