@@ -10,17 +10,31 @@
 
 English | [繁體中文](./README.zh-tw.md)
 
+**Self-hosted, team-aware long-term memory for AI agents.** AgentMemory gives Claude Code, Codex, Antigravity, Hermes and any MCP client a memory that persists across sessions. It captures each conversation, distils it into facts, scenes and a persona in the background, and recalls what is relevant before every prompt. It all runs on your own servers.
+
 ![Agent-memory](./docs/imgs/agent-memory.jpg "agent memory")
 
-An agent memory core service (**memory-core**) written in Rust, with a **Monitor Panel** written in TypeScript.
+## Why AgentMemory
 
-- Clean Architecture: `domain ← application ← infrastructure / gateway ← server`
-- Features: L0→L3 layered memory, asynchronous distillation pipeline, hybrid recall (BM25 + vector + RRF), team/agent/user isolation, Skill memory, asset and ACL metadata plane, v3 RPC API
-- No dependency on any cloud vendor's proprietary services: storage uses SQLite + local files; LLM and embedding use any OpenAI-compatible endpoint (including self-hosted models)
+- **Your data stays with you.** Memory, database and even the distillation model can all run inside your network. There is no dependency on any vendor's cloud service: any OpenAI-compatible endpoint works, including self-hosted models, as does a local CLI such as `claude`, `codex` or `agy`.
+- **Built for teams, not just one user.** A server holds departments, a department holds teams, and a team holds members and their agents.
+  - Each member's conversations and facts stay private.
+  - The scenes and persona of an agent are shared by the people who use it.
+  - Team leaders see how distillation is doing without reading anyone's memory.
+  - See [COLLABORATION.md](docs/COLLABORATION.md).
+- **Memory that compounds.** Raw turns (L0) are distilled into facts (L1), consolidated into scenes (L2) and summarised into a persona (L3). Recall combines BM25 and vector search with rank fusion. See [How memory works](#how-memory-works).
+- **Built to be operated.**
+  - A Monitor Panel with distillation health, generation logs and dead letters that expire and retry on their own.
+  - SQLite to start, PostgreSQL with pgvector and Redis to scale.
+  - Versioned storage migrations, and an `upgrade.sh` that backs up first.
+- **One client for every agent.** The `amem` CLI plugs into Claude Code, Codex, Antigravity and Hermes hooks, and serves recall over MCP. It redacts secrets before anything leaves the machine and queues while the server is unreachable.
+
+Written in Rust (memory-core, `amem`) and TypeScript (Panel), following Clean Architecture: `domain ← application ← infrastructure / gateway ← server`.
 
 ## Quick Start
 
 ```bash
+git clone https://github.com/hsuanshao/AgentMemory.git && cd AgentMemory
 ./install.sh
 ```
 

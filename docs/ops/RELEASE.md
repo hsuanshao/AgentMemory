@@ -39,7 +39,7 @@ To find what to change: `git grep -n '<old version>' -- ':!Cargo.lock' ':!*.md'`
 1. **Branch** from an up-to-date `main` (`git pull` first; contributors merge PRs on GitHub).
 2. **Bump** every file in [section 2](#2-where-the-version-lives).
 3. **Run every test layer** in [TESTING.md](TESTING.md): format, clippy, the full suite with Postgres and Redis, the Panel, shellcheck. When the release changes `install.sh`, `upgrade.sh`, `migrate-to-postgres.sh` or the Compose file, also run the full-stack smoke test.
-4. **Check the docs** that a release can affect: README (both languages), the UPGRADE guide when operators must act, API.md for changed endpoints. Every user-facing document exists in English and Traditional Chinese, so change both.
+4. **Check the docs** that a release can affect: `CHANGELOG.md` and `CHANGELOG.zh-tw.md` (move *Unreleased* under the new version), README (both languages), the UPGRADE guide when operators must act, API.md for changed endpoints. Every user-facing document exists in English and Traditional Chinese, so change both.
 5. **Scan for secrets and private details** before anything is pushed: `.github/scripts/check-consistency.sh X.Y.Z` does steps 2 and 5 together. By hand, `git grep -nE 'sk-(ant|proj|mem)-[A-Za-z0-9_-]{16}|ghp_[A-Za-z0-9]{20}|BEGIN [A-Z ]*PRIVATE KEY'` should find nothing, and neither should a search for internal host names or home-directory paths.
 6. **Open a PR**, let it be reviewed and merged.
 7. **Tag** the merge commit on `main` and push the tag:

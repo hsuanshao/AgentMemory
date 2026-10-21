@@ -10,17 +10,31 @@
 
 [English](./README.md) | 繁體中文
 
+**自架、為團隊設計的 AI agent 長期記憶。** AgentMemory 讓 Claude Code、Codex、Antigravity、Hermes 以及任何 MCP client 擁有跨 session 的記憶：擷取每一次對話，在背景蒸餾成事實、場景與 persona，並在每次輸入 prompt 前召回相關內容。全部都在你自己的伺服器上執行。
+
 ![Agent-memory](./docs/imgs/agent-memory.jpg "agent memory")
 
-以 Rust 實作的 Agent 記憶核心服務（**memory-core**），並附一個以 TypeScript 開發的 **Monitor Panel**。
+## 為什麼選擇 AgentMemory
 
-- 遵循 Clean Architecture：`domain ← application ← infrastructure / gateway ← server`
-- 特點：L0→L3 分層記憶、非同步蒸餾管線、BM25 + 向量 + RRF 混合召回、團隊/Agent/使用者隔離、Skill 記憶、資產與 ACL 元資料平面、v3 RPC API
-- 不依賴任何雲廠商專屬服務：儲存使用 SQLite + 本地檔案，LLM 與 Embedding 使用任何 OpenAI 相容端點（可指向自架模型）
+- **資料留在你手上。** 記憶、資料庫，甚至蒸餾用的模型，都可以全部在內網執行。不依賴任何廠商的雲端服務：可以使用任何 OpenAI 相容端點（包括自架模型），也可以直接使用本機的 `claude`、`codex`、`agy` 等 CLI。
+- **為團隊而設計，不只給單一使用者。** 一台伺服器容納多個部門，部門裡有團隊，團隊裡有成員和他們的 agent。
+  - 每位成員的對話和事實都是私有的。
+  - 同一個 agent 的場景和 persona，由使用它的人共用。
+  - 團隊 leader 看得到蒸餾的運作狀況，但讀不到任何人的記憶。
+  - 詳見 [COLLABORATION.zh-tw.md](docs/COLLABORATION.zh-tw.md)。
+- **記憶會累積。** 原始對話（L0）蒸餾成事實（L1），再整合成場景（L2），最後歸納成 persona（L3）。召回時結合 BM25 與向量搜尋，再做排名融合。見[記憶如何運作](#記憶如何運作)。
+- **為維運而設計。**
+  - Monitor Panel 顯示蒸餾健康度、生成紀錄，以及會自動到期與重試的 dead letter。
+  - 用 SQLite 起步，規模變大時改用 PostgreSQL（pgvector）和 Redis。
+  - 有版本的儲存遷移，以及會先備份的 `upgrade.sh`。
+- **一個 client 接上所有 agent。** `amem` CLI 掛進 Claude Code、Codex、Antigravity、Hermes 的 hook，並透過 MCP 提供召回。資料離開機器前會先遮蔽機密；伺服器連不上時會先排入佇列。
+
+以 Rust（memory-core、`amem`）和 TypeScript（Panel）實作，遵循 Clean Architecture：`domain ← application ← infrastructure / gateway ← server`。
 
 ## 快速開始
 
 ```bash
+git clone https://github.com/hsuanshao/AgentMemory.git && cd AgentMemory
 ./install.sh
 ```
 
