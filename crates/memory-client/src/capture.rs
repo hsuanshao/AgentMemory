@@ -156,6 +156,7 @@ mod tests {
             tool_name: None,
             tool_call_id: None,
             timestamp: None,
+            interjected: false,
         }
     }
 

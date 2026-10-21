@@ -212,6 +212,7 @@ pub fn claude_code_stop() {
                 tool_name: None,
                 tool_call_id: None,
                 timestamp: None,
+                interjected: false,
             });
             tail = json!(last);
         }
