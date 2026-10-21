@@ -145,11 +145,16 @@ pub fn drop_skipped_turns(msgs: Vec<Msg>, skip: impl Fn(&str) -> bool) -> Vec<Ms
 
 /// The prompt of a message the user sent while the agent was working, which
 /// Claude Code records as a `queued_command` attachment, not a user entry.
-/// Other queued commands (task notifications) are not a person's turn.
+/// Other queued commands are not a person's turn: task notifications, and
+/// messages from other sessions (meta, with a non-human origin). An entry
+/// without an origin is taken as the person's.
 fn queued_prompt(entry: &Value) -> Option<String> {
     let attachment = entry.get("attachment")?;
+    let origin = attachment.get("origin").and_then(|o| str_of(o, "kind"));
     if str_of(attachment, "type") != Some("queued_command")
         || str_of(attachment, "commandMode") != Some("prompt")
+        || attachment.get("isMeta").and_then(Value::as_bool) == Some(true)
+        || origin.is_some_and(|kind| kind != "human")
     {
         return None;
     }
