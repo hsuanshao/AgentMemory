@@ -1,4 +1,12 @@
-# Agent Memory 
+# Agent Memory
+
+[![CI](https://img.shields.io/github/actions/workflow/status/hsuanshao/AgentMemory/ci.yml?branch=main&label=CI)](https://github.com/hsuanshao/AgentMemory/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/hsuanshao/AgentMemory)](LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-orange?logo=rust)](Cargo.toml)
+[![Docker image](https://img.shields.io/badge/ghcr.io-agentmemory--core-2496ED?logo=docker&logoColor=white)](https://github.com/hsuanshao/AgentMemory/pkgs/container/agentmemory-core)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
+[![Last commit](https://img.shields.io/github/last-commit/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/commits/main)
 
 [English](./README.md) | 繁體中文
 
