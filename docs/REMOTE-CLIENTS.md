@@ -137,7 +137,7 @@ amem recall "release plan"  # prints what an agent would receive
 
 All hosts on this machine share these settings. You can override them per process with `AMEM_SERVER_URL`, `AMEM_USER_KEY`, `AMEM_TEAM_ID`, `AMEM_AGENT_ID` and `AMEM_DEPARTMENT_ID`. To give each tool its own agent, use the plugin settings below or set `AMEM_AGENT_ID` in that tool's environment.
 
-Some prompts are not a person's turn, for example messages that an orchestrator types into the agent. Set `AMEM_SKIP_PROMPT_PREFIXES` (or `skip_prompt_prefixes` in `client.json`) to a comma-separated list of prefixes, such as `[AGEND-`. A prompt that starts with one of them, after any leading whitespace, is not used for recall, and its whole turn is not captured. Prefixes are compared at the start of the prompt only, so a person's prompt that merely contains one is still captured. The default is empty, which skips nothing.
+Some prompts are not a person's turn, for example messages that an orchestrator types into the agent. Set `AMEM_SKIP_PROMPT_PREFIXES` (or `skip_prompt_prefixes` in `client.json`) to a comma-separated list of prefixes, such as `[AGEND-`. A prompt that starts with one of them, after any leading whitespace, is not used for recall, and its whole turn is not captured. Messages you send while the agent is still working are captured as part of the current turn. When such a message starts with a skip prefix, only that message is dropped; the turn around it is kept. Prefixes are compared at the start of the prompt only, so a person's prompt that merely contains one is still captured. The default is empty, which skips nothing.
 
 ## 5. Claude Code
 
