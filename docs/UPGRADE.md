@@ -40,7 +40,7 @@
 
    ```bash
    cd /path/to/agent-memory
-   git fetch --tags && git checkout v0.3.1
+   git fetch --tags && git checkout v0.3.2
    ./upgrade.sh
    ```
 
@@ -102,7 +102,7 @@ This part is for people running a server older than 0.1.1. It also applies when 
 
   ```bash
   cd /path/to/agent-memory        # the directory with .env
-  git fetch --tags && git checkout v0.3.1  # or: git pull
+  git fetch --tags && git checkout v0.3.2  # or: git pull
   ```
 
 ## A. Automatic: `upgrade.sh`
