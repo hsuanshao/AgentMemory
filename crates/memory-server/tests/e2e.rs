@@ -369,6 +369,43 @@ async fn scene_versions_survive_merges_and_removals() {
             .contains("Core narrative"),
         "{old}"
     );
+    let old_id = old["data"]["scene_id"].as_str().unwrap().to_owned();
+
+    // A new scene takes the name; the old one stays reachable by id.
+    let taken = client
+        .call(
+            "/v3/scenario/write",
+            client.scoped(json!({"path": "Release-Planning.md", "content": "a fresh start"})),
+        )
+        .await;
+    assert_ne!(taken["data"]["scene_id"], json!(old_id), "{taken}");
+    let by_name = read("Release-Planning.md", Some(1)).await;
+    assert!(
+        by_name["data"]["content"]
+            .as_str()
+            .unwrap()
+            .ends_with("a fresh start"),
+        "{by_name}"
+    );
+    let by_id = client
+        .call(
+            "/v3/scenario/read",
+            client.scoped(json!({"scene_id": old_id, "version": 1})),
+        )
+        .await;
+    assert!(
+        by_id["data"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Core narrative"),
+        "{by_id}"
+    );
+    assert_eq!(by_id["data"]["op"], "merge", "{by_id}");
+    assert_eq!(
+        by_id["data"]["parents"].as_array().unwrap().len(),
+        1,
+        "{by_id}"
+    );
 }
 
 async fn assert_conversation_is_distilled(client: &Client) {

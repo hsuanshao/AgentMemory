@@ -15,7 +15,7 @@ use memory_domain::meta::visibility::ScopeVisibility;
 use memory_domain::pipeline::{
     next_l2_due, persona_trigger, PersonaState, PipelineSettings, Warmup,
 };
-use memory_domain::profile::{strip_scene_navigation, ProfileScope};
+use memory_domain::profile::ProfileScope;
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::Serialize;
 use tracing::{debug, info, warn};
@@ -803,9 +803,9 @@ impl PipelineService {
         let has_persona = self
             .deps
             .memory
-            .read_persona(department, profile, None)
+            .persona_body(department, profile)
             .await?
-            .is_some_and(|p| !strip_scene_navigation(&p.content).is_empty());
+            .is_some();
         let persona_state = PersonaState {
             has_persona,
             scene_count: self

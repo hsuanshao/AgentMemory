@@ -193,11 +193,28 @@ impl SceneExtractor {
                     .iter()
                     .map(|m| retirement(m.clone(), Some(&scene_id), None)),
             );
-            let mut written = self
+            let written = match self
                 .memory
-                .append_scenes(department, profile, versions)
-                .await?
-                .into_iter();
+                .append_scenes(department, profile, versions.clone())
+                .await
+            {
+                Err(err) if err.code == "scene_exists" => {
+                    // The name was taken after the snapshot (an API write):
+                    // write into that scene instead of failing the batch.
+                    match self
+                        .onto_existing(department, profile, &file, versions)
+                        .await
+                    {
+                        Some(written) => written,
+                        None => {
+                            warn!(file = %file, "scene name taken meanwhile; skipping operation");
+                            continue;
+                        }
+                    }
+                }
+                other => other?,
+            };
+            let mut written = written.into_iter();
             if let Some(target) = written.next() {
                 current.insert(file.clone(), target);
             }
@@ -210,5 +227,46 @@ impl SceneExtractor {
             changed.push(file);
         }
         Ok(changed)
+    }
+
+    /// Retries an operation whose new scene clashed with a live one named
+    /// `file`: the versions go to that scene, its heat and attributes
+    /// carried over. `None` when that fails too.
+    async fn onto_existing(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        file: &str,
+        mut versions: Vec<NewSceneVersion>,
+    ) -> Option<Vec<SceneVersion>> {
+        let existing = self
+            .memory
+            .read_scene(department, profile, file, None)
+            .await
+            .ok()
+            .flatten()?;
+        let target = versions.first_mut()?;
+        target.scene_id = existing.scene_id.clone();
+        if target.op == SceneOp::Create {
+            target.op = SceneOp::Update;
+        }
+        target.heat += existing.heat;
+        target.attrs = existing.attrs;
+        for retired in versions.iter_mut().skip(1) {
+            retired
+                .attrs
+                .insert("merged_into".into(), existing.scene_id.clone());
+        }
+        match self
+            .memory
+            .append_scenes(department, profile, versions)
+            .await
+        {
+            Ok(written) => Some(written),
+            Err(err) => {
+                warn!(file = %file, error = %err, "writing into the existing scene failed");
+                None
+            }
+        }
     }
 }

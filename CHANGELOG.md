@@ -9,7 +9,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 ### Changed
 - **Scenes (L2) and personas (L3) are stored as append-only versions** (`scenes`, `scene_versions`, `persona_versions`) instead of rewritten files. An L2 update, a merge or `/v3/scenario/rm` adds a version and never deletes one. Each scene has a fixed id; a merge records the scenes it absorbed and retires them, so merged and removed scenes stay readable with `version`. The key fields (name, summary, heat, how the version came to be, author) are columns, the body stays markdown, and other attributes are kept as they are. Schema migration 3 imports `profile_files` at startup and keeps the table.
 - The persona no longer gets a new version each time the scene navigation changes: the navigation is rendered from the current scenes when the persona is read.
-- `/v3/scenario/write` and `/v3/core/write` record the calling user as the author of the new version. Clearing a chat memory remains the one way scene and persona history is deleted.
+- `/v3/scenario/write` and `/v3/core/write` record the calling user as the author of the new version. A write identical to the latest version adds nothing and returns that version, with its original author. Clearing a chat memory remains the one way scene and persona history is deleted.
+- Scenes have a fixed `scene_id` in `/v3/scenario/{ls,read,write}`; `/v3/scenario/read` accepts `scene_id`, which reaches a scene whose name another one took. `/v3/core/read` with `version` returns that version's body without the Scene Navigation.
+- When L2 creates a scene whose name an API write took while L2 was running, it writes into that scene instead of failing the batch.
 
 ## [0.4.0] - 2026-10-22
 

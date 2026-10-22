@@ -121,7 +121,9 @@ These routes take an optional `x-memory-user-key`. Without one (the operator, `m
 * `conversation/add` `{session_id, messages: [{role: user|assistant, content, timestamp?}]}` stores L0 and drives the pipeline.
 * `session/add` stores a raw session turn object (needs `x-memory-user-id` and `x-memory-session-id`, which the middleware sets from the resolved scope).
 * L0/L1 are scoped by team + agent + user; L2 (`scenario/*`) and L3 (`core/*`) by team + agent only.
-* Scenes and the persona are append-only. `scenario/write` and `core/write` add a version authored by the caller. `scenario/rm` retires the scene: it leaves `ls`, `count` and `read` without `version`, while `read` with `version` still returns any of its versions, as it does for a scene merged into another.
+* Scenes and the persona are append-only. `scenario/write` and `core/write` add a version authored by the caller; a write identical to the latest version adds nothing and returns that version. `scenario/rm` retires the scene: it leaves `ls`, `count` and `read` without `version`, while `read` with `version` still returns any of its versions, as it does for a scene merged into another.
+* Every scene has a fixed `scene_id` (in `ls`, `read` and `write` responses). `read` by `path` finds the scene that has that name now; once another scene takes the name, reach the old one with `scenario/read {scene_id, version?}`, which also returns retired scenes. `read` also returns the version's `op` (`create`, `update`, `merge`, `retire`, `manual`, `import`), `parents` (the versions a merge absorbed) and `author`.
+* `core/read` without `version` returns the latest persona followed by the Scene Navigation of the current scenes. With `version`, even the latest one's number, it returns that version's body alone: the navigation is not part of a stored version.
 
 ### Skills
 

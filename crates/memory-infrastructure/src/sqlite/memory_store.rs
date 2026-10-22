@@ -951,6 +951,36 @@ impl ProfileVersionStore for SqliteMemoryStore {
             .await
     }
 
+    async fn scene_by_id(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+        version: Option<u32>,
+    ) -> DomainResult<Option<SceneVersion>> {
+        let (team, agent) = profile_ids(profile);
+        let scene_id = scene_id.to_owned();
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                let cond = match version {
+                    Some(_) => "AND v.version = ?4",
+                    None => "",
+                };
+                let sql = format!(
+                    "SELECT {SCENE_COLUMNS} FROM scene_versions v JOIN scenes s ON s.id = v.scene_id \
+                     WHERE v.scene_id = ?1 AND s.team_id = ?2 AND s.agent_id = ?3 {cond} ORDER BY v.version DESC LIMIT 1"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let mut rows = match version {
+                    Some(v) => stmt.query(params![scene_id, team, agent, v])?,
+                    None => stmt.query(params![scene_id, team, agent])?,
+                };
+                rows.next()?.map(scene_from_row).transpose()
+            })
+            .await
+    }
+
     async fn append_scenes(
         &self,
         department: &DepartmentId,
@@ -1106,10 +1136,7 @@ impl ProfileVersionStore for SqliteMemoryStore {
                     params![team, agent],
                     |r| r.get(0),
                 )?;
-                tx.execute(
-                    "DELETE FROM scene_versions WHERE scene_id IN (SELECT id FROM scenes WHERE team_id = ? AND agent_id = ?)",
-                    params![team, agent],
-                )?;
+                // Versions go with their scene (ON DELETE CASCADE).
                 tx.execute("DELETE FROM scenes WHERE team_id = ? AND agent_id = ?", params![team, agent])?;
                 tx.execute("DELETE FROM persona_versions WHERE team_id = ? AND agent_id = ?", params![team, agent])?;
                 // The pre-version storage would otherwise keep a copy.

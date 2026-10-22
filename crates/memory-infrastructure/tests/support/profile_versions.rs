@@ -149,6 +149,24 @@ pub async fn exercise(
         .unwrap()
         .unwrap();
     assert_eq!((b.scene_id.as_str(), b.body.as_str()), ("scn-d", "new b"));
+    // By id, the old scene stays reachable after losing its name.
+    let old_b = store
+        .scene_by_id(department, profile, "scn-b", Some(1))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_b.body, "b1");
+    let last_b = store
+        .scene_by_id(department, profile, "scn-b", None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((last_b.version, last_b.op), (2, SceneOp::Retire));
+    assert!(store
+        .scene_by_id(department, other, "scn-b", None)
+        .await
+        .unwrap()
+        .is_none());
 
     // Scene ids belong to one profile.
     let err = store
@@ -178,4 +196,12 @@ pub async fn exercise(
         .await
         .unwrap()
         .is_none());
+    assert!(
+        store
+            .scene_by_id(department, profile, "scn-b", Some(1))
+            .await
+            .unwrap()
+            .is_none(),
+        "versions go with their scene"
+    );
 }

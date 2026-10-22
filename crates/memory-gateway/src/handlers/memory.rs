@@ -8,7 +8,7 @@ use memory_application::memory::service::NewMessage;
 use memory_application::memory::session::SessionTurnHeaders;
 use memory_application::ports::memory::{AtomFilter, ConversationFilter};
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
-use memory_domain::profile::{parse_scene, PersonaOp, ProfileFile, ProfileScope};
+use memory_domain::profile::{PersonaOp, ProfileFile, ProfileScope, SceneVersion};
 use memory_domain::retrieval::SearchMode;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -411,6 +411,7 @@ pub async fn scenario_ls(
         .map(|e| {
             json!({
                 "path": e.relative_path,
+                "scene_id": e.scene.scene_id,
                 "summary": e.meta.as_ref().map(|m| m.summary.clone()),
                 "heat": e.meta.as_ref().map(|m| m.heat),
                 "version": e.file.version,
@@ -432,17 +433,29 @@ pub async fn scenario_read(
 ) -> ApiResult {
     let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
     let path = str_field(&body, "path").unwrap_or("");
-    let file = s
-        .services
-        .memory
-        .read_scene(&department, &profile, path, version_field(&body))
-        .await
-        .map_err(|e| ctx.err(e))?;
+    let memory = &s.services.memory;
+    // By id, a scene stays reachable after another one takes its name.
+    let scene = match str_field(&body, "scene_id") {
+        Some(id) => {
+            memory
+                .read_scene_by_id(&department, &profile, id, version_field(&body))
+                .await
+        }
+        None => {
+            memory
+                .read_scene(&department, &profile, path, version_field(&body))
+                .await
+        }
+    }
+    .map_err(|e| ctx.err(e))?;
+    let file = scene.as_ref().map(SceneVersion::to_file);
+    let path = scene.as_ref().map_or(path, |s| s.slug.as_str());
     let mut data = file_json(path, file.as_ref(), &profile);
-    data["summary"] = json!(file
-        .as_ref()
-        .and_then(|f| parse_scene(&f.content).0)
-        .map(|m| m.summary));
+    data["summary"] = json!(scene.as_ref().map(|s| s.summary.clone()));
+    data["scene_id"] = json!(scene.as_ref().map(|s| s.scene_id.clone()));
+    data["op"] = json!(scene.as_ref().map(|s| s.op));
+    data["parents"] = json!(scene.as_ref().map(|s| s.parents.clone()));
+    data["author"] = json!(scene.as_ref().and_then(|s| s.author.clone()));
     Ok(ok(&ctx.request_id, data))
 }
 
@@ -471,7 +484,7 @@ pub async fn scenario_write(
         .map_err(|e| ctx.err(e))?;
     Ok(ok(
         &ctx.request_id,
-        json!({"path": path, "version": file.version, "updated_at": file.updated_at.to_rfc3339(), "team_id": profile.team_id, "agent_id": profile.agent_id}),
+        json!({"path": path, "scene_id": file.scene_id, "version": file.version, "updated_at": file.created_at.to_rfc3339(), "team_id": profile.team_id, "agent_id": profile.agent_id}),
     ))
 }
 

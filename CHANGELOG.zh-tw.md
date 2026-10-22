@@ -9,7 +9,9 @@
 ### 變更
 - **場景（L2）和 persona（L3）改成只追加的版本儲存**（`scenes`、`scene_versions`、`persona_versions`），不再覆寫檔案。L2 更新、合併或 `/v3/scenario/rm` 都會新增一個版本，不會刪除任何版本。每個場景有固定的 id；合併會記錄它併入了哪些場景，並把那些場景標為退役，所以被合併或移除的場景仍可以用 `version` 讀取。關鍵欄位（名稱、摘要、熱度、版本的由來、作者）是資料表欄位，內文維持 markdown，其他屬性原樣保留。schema 遷移 3 會在啟動時匯入 `profile_files`，並保留這張表。
 - persona 不再因為場景導覽改變就多一個版本：導覽改在讀取 persona 時，依目前的場景產生。
-- `/v3/scenario/write` 和 `/v3/core/write` 會把呼叫的使用者記為新版本的作者。清除 chat memory 仍是唯一會刪除場景與 persona 歷史的操作。
+- `/v3/scenario/write` 和 `/v3/core/write` 會把呼叫的使用者記為新版本的作者。內容與最新版本完全相同的寫入不會新增版本，直接回傳最新版本（作者仍是原本的作者）。清除 chat memory 仍是唯一會刪除場景與 persona 歷史的操作。
+- 場景在 `/v3/scenario/{ls,read,write}` 中有固定的 `scene_id`；`/v3/scenario/read` 接受 `scene_id`，可以讀到名稱已被其他場景用掉的舊場景。`/v3/core/read` 帶 `version` 時只回傳該版本的內文，不附場景導覽。
+- L2 執行期間，如果 API 寫入先用掉了 L2 要建立的場景名稱，L2 會寫進那個既有場景，不會讓整批失敗。
 
 ## [0.4.0] - 2026-10-22
 

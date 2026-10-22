@@ -89,11 +89,12 @@ CREATE TABLE IF NOT EXISTS $S.scenes (
 );
 CREATE INDEX IF NOT EXISTS ix_scenes_profile ON $S.scenes(team_id, agent_id);
 CREATE TABLE IF NOT EXISTS $S.scene_versions (
-    scene_id $K NOT NULL, version BIGINT NOT NULL, op $K NOT NULL, slug $K NOT NULL,
+    scene_id $K NOT NULL REFERENCES $S.scenes(id) ON DELETE CASCADE, version BIGINT NOT NULL, op $K NOT NULL, slug $K NOT NULL,
     summary TEXT NOT NULL, heat BIGINT NOT NULL, body TEXT NOT NULL,
     attrs JSONB NOT NULL, parents JSONB NOT NULL, author $K, created_at_ms BIGINT NOT NULL,
     PRIMARY KEY (scene_id, version)
 );
+CREATE INDEX IF NOT EXISTS ix_scene_versions_slug ON $S.scene_versions(slug);
 CREATE TABLE IF NOT EXISTS $S.persona_versions (
     team_id $K NOT NULL, agent_id $K NOT NULL, version BIGINT NOT NULL, op $K NOT NULL,
     body TEXT NOT NULL, attrs JSONB NOT NULL, author $K, created_at_ms BIGINT NOT NULL,

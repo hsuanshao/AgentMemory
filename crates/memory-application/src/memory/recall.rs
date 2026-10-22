@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::AtomicMemory;
-use memory_domain::profile::{strip_scene_navigation, ProfileScope};
+use memory_domain::profile::ProfileScope;
 use memory_domain::retrieval::{apply_budget, RecallBudget, SearchMode};
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::Serialize;
@@ -125,12 +125,7 @@ impl RecallService {
         };
 
         let profile = ProfileScope::from(scope);
-        let persona = self
-            .memory
-            .read_persona(department, &profile, None)
-            .await?
-            .map(|p| strip_scene_navigation(&p.content))
-            .filter(|p| !p.is_empty());
+        let persona = self.memory.persona_body(department, &profile).await?;
         let navigation = self.memory.navigation(department, &profile).await?;
 
         Ok(RecallResult {

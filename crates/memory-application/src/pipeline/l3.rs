@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::Layer;
-use memory_domain::profile::{parse_scene, strip_scene_navigation, PersonaOp, ProfileScope};
+use memory_domain::profile::{parse_scene, PersonaOp, ProfileScope};
 use memory_domain::scope::DepartmentId;
 
 use super::llm_json::strip_think;
@@ -47,12 +47,7 @@ impl PersonaGenerator {
         if scenes.is_empty() {
             return Ok(L3Outcome::NoScenes);
         }
-        let existing = self
-            .memory
-            .read_persona(department, profile, None)
-            .await?
-            .map(|p| strip_scene_navigation(&p.content))
-            .filter(|p| !p.is_empty());
+        let existing = self.memory.persona_body(department, profile).await?;
         let changed: Vec<_> = scenes
             .iter()
             .filter(|s| existing.is_none() || last_persona_at.is_none_or(|t| s.file.updated_at > t))

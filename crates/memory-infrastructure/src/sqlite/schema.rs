@@ -47,11 +47,12 @@ CREATE TABLE IF NOT EXISTS scenes (
 );
 CREATE INDEX IF NOT EXISTS ix_scenes_profile ON scenes(team_id, agent_id);
 CREATE TABLE IF NOT EXISTS scene_versions (
-    scene_id TEXT NOT NULL, version INTEGER NOT NULL, op TEXT NOT NULL, slug TEXT NOT NULL,
+    scene_id TEXT NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, version INTEGER NOT NULL, op TEXT NOT NULL, slug TEXT NOT NULL,
     summary TEXT NOT NULL, heat INTEGER NOT NULL, body TEXT NOT NULL,
     attrs TEXT NOT NULL, parents TEXT NOT NULL, author TEXT, created_at_ms INTEGER NOT NULL,
     PRIMARY KEY (scene_id, version)
 );
+CREATE INDEX IF NOT EXISTS ix_scene_versions_slug ON scene_versions(slug);
 CREATE TABLE IF NOT EXISTS persona_versions (
     team_id TEXT NOT NULL, agent_id TEXT NOT NULL, version INTEGER NOT NULL, op TEXT NOT NULL,
     body TEXT NOT NULL, attrs TEXT NOT NULL, author TEXT, created_at_ms INTEGER NOT NULL,

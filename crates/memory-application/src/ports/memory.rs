@@ -184,6 +184,17 @@ pub trait ProfileVersionStore: Send + Sync {
         slug: &str,
         version: Option<u32>,
     ) -> DomainResult<Option<SceneVersion>>;
+    /// Scene `scene_id` of the profile, at `version` or its latest version.
+    /// Unlike [`scene`], this reaches scenes whose slug another scene took.
+    ///
+    /// [`scene`]: ProfileVersionStore::scene
+    async fn scene_by_id(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+        version: Option<u32>,
+    ) -> DomainResult<Option<SceneVersion>>;
     /// Appends the versions in one transaction, each as its scene's next
     /// version. A version identical to its scene's latest one is not
     /// stored; the latest one is returned in its place. Creating a scene

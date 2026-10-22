@@ -5,9 +5,9 @@
 //! pipeline cursors, which point at `seq`, resume exactly where they
 //! stopped. Derived data is rebuilt instead of copied: keyword tokens
 //! become `tsvector`s, and the sqlite-vec index gives way to the `embedding`
-//! column. Files under the data directory (L2/L3 objects, skill resources)
-//! and the local coordination state are shared by both backends and stay
-//! where they are.
+//! column. Files under the data directory (raw session turns, skill
+//! resources) and the local coordination state are shared by both backends
+//! and stay where they are.
 //!
 //! The source must not change while this runs: stop memory-core first.
 //! Each department is copied in one transaction and checked by row count

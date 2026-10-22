@@ -869,6 +869,37 @@ impl ProfileVersionStore for PostgresMemoryStore {
         }
     }
 
+    async fn scene_by_id(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+        version: Option<u32>,
+    ) -> DomainResult<Option<SceneVersion>> {
+        let s = self.db.schema(department).await?;
+        let (team, agent) = profile_ids(profile);
+        let mut params = args![scene_id, team, agent].to_vec();
+        let cond = match version {
+            Some(v) => {
+                params.push(Arg::from(v));
+                "AND v.version = ?"
+            }
+            None => "",
+        };
+        fetch_optional(
+            &mut *self.db.conn().await?,
+            &format!(
+                "SELECT {SCENE_COLUMNS} FROM {s}.scene_versions v JOIN {s}.scenes s ON s.id = v.scene_id \
+                 WHERE v.scene_id = ? AND s.team_id = ? AND s.agent_id = ? {cond} ORDER BY v.version DESC LIMIT 1"
+            ),
+            &params,
+        )
+        .await?
+        .as_ref()
+        .map(scene_from_row)
+        .transpose()
+    }
+
     async fn append_scenes(
         &self,
         department: &DepartmentId,
@@ -1023,6 +1054,10 @@ impl ProfileVersionStore for PostgresMemoryStore {
         let (team, agent) = profile_ids(profile);
         let ids = args![team.as_str(), agent.as_str()];
         let mut tx = self.db.begin().await?;
+        // The writers' locks: a concurrent append would otherwise insert a
+        // version after its scene is gone, out of reach of any later purge.
+        xact_lock(&mut tx, &format!("{s}.scenes:{team}/{agent}")).await?;
+        xact_lock(&mut tx, &format!("{s}.persona_versions:{team}/{agent}")).await?;
         let scenes = count(
             &mut tx,
             &format!("SELECT COUNT(*) FROM {s}.scenes WHERE team_id = ? AND agent_id = ?"),
@@ -1035,15 +1070,9 @@ impl ProfileVersionStore for PostgresMemoryStore {
             &ids,
         )
         .await?;
-        execute(
-            &mut tx,
-            &format!("DELETE FROM {s}.scene_versions WHERE scene_id IN (SELECT id FROM {s}.scenes WHERE team_id = ? AND agent_id = ?)"),
-            &ids,
-        )
-        .await?;
+        // Versions go with their scene (ON DELETE CASCADE); `profile_files`
+        // is the pre-version storage, which would otherwise keep a copy.
         for table in ["scenes", "persona_versions", "profile_files"] {
-            // `profile_files` is the pre-version storage, which would
-            // otherwise keep a copy.
             execute(
                 &mut tx,
                 &format!("DELETE FROM {s}.{table} WHERE team_id = ? AND agent_id = ?"),

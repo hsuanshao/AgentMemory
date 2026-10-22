@@ -323,22 +323,36 @@ impl MemoryService {
             .collect())
     }
 
+    /// The scene named `path`. A removed scene is gone for current reads;
+    /// its versions stay readable by number.
     pub async fn read_scene(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
         version: Option<u32>,
-    ) -> DomainResult<Option<ProfileFile>> {
+    ) -> DomainResult<Option<SceneVersion>> {
         validate_scene_path(path)?;
-        // A removed scene is gone for current reads; its versions stay
-        // readable by number.
         Ok(self
             .profiles
             .scene(department, profile, path, version)
             .await?
-            .filter(|s| version.is_some() || s.is_live())
-            .map(|s| s.to_file()))
+            .filter(|s| version.is_some() || s.is_live()))
+    }
+
+    /// Any scene of the profile by id, including one whose name a later
+    /// scene took. A retired scene is returned too: callers asking by id
+    /// are following its history.
+    pub async fn read_scene_by_id(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+        version: Option<u32>,
+    ) -> DomainResult<Option<SceneVersion>> {
+        self.profiles
+            .scene_by_id(department, profile, scene_id, version)
+            .await
     }
 
     /// Appends scene versions in one transaction (the L2 extractor's writes).
@@ -364,7 +378,7 @@ impl MemoryService {
         content: &str,
         summary: Option<&str>,
         author: Option<&str>,
-    ) -> DomainResult<ProfileFile> {
+    ) -> DomainResult<SceneVersion> {
         validate_scene_path(path)?;
         let current = self
             .profiles
@@ -394,7 +408,6 @@ impl MemoryService {
             .await?;
         written
             .pop()
-            .map(|s| s.to_file())
             .ok_or_else(|| DomainError::internal("scene write returned nothing"))
     }
 
@@ -458,6 +471,20 @@ impl MemoryService {
             None => compose_persona(&persona.body, &self.navigation(department, profile).await?),
         };
         Ok(Some(persona_file(&persona, content)))
+    }
+
+    /// The latest persona body (no navigation), if there is a non-empty one.
+    pub async fn persona_body(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+    ) -> DomainResult<Option<String>> {
+        Ok(self
+            .profiles
+            .persona(department, profile, None)
+            .await?
+            .map(|p| p.body)
+            .filter(|b| !b.trim().is_empty()))
     }
 
     /// Appends a persona version; any navigation in `content` is dropped,
