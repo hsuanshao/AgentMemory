@@ -164,6 +164,9 @@ impl SceneExtractor {
                 }
                 _ => own.as_ref().map_or(1, |m| m.heat + 1),
             };
+            // The plan was made from the snapshot: write only on top of what
+            // the LLM saw.
+            let own_version = own.as_ref().map(|s| s.version);
             let scene_id = own
                 .as_ref()
                 .map_or_else(|| self.memory.new_scene_id(), |s| s.scene_id.clone());
@@ -187,6 +190,7 @@ impl SceneExtractor {
                     })
                     .collect(),
                 author: None,
+                expected_version: own_version,
             }];
             versions.extend(
                 merged_away
@@ -195,25 +199,22 @@ impl SceneExtractor {
             );
             let written = match self
                 .memory
-                .append_scenes(department, profile, versions.clone())
+                .append_scenes(department, profile, versions)
                 .await
             {
-                Err(err) if err.code == "scene_exists" => {
-                    // The name was taken after the snapshot (an API write):
-                    // write into that scene instead of failing the batch.
-                    match self
-                        .onto_existing(department, profile, &file, versions)
-                        .await
-                    {
-                        Some(written) => written,
-                        None => {
-                            warn!(file = %file, "scene name taken meanwhile; skipping operation");
-                            continue;
-                        }
-                    }
+                // Only an API write or removal changes scenes while L2 runs:
+                // the user's version wins, and this operation is dropped.
+                Err(err) if err.code == "scene_exists" || err.code == "scene_changed" => {
+                    warn!(file = %file, error = %err, "scene changed by the user since the snapshot; skipping operation");
+                    continue;
                 }
                 other => other?,
             };
+            // Counted only once written: a skipped create does not use up
+            // the batch's one new scene.
+            if is_create {
+                created += 1;
+            }
             let mut written = written.into_iter();
             if let Some(target) = written.next() {
                 current.insert(file.clone(), target);
@@ -221,52 +222,8 @@ impl SceneExtractor {
             for old in &merged_away {
                 current.remove(&old.slug);
             }
-            if is_create {
-                created += 1;
-            }
             changed.push(file);
         }
         Ok(changed)
-    }
-
-    /// Retries an operation whose new scene clashed with a live one named
-    /// `file`: the versions go to that scene, its heat and attributes
-    /// carried over. `None` when that fails too.
-    async fn onto_existing(
-        &self,
-        department: &DepartmentId,
-        profile: &ProfileScope,
-        file: &str,
-        mut versions: Vec<NewSceneVersion>,
-    ) -> Option<Vec<SceneVersion>> {
-        let existing = self
-            .memory
-            .read_scene(department, profile, file, None)
-            .await
-            .ok()
-            .flatten()?;
-        let target = versions.first_mut()?;
-        target.scene_id = existing.scene_id.clone();
-        if target.op == SceneOp::Create {
-            target.op = SceneOp::Update;
-        }
-        target.heat += existing.heat;
-        target.attrs = existing.attrs;
-        for retired in versions.iter_mut().skip(1) {
-            retired
-                .attrs
-                .insert("merged_into".into(), existing.scene_id.clone());
-        }
-        match self
-            .memory
-            .append_scenes(department, profile, versions)
-            .await
-        {
-            Ok(written) => Some(written),
-            Err(err) => {
-                warn!(file = %file, error = %err, "writing into the existing scene failed");
-                None
-            }
-        }
     }
 }

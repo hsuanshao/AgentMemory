@@ -14,7 +14,7 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 - The persona no longer gets a new version each time the scene navigation changes: the navigation is rendered from the current scenes when the persona is read.
 - `/v3/scenario/write` and `/v3/core/write` record the calling user as the author of the new version. A write identical to the latest version adds nothing and returns that version, with its original author. Clearing a chat memory remains the one way scene and persona history is deleted.
 - Scenes have a fixed `scene_id` in `/v3/scenario/{ls,read,write}`; `/v3/scenario/read` accepts `scene_id`, which reaches a scene whose name another one took. `/v3/core/read` with `version` returns that version's body without the Scene Navigation.
-- When L2 creates a scene whose name an API write took while L2 was running, it writes into that scene instead of failing the batch.
+- A scene the user writes or removes through the API while L2 is running keeps the user's version: L2 drops the operations it planned on the older snapshot (an update, a merge, or a create whose name the user took) instead of overwriting the user's version or failing the batch. Those memories stay in L1.
 
 ## [0.4.0] - 2026-10-22
 

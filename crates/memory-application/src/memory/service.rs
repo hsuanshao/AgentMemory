@@ -401,6 +401,7 @@ impl MemoryService {
             attrs: current.map(|s| s.attrs).unwrap_or_default(),
             parents: Vec::new(),
             author: author.map(str::to_owned),
+            expected_version: None,
         };
         let mut written = self
             .profiles
@@ -430,7 +431,11 @@ impl MemoryService {
             .await?
             .into_iter()
             .filter(|s| path.ends_with('/') || s.slug == path)
-            .map(|s| retirement(s, None, author))
+            // The user's removal wins over whatever happened since the read.
+            .map(|s| NewSceneVersion {
+                expected_version: None,
+                ..retirement(s, None, author)
+            })
             .collect();
         let removed = retired.len();
         if removed > 0 {
@@ -551,7 +556,8 @@ impl MemoryService {
     }
 }
 
-/// The final version of a scene that goes away: same content, `retire`.
+/// The final version of a scene that goes away: same content, `retire`,
+/// expected to be on top of the version given.
 pub fn retirement(
     scene: SceneVersion,
     merged_into: Option<&str>,
@@ -571,6 +577,7 @@ pub fn retirement(
         attrs,
         parents: Vec::new(),
         author: author.map(str::to_owned),
+        expected_version: Some(scene.version),
     }
 }
 

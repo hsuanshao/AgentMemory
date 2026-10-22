@@ -20,6 +20,7 @@ fn version(scene_id: &str, op: SceneOp, slug: &str, body: &str) -> NewSceneVersi
         attrs: BTreeMap::new(),
         parents: Vec::new(),
         author: None,
+        expected_version: None,
     }
 }
 
@@ -94,6 +95,22 @@ pub async fn exercise(
         .unwrap()
         .unwrap();
     assert_eq!(a1.body, "a1", "old versions stay readable");
+
+    // Optimistic lock: a writer that saw an older version is refused.
+    let mut stale = version("scn-a", SceneOp::Update, "a.md", "stale");
+    stale.expected_version = Some(1);
+    let err = append(vec![stale]).await.unwrap_err();
+    assert_eq!(
+        (err.kind, err.code.as_str()),
+        (ErrorKind::Conflict, "scene_changed")
+    );
+    let mut fresh = version("scn-a", SceneOp::Update, "a.md", "a2");
+    fresh.expected_version = Some(2);
+    assert_eq!(
+        append(vec![fresh]).await.unwrap()[0].version,
+        2,
+        "on top of v2, unchanged"
+    );
 
     // A live slug cannot be claimed by another scene.
     let err = append(vec![version("scn-c", SceneOp::Create, "a.md", "x")])

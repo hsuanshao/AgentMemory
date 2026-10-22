@@ -25,7 +25,7 @@ use super::db::{db_err, DepartmentPool};
 use super::sql::{blob_to_embedding, embedding_to_blob, from_ms, like_prefix, to_ms, Where};
 use super::vec_index::{self, KnnFilter, VecIndex};
 use crate::profile_versions::{
-    attrs_from, attrs_json, parents_from, parents_json, slug_taken, unknown_scene,
+    attrs_from, attrs_json, parents_from, parents_json, scene_changed, slug_taken, unknown_scene,
 };
 use crate::text::{bm25_to_score, index_text, match_query};
 
@@ -829,6 +829,12 @@ fn append_scene(
         return Err(unknown_scene(&new.scene_id));
     }
     let latest = latest_scene(tx, &new.scene_id).map_err(db_err)?;
+    if let Some(expected) = new.expected_version {
+        let found = latest.as_ref().map_or(0, |l| l.version);
+        if found != expected {
+            return Err(scene_changed(&new.slug, expected, found));
+        }
+    }
     if let Some(latest) = &latest {
         if latest.same_content(&new) || (!latest.is_live() && new.op == SceneOp::Retire) {
             return Ok(latest.clone());

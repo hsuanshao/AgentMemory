@@ -192,6 +192,10 @@ pub struct NewSceneVersion {
     pub attrs: BTreeMap<String, String>,
     pub parents: Vec<SceneRef>,
     pub author: Option<String>,
+    /// Optimistic lock: the latest version the writer saw (0 for a scene it
+    /// saw no version of). If the scene moved on since, the append is a
+    /// `scene_changed` conflict. `None` writes on top of whatever is there.
+    pub expected_version: Option<u32>,
 }
 
 impl SceneVersion {

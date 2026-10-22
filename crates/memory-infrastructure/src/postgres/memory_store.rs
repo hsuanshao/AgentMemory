@@ -34,7 +34,7 @@ use super::sql::{
     args, count, doc, execute, fetch_all, fetch_optional, get, to_doc, tsquery_literal,
     tsvector_literal, Arg, Where,
 };
-use crate::profile_versions::{slug_taken, unknown_scene};
+use crate::profile_versions::{scene_changed, slug_taken, unknown_scene};
 use crate::sqlite::sql::{from_ms, like_prefix, to_ms};
 
 pub struct PostgresMemoryStore {
@@ -741,6 +741,12 @@ async fn append_scene(
         return Err(unknown_scene(&new.scene_id));
     }
     let latest = latest_scene(tx, s, &new.scene_id).await?;
+    if let Some(expected) = new.expected_version {
+        let found = latest.as_ref().map_or(0, |l| l.version);
+        if found != expected {
+            return Err(scene_changed(&new.slug, expected, found));
+        }
+    }
     if let Some(latest) = &latest {
         if latest.same_content(&new) || (!latest.is_live() && new.op == SceneOp::Retire) {
             return Ok(latest.clone());

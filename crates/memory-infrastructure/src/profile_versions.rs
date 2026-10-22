@@ -37,6 +37,13 @@ pub fn slug_taken(slug: &str) -> DomainError {
     )
 }
 
+pub fn scene_changed(slug: &str, expected: u32, found: u32) -> DomainError {
+    DomainError::conflict(
+        "scene_changed",
+        format!("{slug} is at version {found}, not the expected {expected}"),
+    )
+}
+
 pub fn unknown_scene(scene_id: &str) -> DomainError {
     DomainError::invalid(format!("scene {scene_id} does not belong to this profile"))
 }
