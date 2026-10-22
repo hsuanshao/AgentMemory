@@ -287,6 +287,17 @@ async fn migrate(tx: &mut Transaction<'_, Postgres>) -> DomainResult<()> {
         Some(row) => get::<Option<i64>>(&row, "v")?.unwrap_or(0),
         None => 0,
     };
+    // A database written by a newer memory-server: running on it would
+    // ignore what that version stores (and lose what is written meanwhile
+    // on the next upgrade, whose migrations are already recorded).
+    if applied > schema::SCHEMA_VERSION {
+        return Err(DomainError::unavailable(format!(
+            "the postgres schema is at version {applied}, newer than this memory-server knows \
+             ({}): run the newer version, or restore the backup taken before the upgrade \
+             (docs/UPGRADE.md, Roll back)",
+            schema::SCHEMA_VERSION
+        )));
+    }
     if applied < 1 {
         rename_instances(tx, &registry).await?;
     }

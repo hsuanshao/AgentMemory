@@ -268,3 +268,52 @@ async fn redis_instance_keys_and_documents_are_renamed() {
     let all: Vec<String> = c.keys(format!("{}*", keys.key(""))).await.unwrap();
     let _: () = c.del(all).await.unwrap();
 }
+
+/// Data written by a newer memory-server is refused, not migrated over.
+#[tokio::test]
+async fn newer_postgres_and_redis_schemas_are_refused() {
+    if let Ok(url) = std::env::var("AGENT_MEMORY_TEST_POSTGRES_URL") {
+        let name = format!("amem_newer_{}", uuid::Uuid::new_v4().simple());
+        let mut admin = PgConnection::connect(&url).await.unwrap();
+        admin
+            .execute(format!("CREATE DATABASE {name}").as_str())
+            .await
+            .unwrap();
+        let db_url = with_database(&url, &name);
+        {
+            let db = PgDb::connect(&db_url, 2, None).await.unwrap();
+            db.conn()
+                .await
+                .unwrap()
+                .execute("INSERT INTO agent_memory.schema_migrations (version, name) VALUES (999, 'from the future')")
+                .await
+                .unwrap();
+            db.pool().close().await;
+        }
+        let err = PgDb::connect(&db_url, 2, None).await.err().unwrap();
+        assert!(
+            err.to_string().contains("newer than this memory-server"),
+            "{err}"
+        );
+        admin
+            .execute(format!("DROP DATABASE {name} WITH (FORCE)").as_str())
+            .await
+            .unwrap();
+    } else {
+        eprintln!("skipping postgres: set AGENT_MEMORY_TEST_POSTGRES_URL");
+    }
+    if let Ok(url) = std::env::var("AGENT_MEMORY_TEST_REDIS_URL") {
+        let conn = connect(&url).await.unwrap();
+        let keys = KeySpace::new(&format!("amem-test-{}", uuid::Uuid::new_v4()));
+        let mut c = conn.clone();
+        let _: () = c.set(keys.key("schema_version"), 999).await.unwrap();
+        let err = migrate::migrate(&conn, &keys).await.unwrap_err();
+        assert!(
+            err.to_string().contains("newer than this memory-server"),
+            "{err}"
+        );
+        let _: () = c.del(keys.key("schema_version")).await.unwrap();
+    } else {
+        eprintln!("skipping redis: set AGENT_MEMORY_TEST_REDIS_URL");
+    }
+}

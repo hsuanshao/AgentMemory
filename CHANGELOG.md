@@ -6,6 +6,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Added
+- memory-core refuses to start on data written by a newer version (SQLite `user_version`, Postgres `schema_migrations`, Redis `schema_version`), with an error that says to run the newer version or restore the backup. Going back to 0.4.0 after this upgrade needs the backup restored ([UPGRADE](docs/UPGRADE.md#after-040-unreleased)).
+
 ### Changed
 - **Scenes (L2) and personas (L3) are stored as append-only versions** (`scenes`, `scene_versions`, `persona_versions`) instead of rewritten files. An L2 update, a merge or `/v3/scenario/rm` adds a version and never deletes one. Each scene has a fixed id; a merge records the scenes it absorbed and retires them, so merged and removed scenes stay readable with `version`. The key fields (name, summary, heat, how the version came to be, author) are columns, the body stays markdown, and other attributes are kept as they are. Schema migration 3 imports `profile_files` at startup and keeps the table.
 - The persona no longer gets a new version each time the scene navigation changes: the navigation is rendered from the current scenes when the persona is read.

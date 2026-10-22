@@ -187,6 +187,24 @@ fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
 }
 
+/// Refuses a database written by a newer memory-server. Running on it would
+/// ignore what the newer version stores, and rewriting `user_version` would
+/// make a later upgrade replay migrations over data written since.
+fn refuse_newer(conn: &Connection) -> rusqlite::Result<()> {
+    let found = user_version(conn)?;
+    if found <= SCHEMA_VERSION {
+        return Ok(());
+    }
+    Err(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+        Some(format!(
+            "the database is at schema version {found}, newer than this memory-server knows \
+             ({SCHEMA_VERSION}): run the newer version, or restore the backup taken before the \
+             upgrade (docs/UPGRADE.md, Roll back)"
+        )),
+    ))
+}
+
 fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT count(*) FROM pragma_table_info(?1) WHERE name = ?2",
@@ -197,6 +215,7 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<
 }
 
 pub fn migrate_department(conn: &Connection) -> rusqlite::Result<()> {
+    refuse_newer(conn)?;
     conn.execute_batch(DEPARTMENT_SCHEMA)?;
     if user_version(conn)? < 1 {
         conn.execute_batch(
@@ -290,6 +309,7 @@ fn import_profile_files(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 pub fn migrate_system(conn: &Connection) -> rusqlite::Result<()> {
+    refuse_newer(conn)?;
     // Before the DDL: its indexes name the new column.
     if user_version(conn)? < 1 {
         let tx = conn.unchecked_transaction()?;
@@ -458,5 +478,17 @@ mod tests {
             "a version that only refreshed the navigation is skipped"
         );
         assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn a_newer_database_is_refused_and_left_alone() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION + 1))
+            .unwrap();
+        for migrate in [migrate_department, migrate_system] {
+            let err = migrate(&conn).unwrap_err().to_string();
+            assert!(err.contains("newer than this memory-server"), "{err}");
+        }
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION + 1);
     }
 }

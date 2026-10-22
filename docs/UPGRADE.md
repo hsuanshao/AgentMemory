@@ -4,6 +4,7 @@
 
 ## Contents
 
+- [After 0.4.0 (unreleased)](#after-040-unreleased)
 - [To 0.4.0](#to-040)
 - [To 0.3.0](#to-030)
 - [Within 0.1.1 – 0.2.x](#within-011--02x)
@@ -16,6 +17,19 @@
   - [D. Check the result](#d-check-the-result)
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
+
+## After 0.4.0 (unreleased)
+
+```bash
+./upgrade.sh
+```
+
+**Scenes and personas move to new tables.** Schema migration 3 runs when memory-core starts. It copies every version in `profile_files` into `scenes`, `scene_versions` and `persona_versions`, which are append-only from now on. `profile_files` stays, but nothing writes to it anymore. Clients see the same scenes and persona, and the API paths are unchanged.
+
+> [!WARNING]
+> **Going back to 0.4.0 means restoring the backup** ([E. Roll back](#e-roll-back)). 0.4.0 still reads `profile_files`, so on upgraded data it would show the scenes and persona from before the upgrade, and what it wrote would not be carried over by a later upgrade, whose migration is already recorded. Restoring the backup also undoes every other change made after the upgrade, as with any rollback.
+
+**From this version on, memory-core refuses data written by a newer version.** It checks SQLite `user_version`, Postgres `schema_migrations` and Redis `schema_version`; if the data is newer, it stops with an error that says to run the newer version or restore the backup. 0.4.0 and earlier do not have this check, so take care when going back to them.
 
 ## To 0.4.0
 
@@ -281,6 +295,8 @@ amem recall "something you told an agent before the upgrade"
 In the Panel (`http://SERVER:8125`, log in with the user key), pick the team and agent. The old conversations and memories are listed there. On the server, `docker compose logs -f memory-core` should show no authorization errors once the clients are back.
 
 ## E. Roll back
+
+Going back always means restoring the data too: a migrated store cannot be read correctly by an earlier version, and versions after 0.4.0 refuse to start on data newer than they know. Everything written after the upgrade is lost.
 
 Use the backup from step 1, for example `B=backups/20261019-101500`:
 

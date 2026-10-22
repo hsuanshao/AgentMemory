@@ -30,7 +30,17 @@ pub async fn migrate(conn: &ConnectionManager, prefix: &KeySpace) -> DomainResul
     let token = uuid::Uuid::new_v4().to_string();
     let deadline = tokio::time::Instant::now() + WAIT;
     loop {
-        if version(&mut c, &version_key).await? >= SCHEMA_VERSION {
+        let found = version(&mut c, &version_key).await?;
+        if found > SCHEMA_VERSION {
+            // Written by a newer memory-server, whose state this one would
+            // misread.
+            return Err(DomainError::unavailable(format!(
+                "the redis state is at schema version {found}, newer than this memory-server \
+                 knows ({SCHEMA_VERSION}): run the newer version, or restore the backup taken \
+                 before the upgrade (docs/UPGRADE.md, Roll back)"
+            )));
+        }
+        if found == SCHEMA_VERSION {
             return Ok(());
         }
         let locked: Option<String> = cmd("SET")

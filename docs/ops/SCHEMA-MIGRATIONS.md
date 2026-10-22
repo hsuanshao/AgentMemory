@@ -43,6 +43,7 @@ flowchart LR
   - SQLite is single-node by design.
 - **Old replicas must be stopped first.** A replica of an earlier version cannot read migrated data. The upgrade guide says so for every release with a migration.
 - **One way only.** There are no down migrations. Going back means restoring the backup `upgrade.sh` takes (see [UPGRADE.md](../UPGRADE.md)).
+- **Newer data is refused.** A store whose version is above the one the code knows (`user_version`, `max(schema_migrations.version)`, `schema_version`) stops memory-core with an error, and nothing is migrated or rewritten. Without this, an older SQLite build would reset `user_version` and a later upgrade would replay migrations over data written in between. Versions up to 0.4.0 do not have the check.
 
 ## 3. Migrations so far
 

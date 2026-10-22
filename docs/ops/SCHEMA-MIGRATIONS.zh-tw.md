@@ -43,6 +43,7 @@ flowchart LR
   - SQLite 本來就只支援單一節點。
 - **必須先停掉舊版的 replica。** 舊版讀不懂遷移後的資料。每個含遷移的版本，升級指南都會寫明這點。
 - **只能往前。** 沒有反向遷移。要回到舊版，請還原 `upgrade.sh` 做的備份（見 [UPGRADE.zh-tw.md](../UPGRADE.zh-tw.md)）。
+- **拒絕更新的資料。** 儲存端的版本（`user_version`、`max(schema_migrations.version)`、`schema_version`）比程式認得的新時，memory-core 會停止並顯示錯誤，不遷移也不改寫任何東西。沒有這項檢查的話，舊的 SQLite 版本會把 `user_version` 改回去，之後再升級時會在中間寫入的資料上重跑遷移。0.4.0 以前的版本沒有這項檢查。
 
 ## 3. 目前的遷移
 
