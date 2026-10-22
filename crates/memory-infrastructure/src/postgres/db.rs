@@ -16,6 +16,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use memory_domain::error::{DomainError, DomainResult};
+use memory_domain::profile::{import_legacy_files, LegacyProfileFile};
 use memory_domain::scope::DepartmentId;
 use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
@@ -24,7 +25,10 @@ use sqlx::{Connection, Postgres, Transaction};
 use tracing::{info, warn};
 
 use super::schema::{self, HNSW_MAX_DIMS, REGISTRY_SCHEMA};
-use super::sql::{args, count, execute, execute_script, fetch_all, fetch_optional, get, Arg};
+use super::sql::{
+    args, count, execute, execute_script, fetch_all, fetch_optional, get, to_doc, Arg,
+};
+use crate::profile_versions::legacy_scene_id;
 
 /// How long a request waits for a pooled connection (and how long start-up
 /// waits for the first one) before reporting storage as unavailable.
@@ -298,6 +302,9 @@ async fn migrate(tx: &mut Transaction<'_, Postgres>) -> DomainResult<()> {
         })
         .await?;
     }
+    if applied < 3 {
+        import_profile_files(tx, &registry).await?;
+    }
     for (version, name) in schema::MIGRATIONS.iter().filter(|(v, _)| *v > applied) {
         execute(
             tx,
@@ -352,6 +359,107 @@ async fn rename_instances(tx: &mut Transaction<'_, Postgres>, registry: &str) ->
         departments,
         "renamed the postgres instance registry to departments"
     );
+    Ok(())
+}
+
+/// Migration 3: every stored file version of each department becomes a
+/// scene or persona version. `ON CONFLICT DO NOTHING` keeps a repeated run
+/// harmless.
+async fn import_profile_files(
+    tx: &mut Transaction<'_, Postgres>,
+    registry: &str,
+) -> DomainResult<()> {
+    let rows = fetch_all(
+        tx,
+        &format!("SELECT schema_name FROM {registry}.departments"),
+        &[],
+    )
+    .await?;
+    for row in &rows {
+        let s = quote_ident(&get::<String>(row, "schema_name")?);
+        let exists = fetch_optional(
+            tx,
+            "SELECT 1 AS x WHERE to_regclass(?) IS NOT NULL",
+            &args![format!("{s}.profile_files")],
+        )
+        .await?;
+        if exists.is_none() {
+            continue;
+        }
+        // The department's tables are otherwise created on first use.
+        execute_script(tx, &schema::department_ddl(&s)).await?;
+        let files = fetch_all(
+            tx,
+            &format!("SELECT team_id, agent_id, path, version, content, created_at_ms, updated_at_ms FROM {s}.profile_files"),
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|r| -> DomainResult<LegacyProfileFile> {
+            Ok(LegacyProfileFile {
+                team_id: get(r, "team_id")?,
+                agent_id: get(r, "agent_id")?,
+                path: get(r, "path")?,
+                version: u32::try_from(get::<i64>(r, "version")?).unwrap_or_default(),
+                content: get(r, "content")?,
+                created_at_ms: get(r, "created_at_ms")?,
+                updated_at_ms: get(r, "updated_at_ms")?,
+            })
+        })
+        .collect::<DomainResult<Vec<_>>>()?;
+        let (scenes, personas) = import_legacy_files(files, legacy_scene_id);
+        for i in &scenes {
+            let v = &i.scene;
+            execute(
+                tx,
+                &format!("INSERT INTO {s}.scenes (id, team_id, agent_id, created_at_ms) VALUES (?,?,?,?) ON CONFLICT DO NOTHING"),
+                &args![v.scene_id.as_str(), i.team_id.as_str(), i.agent_id.as_str(), v.scene_created_at.timestamp_millis()],
+            )
+            .await?;
+            execute(
+                tx,
+                &format!("INSERT INTO {s}.scene_versions (scene_id, version, op, slug, summary, heat, body, attrs, parents, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING"),
+                &[
+                    Arg::from(v.scene_id.as_str()),
+                    Arg::from(v.version),
+                    Arg::from(v.op.as_str()),
+                    Arg::from(v.slug.as_str()),
+                    Arg::from(v.summary.as_str()),
+                    Arg::from(v.heat),
+                    Arg::from(v.body.as_str()),
+                    to_doc(&v.attrs)?,
+                    to_doc(&v.parents)?,
+                    Arg::from(v.author.clone()),
+                    Arg::from(v.created_at.timestamp_millis()),
+                ],
+            )
+            .await?;
+        }
+        for i in &personas {
+            let v = &i.persona;
+            execute(
+                tx,
+                &format!("INSERT INTO {s}.persona_versions (team_id, agent_id, version, op, body, attrs, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING"),
+                &[
+                    Arg::from(i.team_id.as_str()),
+                    Arg::from(i.agent_id.as_str()),
+                    Arg::from(v.version),
+                    Arg::from(v.op.as_str()),
+                    Arg::from(v.body.as_str()),
+                    to_doc(&v.attrs)?,
+                    Arg::from(v.author.clone()),
+                    Arg::from(v.created_at.timestamp_millis()),
+                ],
+            )
+            .await?;
+        }
+        info!(
+            schema = %s,
+            scene_versions = scenes.len(),
+            persona_versions = personas.len(),
+            "imported profile files as scene and persona versions"
+        );
+    }
     Ok(())
 }
 

@@ -1,4 +1,5 @@
-//! SQLite adapter for L0 conversations, L1 atoms and versioned profile files.
+//! SQLite adapter for L0 conversations, L1 atoms and the scene / persona
+//! versions of L2 / L3.
 
 use std::sync::Arc;
 
@@ -7,19 +8,25 @@ use chrono::{DateTime, Utc};
 use memory_application::common::{Page, Scored};
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    MovedRows, ProfileFileRepository, ScopeMigrationStore, Sequenced,
+    MovedRows, ProfileVersionStore, ScopeMigrationStore, Sequenced,
 };
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
-use memory_domain::profile::{ProfileFile, ProfileScope};
+use memory_domain::profile::{
+    NewPersonaVersion, NewSceneVersion, PersonaOp, PersonaVersion, ProfileScope, SceneOp,
+    SceneVersion,
+};
 use memory_domain::retrieval::cosine;
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
-use super::db::DepartmentPool;
+use super::db::{db_err, DepartmentPool};
 use super::sql::{blob_to_embedding, embedding_to_blob, from_ms, like_prefix, to_ms, Where};
 use super::vec_index::{self, KnnFilter, VecIndex};
+use crate::profile_versions::{
+    attrs_from, attrs_json, parents_from, parents_json, slug_taken, unknown_scene,
+};
 use crate::text::{bm25_to_score, index_text, match_query};
 
 pub struct SqliteMemoryStore {
@@ -752,13 +759,39 @@ async fn delete_atoms(
 
 // ── L2 / L3 ─────────────────────────────────────────────────────────────
 
-fn file_from_row(row: &Row<'_>) -> rusqlite::Result<ProfileFile> {
-    Ok(ProfileFile {
-        path: row.get("path")?,
-        content: row.get("content")?,
+const SCENE_COLUMNS: &str = "v.scene_id, v.version, v.op, v.slug, v.summary, v.heat, v.body, v.attrs, v.parents, v.author, v.created_at_ms, s.created_at_ms AS scene_created_at_ms";
+
+/// The latest version of each scene: `v` is a version, `s` its scene.
+const IS_LATEST: &str =
+    "v.version = (SELECT MAX(m.version) FROM scene_versions m WHERE m.scene_id = v.scene_id)";
+
+fn scene_from_row(row: &Row<'_>) -> rusqlite::Result<SceneVersion> {
+    let text = |e: memory_domain::error::DomainError| conversion_err(e);
+    Ok(SceneVersion {
+        scene_id: row.get("scene_id")?,
         version: row.get("version")?,
+        op: SceneOp::parse(&row.get::<_, String>("op")?).map_err(text)?,
+        slug: row.get("slug")?,
+        summary: row.get("summary")?,
+        heat: row.get("heat")?,
+        body: row.get("body")?,
+        attrs: attrs_from(&row.get::<_, String>("attrs")?).map_err(text)?,
+        parents: parents_from(&row.get::<_, String>("parents")?).map_err(text)?,
+        author: row.get("author")?,
+        scene_created_at: from_ms(row.get("scene_created_at_ms")?),
         created_at: from_ms(row.get("created_at_ms")?),
-        updated_at: from_ms(row.get("updated_at_ms")?),
+    })
+}
+
+fn persona_from_row(row: &Row<'_>) -> rusqlite::Result<PersonaVersion> {
+    let text = |e: memory_domain::error::DomainError| conversion_err(e);
+    Ok(PersonaVersion {
+        version: row.get("version")?,
+        op: PersonaOp::parse(&row.get::<_, String>("op")?).map_err(text)?,
+        body: row.get("body")?,
+        attrs: attrs_from(&row.get::<_, String>("attrs")?).map_err(text)?,
+        author: row.get("author")?,
+        created_at: from_ms(row.get("created_at_ms")?),
     })
 }
 
@@ -766,119 +799,181 @@ fn profile_ids(p: &ProfileScope) -> (String, String) {
     (p.team_id.to_string(), p.agent_id.to_string())
 }
 
+fn latest_scene(conn: &Connection, scene_id: &str) -> rusqlite::Result<Option<SceneVersion>> {
+    conn.query_row(
+        &format!("SELECT {SCENE_COLUMNS} FROM scene_versions v JOIN scenes s ON s.id = v.scene_id WHERE v.scene_id = ? ORDER BY v.version DESC LIMIT 1"),
+        [scene_id],
+        scene_from_row,
+    )
+    .optional()
+}
+
+/// Appends one version inside the caller's transaction (see
+/// [`ProfileVersionStore::append_scenes`]).
+fn append_scene(
+    tx: &Connection,
+    team: &str,
+    agent: &str,
+    new: NewSceneVersion,
+    now: i64,
+) -> DomainResult<SceneVersion> {
+    let owner: Option<(String, String)> = tx
+        .query_row(
+            "SELECT team_id, agent_id FROM scenes WHERE id = ?",
+            [&new.scene_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(db_err)?;
+    if owner.as_ref().is_some_and(|(t, a)| t != team || a != agent) {
+        return Err(unknown_scene(&new.scene_id));
+    }
+    let latest = latest_scene(tx, &new.scene_id).map_err(db_err)?;
+    if let Some(latest) = &latest {
+        if latest.same_content(&new) || (!latest.is_live() && new.op == SceneOp::Retire) {
+            return Ok(latest.clone());
+        }
+    }
+    if new.op != SceneOp::Retire {
+        let taken: bool = tx
+            .query_row(
+                &format!("SELECT EXISTS (SELECT 1 FROM scene_versions v JOIN scenes s ON s.id = v.scene_id WHERE s.team_id = ? AND s.agent_id = ? AND v.scene_id <> ? AND v.slug = ? AND v.op <> 'retire' AND {IS_LATEST})"),
+                params![team, agent, new.scene_id, new.slug],
+                |r| r.get(0),
+            )
+            .map_err(db_err)?;
+        if taken {
+            return Err(slug_taken(&new.slug));
+        }
+    }
+    if owner.is_none() {
+        tx.execute(
+            "INSERT INTO scenes (id, team_id, agent_id, created_at_ms) VALUES (?,?,?,?)",
+            params![new.scene_id, team, agent, now],
+        )
+        .map_err(db_err)?;
+    }
+    let version = latest.as_ref().map_or(1, |l| l.version + 1);
+    tx.execute(
+        "INSERT INTO scene_versions (scene_id, version, op, slug, summary, heat, body, attrs, parents, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        params![
+            new.scene_id,
+            version,
+            new.op.as_str(),
+            new.slug,
+            new.summary,
+            new.heat,
+            new.body,
+            attrs_json(&new.attrs),
+            parents_json(&new.parents),
+            new.author,
+            now
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(SceneVersion {
+        version,
+        scene_created_at: latest.map_or(from_ms(now), |l| l.scene_created_at),
+        created_at: from_ms(now),
+        scene_id: new.scene_id,
+        op: new.op,
+        slug: new.slug,
+        summary: new.summary,
+        heat: new.heat,
+        body: new.body,
+        attrs: new.attrs,
+        parents: new.parents,
+        author: new.author,
+    })
+}
+
 #[async_trait]
-impl ProfileFileRepository for SqliteMemoryStore {
-    async fn list(
+impl ProfileVersionStore for SqliteMemoryStore {
+    async fn scene_heads(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
-    ) -> DomainResult<Vec<ProfileFile>> {
+    ) -> DomainResult<Vec<SceneVersion>> {
         let (team, agent) = profile_ids(profile);
         let like = like_prefix(prefix);
         self.pool
             .get(department)?
             .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT path, content, version, created_at_ms, updated_at_ms FROM profile_files \
-                     WHERE team_id = ? AND agent_id = ? AND is_head = 1 AND path LIKE ? ESCAPE '\\' ORDER BY path",
-                )?;
-                let rows = stmt.query_map(params![team, agent, like], file_from_row)?.collect();
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {SCENE_COLUMNS} FROM scene_versions v JOIN scenes s ON s.id = v.scene_id \
+                     WHERE s.team_id = ? AND s.agent_id = ? AND {IS_LATEST} AND v.op <> 'retire' \
+                     AND v.slug LIKE ? ESCAPE '\\' ORDER BY v.slug"
+                ))?;
+                let rows = stmt.query_map(params![team, agent, like], scene_from_row)?.collect();
                 rows
             })
             .await
     }
 
-    async fn read(
+    async fn scene(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
-        path: &str,
+        slug: &str,
         version: Option<u32>,
-    ) -> DomainResult<Option<ProfileFile>> {
+    ) -> DomainResult<Option<SceneVersion>> {
         let (team, agent) = profile_ids(profile);
-        let path = path.to_owned();
+        let slug = slug.to_owned();
         self.pool
             .get(department)?
             .call(move |conn| {
-                let (cond, v) = match version {
-                    Some(v) => ("version = ?", Value::from(v as i64)),
-                    None => ("is_head = ?", Value::from(1i64)),
+                let scene_id: Option<String> = conn
+                    .query_row(
+                        &format!(
+                            "SELECT v.scene_id FROM scene_versions v JOIN scenes s ON s.id = v.scene_id \
+                             WHERE s.team_id = ? AND s.agent_id = ? AND v.slug = ? AND {IS_LATEST} \
+                             ORDER BY v.op = 'retire', v.created_at_ms DESC LIMIT 1"
+                        ),
+                        params![team, agent, slug],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let Some(scene_id) = scene_id else {
+                    return Ok(None);
                 };
-                let sql = format!("SELECT path, content, version, created_at_ms, updated_at_ms FROM profile_files WHERE team_id = ? AND agent_id = ? AND path = ? AND {cond}");
-                let mut stmt = conn.prepare(&sql)?;
-                let mut rows = stmt.query_map(params![team, agent, path, v], file_from_row)?;
-                rows.next().transpose()
+                match version {
+                    None => latest_scene(conn, &scene_id),
+                    Some(v) => conn
+                        .query_row(
+                            &format!("SELECT {SCENE_COLUMNS} FROM scene_versions v JOIN scenes s ON s.id = v.scene_id WHERE v.scene_id = ? AND v.version = ?"),
+                            params![scene_id, v],
+                            scene_from_row,
+                        )
+                        .optional(),
+                }
             })
             .await
     }
 
-    async fn write(
+    async fn append_scenes(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
-        path: &str,
-        content: &str,
-    ) -> DomainResult<ProfileFile> {
+        versions: Vec<NewSceneVersion>,
+    ) -> DomainResult<Vec<SceneVersion>> {
         let (team, agent) = profile_ids(profile);
-        let (path, content) = (path.to_owned(), content.to_owned());
         let now = to_ms(Utc::now());
         self.pool
             .get(department)?
-            .call(move |conn| {
-                let tx = conn.transaction()?;
-                let head: Option<(u32, String, i64)> = tx
-                    .query_row(
-                        "SELECT version, content, created_at_ms FROM profile_files WHERE team_id = ? AND agent_id = ? AND path = ? AND is_head = 1",
-                        params![team, agent, path],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                    )
-                    .ok();
-                let file = match head {
-                    Some((v, old, created)) if old == content => ProfileFile { path, content, version: v, created_at: from_ms(created), updated_at: from_ms(now) },
-                    other => {
-                        let (version, created) = other.map_or((1, now), |(v, _, c)| (v + 1, c));
-                        tx.execute("UPDATE profile_files SET is_head = 0 WHERE team_id = ? AND agent_id = ? AND path = ?", params![team, agent, path])?;
-                        tx.execute(
-                            "INSERT INTO profile_files (team_id, agent_id, path, version, content, is_head, created_at_ms, updated_at_ms) VALUES (?,?,?,?,?,1,?,?)",
-                            params![team, agent, path, version, content, created, now],
-                        )?;
-                        ProfileFile { path, content, version, created_at: from_ms(created), updated_at: from_ms(now) }
-                    }
-                };
-                tx.commit()?;
-                Ok(file)
+            .call_domain(move |conn| {
+                let tx = conn.transaction().map_err(db_err)?;
+                let written = versions
+                    .into_iter()
+                    .map(|v| append_scene(&tx, &team, &agent, v, now))
+                    .collect::<DomainResult<Vec<_>>>()?;
+                tx.commit().map_err(db_err)?;
+                Ok(written)
             })
             .await
     }
 
-    async fn remove(
-        &self,
-        department: &DepartmentId,
-        profile: &ProfileScope,
-        path: &str,
-    ) -> DomainResult<usize> {
-        let (team, agent) = profile_ids(profile);
-        let (cond, value) = if path.ends_with('/') {
-            ("path LIKE ? ESCAPE '\\'", like_prefix(path))
-        } else {
-            ("path = ?", path.to_owned())
-        };
-        self.pool
-            .get(department)?
-            .call(move |conn| {
-                let heads: usize = conn.query_row(
-                    &format!("SELECT COUNT(*) FROM profile_files WHERE team_id = ? AND agent_id = ? AND is_head = 1 AND {cond}"),
-                    params![team, agent, value],
-                    |r| r.get(0),
-                )?;
-                conn.execute(&format!("DELETE FROM profile_files WHERE team_id = ? AND agent_id = ? AND {cond}"), params![team, agent, value])?;
-                Ok(heads)
-            })
-            .await
-    }
-
-    async fn count(
+    async fn count_scenes(
         &self,
         department: &DepartmentId,
         profile: Option<&ProfileScope>,
@@ -886,20 +981,141 @@ impl ProfileFileRepository for SqliteMemoryStore {
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         if let Some(p) = profile {
-            profile_where(&mut w, p);
+            w.eq("s.team_id", p.team_id.to_string())
+                .eq("s.agent_id", p.agent_id.to_string());
         }
-        w.raw("is_head = 1", []).raw(
-            "path LIKE ? ESCAPE '\\'",
+        w.raw(IS_LATEST, []).raw("v.op <> 'retire'", []).raw(
+            "v.slug LIKE ? ESCAPE '\\'",
             [Value::from(like_prefix(prefix))],
         );
         self.pool
             .get(department)?
             .call(move |conn| {
                 conn.query_row(
-                    &format!("SELECT COUNT(*) FROM profile_files {}", w.sql()),
+                    &format!("SELECT COUNT(*) FROM scene_versions v JOIN scenes s ON s.id = v.scene_id {}", w.sql()),
                     params_from_iter(w.params.iter()),
                     |r| r.get(0),
                 )
+            })
+            .await
+    }
+
+    async fn persona(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        version: Option<u32>,
+    ) -> DomainResult<Option<PersonaVersion>> {
+        let (team, agent) = profile_ids(profile);
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                let cond = match version {
+                    Some(_) => "AND version = ?3",
+                    None => "",
+                };
+                let sql = format!("SELECT version, op, body, attrs, author, created_at_ms FROM persona_versions WHERE team_id = ?1 AND agent_id = ?2 {cond} ORDER BY version DESC LIMIT 1");
+                let mut stmt = conn.prepare(&sql)?;
+                let mut rows = match version {
+                    Some(v) => stmt.query(params![team, agent, v])?,
+                    None => stmt.query(params![team, agent])?,
+                };
+                rows.next()?.map(persona_from_row).transpose()
+            })
+            .await
+    }
+
+    async fn append_persona(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        new: NewPersonaVersion,
+    ) -> DomainResult<PersonaVersion> {
+        let (team, agent) = profile_ids(profile);
+        let now = to_ms(Utc::now());
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                let latest = tx
+                    .query_row(
+                        "SELECT version, op, body, attrs, author, created_at_ms FROM persona_versions WHERE team_id = ? AND agent_id = ? ORDER BY version DESC LIMIT 1",
+                        params![team, agent],
+                        persona_from_row,
+                    )
+                    .optional()?;
+                if let Some(latest) = latest.as_ref().filter(|l| l.body == new.body) {
+                    return Ok(latest.clone());
+                }
+                let version = latest.map_or(1, |l| l.version + 1);
+                tx.execute(
+                    "INSERT INTO persona_versions (team_id, agent_id, version, op, body, attrs, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?)",
+                    params![team, agent, version, new.op.as_str(), new.body, attrs_json(&new.attrs), new.author, now],
+                )?;
+                tx.commit()?;
+                Ok(PersonaVersion {
+                    version,
+                    op: new.op,
+                    body: new.body,
+                    attrs: new.attrs,
+                    author: new.author,
+                    created_at: from_ms(now),
+                })
+            })
+            .await
+    }
+
+    async fn count_personas(
+        &self,
+        department: &DepartmentId,
+        profile: Option<&ProfileScope>,
+    ) -> DomainResult<usize> {
+        let mut w = Where::default();
+        if let Some(p) = profile {
+            profile_where(&mut w, p);
+        }
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                conn.query_row(
+                    &format!("SELECT COUNT(*) FROM (SELECT DISTINCT team_id, agent_id FROM persona_versions {})", w.sql()),
+                    params_from_iter(w.params.iter()),
+                    |r| r.get(0),
+                )
+            })
+            .await
+    }
+
+    async fn purge(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+    ) -> DomainResult<usize> {
+        let (team, agent) = profile_ids(profile);
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                let scenes: usize = tx.query_row(
+                    "SELECT COUNT(*) FROM scenes WHERE team_id = ? AND agent_id = ?",
+                    params![team, agent],
+                    |r| r.get(0),
+                )?;
+                let persona: usize = tx.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM persona_versions WHERE team_id = ? AND agent_id = ?)",
+                    params![team, agent],
+                    |r| r.get(0),
+                )?;
+                tx.execute(
+                    "DELETE FROM scene_versions WHERE scene_id IN (SELECT id FROM scenes WHERE team_id = ? AND agent_id = ?)",
+                    params![team, agent],
+                )?;
+                tx.execute("DELETE FROM scenes WHERE team_id = ? AND agent_id = ?", params![team, agent])?;
+                tx.execute("DELETE FROM persona_versions WHERE team_id = ? AND agent_id = ?", params![team, agent])?;
+                // The pre-version storage would otherwise keep a copy.
+                tx.execute("DELETE FROM profile_files WHERE team_id = ? AND agent_id = ?", params![team, agent])?;
+                tx.commit()?;
+                Ok(scenes + persona)
             })
             .await
     }
@@ -937,8 +1153,15 @@ impl ScopeMigrationStore for SqliteMemoryStore {
                     &format!("UPDATE atoms SET team_id = ?1, agent_id = ?2, user_id = ?3 WHERE {triple}"),
                     params![team, agent, user, ft, fa, fu],
                 )?;
-                let profile_files = tx.execute(
+                tx.execute(
                     "UPDATE profile_files SET team_id = ?1, agent_id = ?2 WHERE team_id = ?3 AND agent_id = ?4",
+                    params![team, agent, ft, fa],
+                )?;
+                let profile_files = tx.execute(
+                    "UPDATE scenes SET team_id = ?1, agent_id = ?2 WHERE team_id = ?3 AND agent_id = ?4",
+                    params![team, agent, ft, fa],
+                )? + tx.execute(
+                    "UPDATE persona_versions SET team_id = ?1, agent_id = ?2 WHERE team_id = ?3 AND agent_id = ?4",
                     params![team, agent, ft, fa],
                 )?;
                 let skill_versions = tx.execute(

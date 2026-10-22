@@ -173,8 +173,8 @@ Metadata 平面有自己更細的規則（`memory-domain/src/meta/access.rs`）�
 | --- | --- | --- | --- |
 | L0 對話 | 寫入時的原始回合（只有文字） | team / agent / user / session | `conversations` 資料列 |
 | L1 atom | 蒸餾出的事實：`episodic`、`persona`、`instruction` | team / agent / user | `atoms` 資料列 + 全文與向量索引 |
-| L2 場景 | 主題文件（`scene_blocks/*.md`），帶熱度與摘要 | team / agent | 有版本的 `profile_files` |
-| L3 persona | 一份敘事式使用者輪廓（`persona.md`） | team / agent | 有版本的 `profile_files` |
+| L2 場景 | 主題文件（`scene_blocks/*.md`），帶熱度與摘要 | team / agent | 只追加的 `scenes` + `scene_versions` |
+| L3 persona | 一份敘事式使用者輪廓（`persona.md`） | team / agent | 只追加的 `persona_versions` |
 | Skills | 從大量使用工具的回合蒸餾出的可重用流程 | team / agent | `skills` + 資源檔 |
 
 ```mermaid
@@ -373,7 +373,7 @@ flowchart LR
   - `<data>/system.db` 保存所有部門的持久化管線計時器。
   - 使用 SQLite 時，`<data>/departments/<id>/memory.db` 保存單一部門的 L0–L3、metadata、skills 和 logs。
   - `<data>/departments/<id>/{sessions,skills}/` 保存原始 session 回合和 skill 資源檔。
-- **有版本的 profile**：L2 場景和 L3 persona 都是 `ProfileFile`，每次修改都能依版本復原。
+- **只追加的 profile**：L2 場景和 L3 persona 的每次變更都是一個新版本；除了清除 chat memory，沒有任何操作會改寫或刪除版本。場景在各版本間保有固定的 id，合併會把併入的版本記為來源，消失的場景會多一個最終的 `retire` 版本。關鍵欄位是資料表欄位，內文維持 markdown，其他屬性放在 `attrs`；client 看到的 markdown 檔（帶 META 標頭的 `scene_blocks/*.md`、附上場景導覽的 `persona.md`）都是從這些資料產生的。
 - **延遲綁定**：兩組建構循環（memory ↔ pipeline、meta ↔ chat-memory）用 `OnceLock` 註冊協作者來打破，避免相依圖變成雙向。
 - **協調用的 port**：
   - `KeyLock`（`ports/coordination.rs`）保護管線狀態的讀取、修改、寫回。

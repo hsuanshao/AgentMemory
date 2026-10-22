@@ -7,8 +7,8 @@ use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomicMemory, Layer};
 use memory_domain::pipeline::scene_capacity_guidance;
 use memory_domain::profile::{
-    is_tombstone, normalize_scene_filename, render_scene, scene_path, ProfileScope, SceneMeta,
-    MAX_SCENE_CHARS,
+    is_tombstone, normalize_scene_filename, NewSceneVersion, ProfileScope, SceneOp, SceneRef,
+    SceneVersion, MAX_SCENE_CHARS,
 };
 use memory_domain::scope::DepartmentId;
 use serde::Deserialize;
@@ -16,8 +16,7 @@ use tracing::warn;
 
 use super::llm_json::parse_llm_json;
 use super::prompts::{self, CustomStrategy};
-use crate::memory::service::{MemoryService, SceneEntry};
-use crate::ports::memory::ProfileFileRepository;
+use crate::memory::service::{retirement, MemoryService, SceneEntry};
 use crate::ports::system::{ChatMessage, Clock, LlmClient};
 
 #[derive(Debug, Deserialize)]
@@ -48,7 +47,6 @@ pub struct L2Outcome {
 
 pub struct SceneExtractor {
     llm: Arc<dyn LlmClient>,
-    profiles: Arc<dyn ProfileFileRepository>,
     memory: Arc<MemoryService>,
     clock: Arc<dyn Clock>,
     max_scenes: usize,
@@ -57,14 +55,12 @@ pub struct SceneExtractor {
 impl SceneExtractor {
     pub fn new(
         llm: Arc<dyn LlmClient>,
-        profiles: Arc<dyn ProfileFileRepository>,
         memory: Arc<MemoryService>,
         clock: Arc<dyn Clock>,
         max_scenes: usize,
     ) -> Self {
         Self {
             llm,
-            profiles,
             memory,
             clock,
             max_scenes,
@@ -92,7 +88,6 @@ impl SceneExtractor {
         let changed = self
             .apply(department, profile, &scenes, plan.operations)
             .await?;
-        self.memory.refresh_navigation(department, profile).await?;
         Ok(L2Outcome {
             changed_files: changed,
             persona_update_request: plan.persona_update_request.filter(|r| !r.trim().is_empty()),
@@ -134,9 +129,9 @@ impl SceneExtractor {
         scenes: &[SceneEntry],
         operations: Vec<SceneOperation>,
     ) -> DomainResult<Vec<String>> {
-        let mut heats: HashMap<String, SceneMeta> = scenes
+        let mut current: HashMap<String, SceneVersion> = scenes
             .iter()
-            .map(|s| (s.relative_path.clone(), s.meta.clone().unwrap_or_default()))
+            .map(|s| (s.relative_path.clone(), s.scene.clone()))
             .collect();
         let mut created = 0usize;
         let mut changed = Vec::new();
@@ -145,65 +140,73 @@ impl SceneExtractor {
                 warn!(file = %op.file, "skipping scene operation with invalid filename");
                 continue;
             };
-            let exists = heats.contains_key(&file);
-            let is_create = !exists && op.action != "merge";
-            if is_create && (created >= 1 || heats.len() >= self.max_scenes) {
+            let own = current.get(&file).cloned();
+            let is_create = own.is_none() && op.action != "merge";
+            if is_create && (created >= 1 || current.len() >= self.max_scenes) {
                 warn!(file = %file, "scene cap reached; dropping CREATE");
                 continue;
             }
             if is_tombstone(&op.content) {
                 continue;
             }
-            let merged_away: Vec<String> = op
+            let merged_away: Vec<SceneVersion> = op
                 .merge_from
                 .iter()
                 .filter_map(|f| normalize_scene_filename(f).ok())
-                .filter(|f| f != &file && heats.contains_key(f))
+                .filter(|f| f != &file)
+                .filter_map(|f| current.get(&f).cloned())
                 .collect();
-            let heat = match (op.action.as_str(), heats.get(&file)) {
-                ("merge", own) => {
-                    merged_away
-                        .iter()
-                        .filter_map(|f| heats.get(f))
-                        .map(|m| m.heat)
-                        .sum::<u32>()
-                        + own.map_or(0, |m| m.heat)
+            let heat = match op.action.as_str() {
+                "merge" => {
+                    merged_away.iter().map(|m| m.heat).sum::<u32>()
+                        + own.as_ref().map_or(0, |m| m.heat)
                         + 1
                 }
-                (_, Some(m)) => m.heat + 1,
-                (_, None) => 1,
+                _ => own.as_ref().map_or(1, |m| m.heat + 1),
             };
-            let now = self.clock.now().to_rfc3339();
-            let meta = SceneMeta {
-                created: heats
-                    .get(&file)
-                    .map(|m| m.created.clone())
-                    .filter(|c| !c.is_empty())
-                    .unwrap_or_else(|| now.clone()),
-                updated: now,
+            let scene_id = own
+                .as_ref()
+                .map_or_else(|| self.memory.new_scene_id(), |s| s.scene_id.clone());
+            let mut versions = vec![NewSceneVersion {
+                scene_id: scene_id.clone(),
+                op: match (&own, merged_away.is_empty()) {
+                    (_, false) => SceneOp::Merge,
+                    (Some(_), true) => SceneOp::Update,
+                    (None, true) => SceneOp::Create,
+                },
+                slug: file.clone(),
                 summary: op.summary.trim().to_owned(),
                 heat,
-                extra: Default::default(),
-            };
-            let body: String = op.content.chars().take(MAX_SCENE_CHARS).collect();
-            self.profiles
-                .write(
-                    department,
-                    profile,
-                    &scene_path(&file),
-                    &render_scene(&meta, &body),
-                )
-                .await?;
+                body: op.content.chars().take(MAX_SCENE_CHARS).collect(),
+                attrs: own.map(|s| s.attrs).unwrap_or_default(),
+                parents: merged_away
+                    .iter()
+                    .map(|m| SceneRef {
+                        scene_id: m.scene_id.clone(),
+                        version: m.version,
+                    })
+                    .collect(),
+                author: None,
+            }];
+            versions.extend(
+                merged_away
+                    .iter()
+                    .map(|m| retirement(m.clone(), Some(&scene_id), None)),
+            );
+            let mut written = self
+                .memory
+                .append_scenes(department, profile, versions)
+                .await?
+                .into_iter();
+            if let Some(target) = written.next() {
+                current.insert(file.clone(), target);
+            }
             for old in &merged_away {
-                self.profiles
-                    .remove(department, profile, &scene_path(old))
-                    .await?;
-                heats.remove(old);
+                current.remove(&old.slug);
             }
             if is_create {
                 created += 1;
             }
-            heats.insert(file.clone(), meta);
             changed.push(file);
         }
         Ok(changed)

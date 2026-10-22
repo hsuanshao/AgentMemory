@@ -106,6 +106,286 @@ pub fn render_scene(meta: &SceneMeta, body: &str) -> String {
     format!("{header}{META_END}\n\n{}", body.trim_start_matches('\n'))
 }
 
+/// How a scene version came to be. Versions are append-only: nothing is
+/// rewritten, a scene that goes away gets a final `retire` version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SceneOp {
+    Create,
+    Update,
+    /// Absorbed other scenes; their versions are listed as parents.
+    Merge,
+    /// The scene is gone (merged away or removed); its content is kept.
+    Retire,
+    /// Written through the API rather than by the L2 extractor.
+    Manual,
+    /// Carried over from the file-based storage of 0.4.0 and earlier.
+    Import,
+}
+
+impl SceneOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Merge => "merge",
+            Self::Retire => "retire",
+            Self::Manual => "manual",
+            Self::Import => "import",
+        }
+    }
+
+    pub fn parse(s: &str) -> DomainResult<Self> {
+        Ok(match s {
+            "create" => Self::Create,
+            "update" => Self::Update,
+            "merge" => Self::Merge,
+            "retire" => Self::Retire,
+            "manual" => Self::Manual,
+            "import" => Self::Import,
+            other => return Err(DomainError::invalid(format!("unknown scene op: {other}"))),
+        })
+    }
+}
+
+/// One version of a scene, as stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SceneRef {
+    pub scene_id: String,
+    pub version: u32,
+}
+
+/// One version of a scene. The key fields are columns; `attrs` keeps
+/// anything else (unknown META keys, `merged_into`, …) without a schema
+/// change, and `body` stays free markdown.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneVersion {
+    pub scene_id: String,
+    pub version: u32,
+    pub op: SceneOp,
+    /// Path below `scene_blocks/`, e.g. `release-process.md`.
+    pub slug: String,
+    pub summary: String,
+    pub heat: u32,
+    pub body: String,
+    pub attrs: BTreeMap<String, String>,
+    /// Versions this one was derived from besides the scene's own previous
+    /// version (the scenes a merge absorbed).
+    pub parents: Vec<SceneRef>,
+    pub author: Option<String>,
+    /// When the scene (version 1) was created.
+    pub scene_created_at: chrono::DateTime<chrono::Utc>,
+    /// When this version was written.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// A version to append. `scene_id` names a new scene when it has no
+/// versions yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewSceneVersion {
+    pub scene_id: String,
+    pub op: SceneOp,
+    pub slug: String,
+    pub summary: String,
+    pub heat: u32,
+    pub body: String,
+    pub attrs: BTreeMap<String, String>,
+    pub parents: Vec<SceneRef>,
+    pub author: Option<String>,
+}
+
+impl SceneVersion {
+    pub fn is_live(&self) -> bool {
+        self.op != SceneOp::Retire
+    }
+
+    pub fn meta(&self) -> SceneMeta {
+        SceneMeta {
+            created: self.scene_created_at.to_rfc3339(),
+            updated: self.created_at.to_rfc3339(),
+            summary: self.summary.clone(),
+            heat: self.heat,
+            extra: self.attrs.clone(),
+        }
+    }
+
+    /// The scene as the markdown file clients and the extractor read.
+    pub fn to_file(&self) -> ProfileFile {
+        ProfileFile {
+            path: scene_path(&self.slug),
+            content: render_scene(&self.meta(), &self.body),
+            version: self.version,
+            created_at: self.scene_created_at,
+            updated_at: self.created_at,
+        }
+    }
+
+    /// Whether `next` would store nothing new on top of this version.
+    pub fn same_content(&self, next: &NewSceneVersion) -> bool {
+        self.is_live()
+            && next.op != SceneOp::Retire
+            && next.parents.is_empty()
+            && self.slug == next.slug
+            && self.summary == next.summary
+            && self.heat == next.heat
+            && self.body == next.body
+            && self.attrs == next.attrs
+    }
+}
+
+/// How a persona version came to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PersonaOp {
+    /// Written by the L3 generator.
+    Generate,
+    Manual,
+    Import,
+}
+
+impl PersonaOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Generate => "generate",
+            Self::Manual => "manual",
+            Self::Import => "import",
+        }
+    }
+
+    pub fn parse(s: &str) -> DomainResult<Self> {
+        Ok(match s {
+            "generate" => Self::Generate,
+            "manual" => Self::Manual,
+            "import" => Self::Import,
+            other => return Err(DomainError::invalid(format!("unknown persona op: {other}"))),
+        })
+    }
+}
+
+/// One version of a profile's persona. `body` never contains the scene
+/// navigation: that is rendered from the current scenes when read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonaVersion {
+    pub version: u32,
+    pub op: PersonaOp,
+    pub body: String,
+    pub attrs: BTreeMap<String, String>,
+    pub author: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewPersonaVersion {
+    pub op: PersonaOp,
+    pub body: String,
+    pub attrs: BTreeMap<String, String>,
+    pub author: Option<String>,
+}
+
+/// A row of the file-based storage used up to 0.4.0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegacyProfileFile {
+    pub team_id: String,
+    pub agent_id: String,
+    pub path: String,
+    pub version: u32,
+    pub content: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// A scene version converted from a legacy file, with its owner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedScene {
+    pub team_id: String,
+    pub agent_id: String,
+    pub scene: SceneVersion,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedPersona {
+    pub team_id: String,
+    pub agent_id: String,
+    pub persona: PersonaVersion,
+}
+
+/// Converts the legacy files into append-only versions. Version numbers
+/// are kept; scene ids derive from team, agent and path, so a repeated
+/// import yields the same ids. Persona versions that only refreshed the
+/// navigation (same body as the version before) are skipped.
+pub fn import_legacy_files(
+    mut files: Vec<LegacyProfileFile>,
+    scene_id: impl Fn(&str, &str, &str) -> String,
+) -> (Vec<ImportedScene>, Vec<ImportedPersona>) {
+    files.sort_by(|a, b| {
+        (&a.team_id, &a.agent_id, &a.path, a.version).cmp(&(
+            &b.team_id,
+            &b.agent_id,
+            &b.path,
+            b.version,
+        ))
+    });
+    let at = |ms: i64| chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
+    let (mut scenes, mut personas) = (Vec::new(), Vec::<ImportedPersona>::new());
+    let mut scene_created: Option<(String, chrono::DateTime<chrono::Utc>)> = None;
+    for f in files {
+        if f.path == PERSONA_PATH {
+            let body = strip_scene_navigation(&f.content);
+            let repeated = personas.last().is_some_and(|p| {
+                p.team_id == f.team_id && p.agent_id == f.agent_id && p.persona.body == body
+            });
+            if !repeated {
+                personas.push(ImportedPersona {
+                    team_id: f.team_id,
+                    agent_id: f.agent_id,
+                    persona: PersonaVersion {
+                        version: f.version,
+                        op: PersonaOp::Import,
+                        body,
+                        attrs: BTreeMap::new(),
+                        author: None,
+                        created_at: at(f.updated_at_ms),
+                    },
+                });
+            }
+            continue;
+        }
+        let Some(slug) = f.path.strip_prefix(SCENE_DIR) else {
+            continue;
+        };
+        let id = scene_id(&f.team_id, &f.agent_id, &f.path);
+        let created = match &scene_created {
+            Some((sid, created)) if *sid == id => *created,
+            _ => {
+                let created = at(f.created_at_ms);
+                scene_created = Some((id.clone(), created));
+                created
+            }
+        };
+        let (meta, body) = parse_scene(&f.content);
+        let meta = meta.unwrap_or_default();
+        scenes.push(ImportedScene {
+            team_id: f.team_id,
+            agent_id: f.agent_id,
+            scene: SceneVersion {
+                scene_id: id,
+                version: f.version,
+                op: SceneOp::Import,
+                slug: slug.to_owned(),
+                summary: meta.summary,
+                heat: meta.heat,
+                body,
+                attrs: meta.extra,
+                parents: Vec::new(),
+                author: None,
+                scene_created_at: created,
+                created_at: at(f.updated_at_ms),
+            },
+        });
+    }
+    (scenes, personas)
+}
+
 /// A scene body that the extractor asked to delete, or that is empty.
 pub fn is_tombstone(body: &str) -> bool {
     let trimmed = body.trim();

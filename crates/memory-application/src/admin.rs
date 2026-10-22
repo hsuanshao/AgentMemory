@@ -8,7 +8,7 @@ use chrono::SecondsFormat;
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::AtomType;
 use memory_domain::meta::AssetType;
-use memory_domain::profile::{ProfileScope, PERSONA_PATH, SCENE_DIR};
+use memory_domain::profile::ProfileScope;
 use memory_domain::scope::{DepartmentId, SegmentId};
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ use crate::common::{BatchDeleteResult, Page};
 use crate::meta::{ChatMemoryCleaner, MetaService};
 use crate::pipeline::service::PipelineService;
 use crate::ports::memory::{
-    AtomFilter, AtomRepository, ConversationFilter, ConversationRepository, ProfileFileRepository,
+    AtomFilter, AtomRepository, ConversationFilter, ConversationRepository, ProfileVersionStore,
 };
 use crate::ports::meta::{KnowledgeEntity, KnowledgeRepository};
 use crate::ports::pipeline::GenerationLogRepository;
@@ -37,7 +37,7 @@ pub struct ClearItem {
 pub struct ChatMemoryService {
     conversations: Arc<dyn ConversationRepository>,
     atoms: Arc<dyn AtomRepository>,
-    profiles: Arc<dyn ProfileFileRepository>,
+    profiles: Arc<dyn ProfileVersionStore>,
     pipeline: Arc<PipelineService>,
     meta: Arc<MetaService>,
 }
@@ -46,7 +46,7 @@ impl ChatMemoryService {
     pub fn new(
         conversations: Arc<dyn ConversationRepository>,
         atoms: Arc<dyn AtomRepository>,
-        profiles: Arc<dyn ProfileFileRepository>,
+        profiles: Arc<dyn ProfileVersionStore>,
         pipeline: Arc<PipelineService>,
         meta: Arc<MetaService>,
     ) -> Self {
@@ -69,13 +69,9 @@ impl ChatMemoryService {
             .delete_profile(department, profile)
             .await?;
         let l1 = self.atoms.delete_profile(department, profile).await?;
-        let scenes = self.profiles.remove(department, profile, SCENE_DIR).await?;
-        let persona = self
-            .profiles
-            .remove(department, profile, PERSONA_PATH)
-            .await?;
+        let profile_rows = self.profiles.purge(department, profile).await?;
         self.pipeline.reset_profile(department, profile).await?;
-        Ok((l0, l1, scenes + persona))
+        Ok((l0, l1, profile_rows))
     }
 
     /// Clears content of chat-memory assets; assets, bindings and ACL stay.
@@ -351,7 +347,7 @@ pub trait DepartmentLifecycle: Send + Sync {
 pub struct StatsService {
     conversations: Arc<dyn ConversationRepository>,
     atoms: Arc<dyn AtomRepository>,
-    profiles: Arc<dyn ProfileFileRepository>,
+    profiles: Arc<dyn ProfileVersionStore>,
     skills: Arc<dyn SkillRepository>,
     logs: Arc<dyn GenerationLogRepository>,
 }
@@ -360,7 +356,7 @@ impl StatsService {
     pub fn new(
         conversations: Arc<dyn ConversationRepository>,
         atoms: Arc<dyn AtomRepository>,
-        profiles: Arc<dyn ProfileFileRepository>,
+        profiles: Arc<dyn ProfileVersionStore>,
         skills: Arc<dyn SkillRepository>,
         logs: Arc<dyn GenerationLogRepository>,
     ) -> Self {
@@ -398,8 +394,8 @@ impl StatsService {
                     .count(department, None, &atoms_of(Some(AtomType::Instruction)))
                     .await?,
             },
-            l2: self.profiles.count(department, None, SCENE_DIR).await?,
-            l3: self.profiles.count(department, None, PERSONA_PATH).await?,
+            l2: self.profiles.count_scenes(department, None, "").await?,
+            l3: self.profiles.count_personas(department, None).await?,
             skills: self.skills.count_heads(department).await?,
             generation_logs: self.logs.count(department).await?,
         })

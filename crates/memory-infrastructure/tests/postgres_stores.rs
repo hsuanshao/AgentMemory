@@ -10,12 +10,14 @@
 
 use std::sync::Arc;
 
+#[path = "support/profile_versions.rs"]
+mod profile_versions;
+
 use chrono::{Duration, Utc};
 use memory_application::admin::DepartmentLifecycle;
 use memory_application::common::Page;
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    ProfileFileRepository,
 };
 use memory_application::ports::meta::{
     AssetRepository, BindingRepository, UserKeyRepository, UserRepository,
@@ -241,73 +243,20 @@ async fn atoms_support_keyword_vector_and_profile_queries() {
 }
 
 #[tokio::test]
-async fn profile_files_are_versioned() {
+async fn scene_and_persona_versions_are_append_only() {
     let Some((db, department)) = setup().await else {
         return;
     };
     let store = PostgresMemoryStore::new(Arc::clone(&db));
-    let profile = ProfileScope::from(&scope("alice"));
-    assert_eq!(
-        store
-            .write(&department, &profile, "persona.md", "v1")
-            .await
-            .unwrap()
-            .version,
-        1
-    );
-    assert_eq!(
-        store
-            .write(&department, &profile, "persona.md", "v1")
-            .await
-            .unwrap()
-            .version,
-        1,
-        "unchanged content keeps version"
-    );
-    assert_eq!(
-        store
-            .write(&department, &profile, "persona.md", "v2")
-            .await
-            .unwrap()
-            .version,
-        2
-    );
-    let old = store
-        .read(&department, &profile, "persona.md", Some(1))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(old.content, "v1");
-
-    store
-        .write(&department, &profile, "scene_blocks/a.md", "a")
-        .await
-        .unwrap();
-    store
-        .write(&department, &profile, "scene_blocks/b.md", "b")
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .list(&department, &profile, "scene_blocks/")
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(
-        store
-            .remove(&department, &profile, "scene_blocks/")
-            .await
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        ProfileFileRepository::count(&store, &department, None, "persona.md")
-            .await
-            .unwrap(),
-        1
-    );
+    profile_versions::exercise(
+        &store,
+        &department,
+        &ProfileScope::from(&scope("alice")),
+        &ProfileScope::from(
+            &MemoryScope::from_optional(Some("team-2"), Some("agt-2"), Some("bob"), None).unwrap(),
+        ),
+    )
+    .await;
     teardown(&db, &department).await;
 }
 

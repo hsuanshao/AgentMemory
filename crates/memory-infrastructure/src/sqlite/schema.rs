@@ -1,7 +1,10 @@
 //! DDL. Hot query fields are real columns; metadata entities additionally
 //! keep their full serialized form in `doc` so the mapping stays in serde.
 
-use rusqlite::Connection;
+use memory_domain::profile::{import_legacy_files, LegacyProfileFile};
+use rusqlite::{params, Connection};
+
+use crate::profile_versions::{attrs_json, legacy_scene_id, parents_json};
 
 const DEPARTMENT_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS conversations (
@@ -36,6 +39,24 @@ CREATE TABLE IF NOT EXISTS profile_files (
     PRIMARY KEY (team_id, agent_id, path, version)
 );
 CREATE INDEX IF NOT EXISTS ix_profile_head ON profile_files(team_id, agent_id, is_head, path);
+
+-- Scenes (L2) and personas (L3) are append-only versions; profile_files is
+-- the storage up to 0.4, kept after its rows were imported.
+CREATE TABLE IF NOT EXISTS scenes (
+    id TEXT PRIMARY KEY, team_id TEXT NOT NULL, agent_id TEXT NOT NULL, created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_scenes_profile ON scenes(team_id, agent_id);
+CREATE TABLE IF NOT EXISTS scene_versions (
+    scene_id TEXT NOT NULL, version INTEGER NOT NULL, op TEXT NOT NULL, slug TEXT NOT NULL,
+    summary TEXT NOT NULL, heat INTEGER NOT NULL, body TEXT NOT NULL,
+    attrs TEXT NOT NULL, parents TEXT NOT NULL, author TEXT, created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (scene_id, version)
+);
+CREATE TABLE IF NOT EXISTS persona_versions (
+    team_id TEXT NOT NULL, agent_id TEXT NOT NULL, version INTEGER NOT NULL, op TEXT NOT NULL,
+    body TEXT NOT NULL, attrs TEXT NOT NULL, author TEXT, created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (team_id, agent_id, version)
+);
 
 CREATE TABLE IF NOT EXISTS memory_prompts (
     id TEXT PRIMARY KEY, layer TEXT NOT NULL, status TEXT NOT NULL, created_at_ms INTEGER NOT NULL, doc TEXT NOT NULL
@@ -157,7 +178,9 @@ CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_
 /// 1. 0.3.0: "instance" became "department" (column, prompt target and
 ///    quota names).
 /// 2. 0.3.0: the team role `reviewer` was removed; its members are members.
-pub const SCHEMA_VERSION: i64 = 2;
+/// 3. Scenes and personas became append-only versions (`scenes`,
+///    `scene_versions`, `persona_versions`); `profile_files` is imported.
+pub const SCHEMA_VERSION: i64 = 3;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -190,7 +213,79 @@ pub fn migrate_department(conn: &Connection) -> rusqlite::Result<()> {
             [],
         )?;
     }
+    if user_version(conn)? < 3 {
+        import_profile_files(conn)?;
+    }
     conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
+}
+
+/// Migration 3: every stored file version becomes a scene or persona
+/// version. `INSERT OR IGNORE` keeps a repeated run harmless.
+fn import_profile_files(conn: &Connection) -> rusqlite::Result<()> {
+    let files = {
+        let mut stmt = conn.prepare(
+            "SELECT team_id, agent_id, path, version, content, created_at_ms, updated_at_ms FROM profile_files",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(LegacyProfileFile {
+                team_id: r.get(0)?,
+                agent_id: r.get(1)?,
+                path: r.get(2)?,
+                version: r.get(3)?,
+                content: r.get(4)?,
+                created_at_ms: r.get(5)?,
+                updated_at_ms: r.get(6)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let (scenes, personas) = import_legacy_files(files, legacy_scene_id);
+    let tx = conn.unchecked_transaction()?;
+    for s in &scenes {
+        let v = &s.scene;
+        tx.execute(
+            "INSERT OR IGNORE INTO scenes (id, team_id, agent_id, created_at_ms) VALUES (?,?,?,?)",
+            params![
+                v.scene_id,
+                s.team_id,
+                s.agent_id,
+                v.scene_created_at.timestamp_millis()
+            ],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO scene_versions (scene_id, version, op, slug, summary, heat, body, attrs, parents, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            params![
+                v.scene_id,
+                v.version,
+                v.op.as_str(),
+                v.slug,
+                v.summary,
+                v.heat,
+                v.body,
+                attrs_json(&v.attrs),
+                parents_json(&v.parents),
+                v.author,
+                v.created_at.timestamp_millis()
+            ],
+        )?;
+    }
+    for p in &personas {
+        let v = &p.persona;
+        tx.execute(
+            "INSERT OR IGNORE INTO persona_versions (team_id, agent_id, version, op, body, attrs, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?)",
+            params![
+                p.team_id,
+                p.agent_id,
+                v.version,
+                v.op.as_str(),
+                v.body,
+                attrs_json(&v.attrs),
+                v.author,
+                v.created_at.timestamp_millis()
+            ],
+        )?;
+    }
+    tx.commit()
 }
 
 pub fn migrate_system(conn: &Connection) -> rusqlite::Result<()> {
@@ -294,6 +389,73 @@ mod tests {
             )
             .unwrap();
         assert_eq!(role, "member", "reviewers become members");
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn department_db_from_0_4_imports_profile_files() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(DEPARTMENT_SCHEMA).unwrap();
+        conn.execute_batch("PRAGMA user_version = 2").unwrap();
+        let scene = |summary: &str, body: &str| {
+            format!("-----META-START-----\ncreated: c\nupdated: u\nsummary: {summary}\nheat: 2\nowner: ops\n-----META-END-----\n\n{body}")
+        };
+        let rows = [
+            ("scene_blocks/deploy.md", 1, scene("old", "v1"), 0, 10, 10),
+            ("scene_blocks/deploy.md", 2, scene("new", "v2"), 1, 10, 20),
+            ("persona.md", 1, "# Me".to_owned(), 0, 5, 5),
+            (
+                "persona.md",
+                2,
+                "# Me\n\n---\n## 🗺️ Scene Navigation (Scene Index)\nx".to_owned(),
+                0,
+                5,
+                6,
+            ),
+            ("persona.md", 3, "# Me, revised".to_owned(), 1, 5, 7),
+        ];
+        for (path, version, content, head, created, updated) in rows {
+            conn.execute(
+                "INSERT INTO profile_files VALUES ('t', 'a', ?, ?, ?, ?, ?, ?)",
+                params![path, version, content, head, created, updated],
+            )
+            .unwrap();
+        }
+
+        migrate_department(&conn).unwrap();
+        migrate_department(&conn).unwrap();
+
+        let scenes: Vec<(String, u32, String, String, String, String)> = conn
+            .prepare("SELECT slug, version, op, summary, body, attrs FROM scene_versions ORDER BY version")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(scenes.len(), 2);
+        assert_eq!(scenes[1].0, "deploy.md");
+        assert_eq!((scenes[1].1, scenes[1].2.as_str()), (2, "import"));
+        assert_eq!((scenes[1].3.as_str(), scenes[1].4.as_str()), ("new", "v2"));
+        assert_eq!(
+            scenes[1].5, r#"{"owner":"ops"}"#,
+            "unknown META keys are kept"
+        );
+        let created: i64 = conn
+            .query_row("SELECT created_at_ms FROM scenes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(created, 10);
+        let personas: Vec<(u32, String)> = conn
+            .prepare("SELECT version, body FROM persona_versions ORDER BY version")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            personas,
+            vec![(1, "# Me".to_owned()), (3, "# Me, revised".to_owned())],
+            "a version that only refreshed the navigation is skipped"
+        );
         assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
     }
 }

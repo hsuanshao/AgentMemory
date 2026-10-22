@@ -8,7 +8,7 @@ use memory_application::memory::service::NewMessage;
 use memory_application::memory::session::SessionTurnHeaders;
 use memory_application::ports::memory::{AtomFilter, ConversationFilter};
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
-use memory_domain::profile::{parse_scene, ProfileFile, ProfileScope};
+use memory_domain::profile::{parse_scene, PersonaOp, ProfileFile, ProfileScope};
 use memory_domain::retrieval::SearchMode;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -367,6 +367,11 @@ fn profile_of(ctx: &Ctx, body: &Value) -> Result<ProfileScope, ApiError> {
     Ok(ProfileScope::from(&ctx.scope(body)?))
 }
 
+/// The user recorded as the author of a version written through the API.
+fn author_of(ctx: &Ctx, body: &Value) -> Result<String, ApiError> {
+    Ok(ctx.scope(body)?.user_id.to_string())
+}
+
 fn str_field<'a>(body: &'a Value, key: &str) -> Option<&'a str> {
     body.get(key).and_then(Value::as_str)
 }
@@ -450,6 +455,7 @@ pub async fn scenario_write(
     let path = str_field(&body, "path").unwrap_or("");
     let content = str_field(&body, "content")
         .ok_or_else(|| ApiError::bad_request(&ctx.request_id, "content is required"))?;
+    let author = author_of(&ctx, &body)?;
     let file = s
         .services
         .memory
@@ -459,6 +465,7 @@ pub async fn scenario_write(
             path,
             content,
             str_field(&body, "summary"),
+            Some(&author),
         )
         .await
         .map_err(|e| ctx.err(e))?;
@@ -474,6 +481,7 @@ pub async fn scenario_rm(
     JsonBody(body): JsonBody,
 ) -> ApiResult {
     let (department, profile) = (ctx.department()?, profile_of(&ctx, &body)?);
+    let author = author_of(&ctx, &body)?;
     let removed = s
         .services
         .memory
@@ -481,6 +489,7 @@ pub async fn scenario_rm(
             &department,
             &profile,
             str_field(&body, "path").unwrap_or(""),
+            Some(&author),
         )
         .await
         .map_err(|e| ctx.err(e))?;
@@ -534,7 +543,13 @@ pub async fn core_write(
     let file = s
         .services
         .memory
-        .write_persona(&department, &profile, content)
+        .write_persona(
+            &department,
+            &profile,
+            content,
+            PersonaOp::Manual,
+            Some(&author_of(&ctx, &body)?),
+        )
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(

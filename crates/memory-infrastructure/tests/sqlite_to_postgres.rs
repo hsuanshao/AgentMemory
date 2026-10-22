@@ -11,13 +11,13 @@ use chrono::Utc;
 use memory_application::admin::DepartmentLifecycle;
 use memory_application::common::Page;
 use memory_application::ports::memory::{
-    AtomFilter, AtomRepository, ConversationFilter, ConversationRepository, ProfileFileRepository,
+    AtomFilter, AtomRepository, ConversationFilter, ConversationRepository, ProfileVersionStore,
 };
 use memory_application::ports::meta::{UserKeyRepository, UserRepository};
 use memory_application::ports::skill::{SkillFilter, SkillRepository};
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
 use memory_domain::meta::{KeyStatus, User, UserKey, UserStatus, UserType};
-use memory_domain::profile::ProfileScope;
+use memory_domain::profile::{NewPersonaVersion, PersonaOp, ProfileScope};
 use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
 use memory_domain::skill::{SkillStatus, SkillVersion};
 use memory_infrastructure::postgres::db::PgDb;
@@ -120,14 +120,21 @@ async fn seed(pool: &Arc<DepartmentPool>, department: &DepartmentId) {
         .await
         .unwrap();
     let profile = ProfileScope::from(&scope());
-    memory
-        .write(department, &profile, "persona.md", "v1")
-        .await
-        .unwrap();
-    memory
-        .write(department, &profile, "persona.md", "v2")
-        .await
-        .unwrap();
+    for body in ["v1", "v2"] {
+        memory
+            .append_persona(
+                department,
+                &profile,
+                NewPersonaVersion {
+                    op: PersonaOp::Generate,
+                    body: body.into(),
+                    attrs: Default::default(),
+                    author: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
 
     let meta = SqliteMetaStore::new(Arc::clone(pool));
     let user = User {
@@ -206,7 +213,7 @@ async fn sqlite_data_survives_the_move_to_postgres() {
         (
             rows("conversations"),
             rows("atoms"),
-            rows("profile_files"),
+            rows("persona_versions"),
             rows("skills")
         ),
         (2, 2, 2, 2)
@@ -257,11 +264,11 @@ async fn sqlite_data_survives_the_move_to_postgres() {
 
     let profile = ProfileScope::from(&scope());
     let head = memory
-        .read(&department, &profile, "persona.md", None)
+        .persona(&department, &profile, None)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!((head.content.as_str(), head.version), ("v2", 2));
+    assert_eq!((head.body.as_str(), head.version), ("v2", 2));
 
     let meta = PostgresMetaStore::new(Arc::clone(&pg));
     let key = meta

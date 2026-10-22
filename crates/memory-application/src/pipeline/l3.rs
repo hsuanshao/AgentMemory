@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::Layer;
-use memory_domain::profile::{parse_scene, strip_scene_navigation, ProfileScope};
+use memory_domain::profile::{parse_scene, strip_scene_navigation, PersonaOp, ProfileScope};
 use memory_domain::scope::DepartmentId;
 
 use super::llm_json::strip_think;
@@ -93,7 +93,13 @@ impl PersonaGenerator {
         }
         let persona: String = persona.chars().take(MAX_PERSONA_CHARS).collect();
         self.memory
-            .write_persona(department, profile, &escape_injection_tags(&persona))
+            .write_persona(
+                department,
+                profile,
+                &escape_injection_tags(&persona),
+                PersonaOp::Generate,
+                None,
+            )
             .await?;
         Ok(L3Outcome::Generated {
             scene_files: changed.iter().map(|s| s.relative_path.clone()).collect(),

@@ -7,9 +7,9 @@ use chrono::{DateTime, Duration, Utc};
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::{without_nul, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{
-    compose_persona, parse_scene, render_navigation, render_scene, scene_path,
-    strip_scene_navigation, validate_relative_path, NavigationEntry, ProfileFile, ProfileScope,
-    SceneMeta, PERSONA_PATH, SCENE_DIR,
+    compose_persona, parse_scene, render_navigation, strip_scene_navigation,
+    validate_relative_path, NavigationEntry, NewPersonaVersion, NewSceneVersion, PersonaOp,
+    PersonaVersion, ProfileFile, ProfileScope, SceneMeta, SceneOp, SceneVersion, PERSONA_PATH,
 };
 use memory_domain::retrieval::SearchMode;
 use memory_domain::scope::{DepartmentId, MemoryScope};
@@ -19,7 +19,7 @@ use super::search::AtomSearcher;
 use crate::common::{Page, Scored};
 use crate::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    ProfileFileRepository,
+    ProfileVersionStore,
 };
 use crate::ports::system::{Clock, EmbeddingProvider, IdGenerator};
 
@@ -44,17 +44,29 @@ pub struct NewMessage {
     pub recorded_at: Option<DateTime<Utc>>,
 }
 
-/// A scene listing entry with its parsed META header.
+/// A current scene with its file and META views.
 pub struct SceneEntry {
+    pub scene: SceneVersion,
     pub file: ProfileFile,
     pub relative_path: String,
     pub meta: Option<SceneMeta>,
 }
 
+impl From<SceneVersion> for SceneEntry {
+    fn from(scene: SceneVersion) -> Self {
+        Self {
+            file: scene.to_file(),
+            relative_path: scene.slug.clone(),
+            meta: Some(scene.meta()),
+            scene,
+        }
+    }
+}
+
 pub struct MemoryService {
     conversations: Arc<dyn ConversationRepository>,
     atoms: Arc<dyn AtomRepository>,
-    profiles: Arc<dyn ProfileFileRepository>,
+    profiles: Arc<dyn ProfileVersionStore>,
     embedder: Arc<dyn EmbeddingProvider>,
     searcher: Arc<AtomSearcher>,
     observer: Arc<dyn ConversationObserver>,
@@ -67,7 +79,7 @@ impl MemoryService {
     pub fn new(
         conversations: Arc<dyn ConversationRepository>,
         atoms: Arc<dyn AtomRepository>,
-        profiles: Arc<dyn ProfileFileRepository>,
+        profiles: Arc<dyn ProfileVersionStore>,
         embedder: Arc<dyn EmbeddingProvider>,
         searcher: Arc<AtomSearcher>,
         observer: Arc<dyn ConversationObserver>,
@@ -290,6 +302,11 @@ impl MemoryService {
 
     // ── L2 ──────────────────────────────────────────────────────────────
 
+    /// A fresh scene id for a scene about to be created.
+    pub fn new_scene_id(&self) -> String {
+        self.ids.next("scn-")
+    }
+
     pub async fn list_scenes(
         &self,
         department: &DepartmentId,
@@ -297,21 +314,12 @@ impl MemoryService {
         prefix: &str,
     ) -> DomainResult<Vec<SceneEntry>> {
         validate_relative_path(prefix)?;
-        let files = self
+        Ok(self
             .profiles
-            .list(department, profile, &scene_path(prefix))
-            .await?;
-        Ok(files
+            .scene_heads(department, profile, prefix)
+            .await?
             .into_iter()
-            .map(|file| {
-                let relative_path = file.path.trim_start_matches(SCENE_DIR).to_owned();
-                let (meta, _) = parse_scene(&file.content);
-                SceneEntry {
-                    file,
-                    relative_path,
-                    meta,
-                }
-            })
+            .map(SceneEntry::from)
             .collect())
     }
 
@@ -323,14 +331,31 @@ impl MemoryService {
         version: Option<u32>,
     ) -> DomainResult<Option<ProfileFile>> {
         validate_scene_path(path)?;
+        // A removed scene is gone for current reads; its versions stay
+        // readable by number.
+        Ok(self
+            .profiles
+            .scene(department, profile, path, version)
+            .await?
+            .filter(|s| version.is_some() || s.is_live())
+            .map(|s| s.to_file()))
+    }
+
+    /// Appends scene versions in one transaction (the L2 extractor's writes).
+    pub async fn append_scenes(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        versions: Vec<NewSceneVersion>,
+    ) -> DomainResult<Vec<SceneVersion>> {
         self.profiles
-            .read(department, profile, &scene_path(path), version)
+            .append_scenes(department, profile, versions)
             .await
     }
 
-    /// Writes a scene, preserving (or creating) its META header: `created`
-    /// and `heat` survive, `updated` is refreshed, `summary` replaced when
-    /// given.
+    /// Writes a scene through the API as a new version: the body comes from
+    /// `content` (its META header, if any, is ignored), the summary is
+    /// replaced when given, heat and extra attributes carry over.
     pub async fn write_scene(
         &self,
         department: &DepartmentId,
@@ -338,54 +363,68 @@ impl MemoryService {
         path: &str,
         content: &str,
         summary: Option<&str>,
+        author: Option<&str>,
     ) -> DomainResult<ProfileFile> {
         validate_scene_path(path)?;
-        let now = self.clock.now().to_rfc3339();
-        let existing = self
+        let current = self
             .profiles
-            .read(department, profile, &scene_path(path), None)
-            .await?;
-        let mut meta = existing
-            .as_ref()
-            .and_then(|f| parse_scene(&f.content).0)
-            .unwrap_or_else(|| SceneMeta {
-                created: now.clone(),
-                heat: 1,
-                ..Default::default()
-            });
-        meta.updated = now;
-        if let Some(s) = summary {
-            meta.summary = s.to_owned();
-        }
+            .scene(department, profile, path, None)
+            .await?
+            .filter(SceneVersion::is_live);
         let (_, body) = parse_scene(content);
-        let file = self
+        let version = NewSceneVersion {
+            scene_id: current
+                .as_ref()
+                .map_or_else(|| self.new_scene_id(), |s| s.scene_id.clone()),
+            op: SceneOp::Manual,
+            slug: path.to_owned(),
+            summary: summary
+                .map(str::to_owned)
+                .or_else(|| current.as_ref().map(|s| s.summary.clone()))
+                .unwrap_or_default(),
+            heat: current.as_ref().map_or(1, |s| s.heat),
+            body,
+            attrs: current.map(|s| s.attrs).unwrap_or_default(),
+            parents: Vec::new(),
+            author: author.map(str::to_owned),
+        };
+        let mut written = self
             .profiles
-            .write(
-                department,
-                profile,
-                &scene_path(path),
-                &render_scene(&meta, &body),
-            )
+            .append_scenes(department, profile, vec![version])
             .await?;
-        self.refresh_navigation(department, profile).await?;
-        Ok(file)
+        written
+            .pop()
+            .map(|s| s.to_file())
+            .ok_or_else(|| DomainError::internal("scene write returned nothing"))
     }
 
+    /// Retires the scene at `path`, or every scene below it when it ends
+    /// with `/`. Their versions stay; they just stop being current.
     pub async fn remove_scene(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         path: &str,
+        author: Option<&str>,
     ) -> DomainResult<usize> {
         validate_relative_path(path)?;
         if path.is_empty() {
             return Err(DomainError::invalid("path is required"));
         }
-        let removed = self
+        let retired: Vec<NewSceneVersion> = self
             .profiles
-            .remove(department, profile, &scene_path(path))
-            .await?;
-        self.refresh_navigation(department, profile).await?;
+            .scene_heads(department, profile, path)
+            .await?
+            .into_iter()
+            .filter(|s| path.ends_with('/') || s.slug == path)
+            .map(|s| retirement(s, None, author))
+            .collect();
+        let removed = retired.len();
+        if removed > 0 {
+            self.profiles
+                .append_scenes(department, profile, retired)
+                .await?;
+        }
         Ok(removed)
     }
 
@@ -397,40 +436,57 @@ impl MemoryService {
     ) -> DomainResult<usize> {
         validate_relative_path(prefix)?;
         self.profiles
-            .count(department, Some(profile), &scene_path(prefix))
+            .count_scenes(department, Some(profile), prefix)
             .await
     }
 
     // ── L3 ──────────────────────────────────────────────────────────────
 
+    /// The persona as a file. The latest version comes with the navigation
+    /// of the current scenes; an older one is its body alone.
     pub async fn read_persona(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         version: Option<u32>,
     ) -> DomainResult<Option<ProfileFile>> {
-        self.profiles
-            .read(department, profile, PERSONA_PATH, version)
-            .await
+        let Some(persona) = self.profiles.persona(department, profile, version).await? else {
+            return Ok(None);
+        };
+        let content = match version {
+            Some(_) => persona.body.clone(),
+            None => compose_persona(&persona.body, &self.navigation(department, profile).await?),
+        };
+        Ok(Some(persona_file(&persona, content)))
     }
 
-    /// Stores the persona body followed by a freshly rendered navigation.
+    /// Appends a persona version; any navigation in `content` is dropped,
+    /// since it is rendered from the scenes when read.
     pub async fn write_persona(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         content: &str,
+        op: PersonaOp,
+        author: Option<&str>,
     ) -> DomainResult<ProfileFile> {
-        let body = strip_scene_navigation(content);
-        let navigation = self.navigation(department, profile).await?;
-        self.profiles
-            .write(
+        let current = self.profiles.persona(department, profile, None).await?;
+        let persona = self
+            .profiles
+            .append_persona(
                 department,
                 profile,
-                PERSONA_PATH,
-                &compose_persona(&body, &navigation),
+                NewPersonaVersion {
+                    op,
+                    body: strip_scene_navigation(content),
+                    attrs: current.map(|p| p.attrs).unwrap_or_default(),
+                    author: author.map(str::to_owned),
+                },
             )
-            .await
+            .await?;
+        let navigation = self.navigation(department, profile).await?;
+        let content = compose_persona(&persona.body, &navigation);
+        Ok(persona_file(&persona, content))
     }
 
     pub async fn count_persona(
@@ -439,7 +495,7 @@ impl MemoryService {
         profile: &ProfileScope,
     ) -> DomainResult<usize> {
         self.profiles
-            .count(department, Some(profile), PERSONA_PATH)
+            .count_personas(department, Some(profile))
             .await
     }
 
@@ -449,49 +505,55 @@ impl MemoryService {
         department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<String> {
-        let scenes = self.list_scenes(department, profile, "").await?;
+        let scenes = self.profiles.scene_heads(department, profile, "").await?;
         if scenes.is_empty() {
             return Ok(String::new());
         }
-        let metas: Vec<(String, SceneMeta)> = scenes
-            .into_iter()
-            .map(|s| (s.relative_path, s.meta.unwrap_or_default()))
-            .collect();
-        let mut entries: Vec<NavigationEntry<'_>> = metas
+        let updated: Vec<String> = scenes.iter().map(|s| s.created_at.to_rfc3339()).collect();
+        let mut entries: Vec<NavigationEntry<'_>> = scenes
             .iter()
-            .map(|(path, m)| NavigationEntry {
-                filename: path,
-                summary: &m.summary,
-                heat: m.heat,
-                updated: &m.updated,
+            .zip(&updated)
+            .map(|(s, updated)| NavigationEntry {
+                filename: &s.slug,
+                summary: &s.summary,
+                heat: s.heat,
+                updated,
             })
             .collect();
         Ok(render_navigation(&mut entries))
     }
+}
 
-    /// Rewrites the navigation of an existing persona after scene changes.
-    pub async fn refresh_navigation(
-        &self,
-        department: &DepartmentId,
-        profile: &ProfileScope,
-    ) -> DomainResult<()> {
-        let Some(persona) = self.read_persona(department, profile, None).await? else {
-            return Ok(());
-        };
-        let body = strip_scene_navigation(&persona.content);
-        if body.is_empty() {
-            return Ok(());
-        }
-        let navigation = self.navigation(department, profile).await?;
-        self.profiles
-            .write(
-                department,
-                profile,
-                PERSONA_PATH,
-                &compose_persona(&body, &navigation),
-            )
-            .await?;
-        Ok(())
+/// The final version of a scene that goes away: same content, `retire`.
+pub fn retirement(
+    scene: SceneVersion,
+    merged_into: Option<&str>,
+    author: Option<&str>,
+) -> NewSceneVersion {
+    let mut attrs = scene.attrs;
+    if let Some(target) = merged_into {
+        attrs.insert("merged_into".into(), target.to_owned());
+    }
+    NewSceneVersion {
+        scene_id: scene.scene_id,
+        op: SceneOp::Retire,
+        slug: scene.slug,
+        summary: scene.summary,
+        heat: scene.heat,
+        body: scene.body,
+        attrs,
+        parents: Vec::new(),
+        author: author.map(str::to_owned),
+    }
+}
+
+fn persona_file(persona: &PersonaVersion, content: String) -> ProfileFile {
+    ProfileFile {
+        path: PERSONA_PATH.to_owned(),
+        content,
+        version: persona.version,
+        created_at: persona.created_at,
+        updated_at: persona.created_at,
     }
 }
 

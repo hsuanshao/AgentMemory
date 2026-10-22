@@ -89,6 +89,10 @@ async fn postgres_data_from_0_2_is_migrated() {
                  WHERE param_name = 'max_users_per_department';
                  INSERT INTO {s}.meta_config_params VALUES ('global', '', 'quota', 'max_users_per_department', '500');
                  INSERT INTO {s}.meta_team_members VALUES ('t-1', 'u-1', 'active', '', '{{"team_id":"t-1","user_id":"u-1","role":"reviewer"}}');
+                 INSERT INTO {s}.profile_files VALUES
+                   ('t-1', 'a-1', 'scene_blocks/deploy.md', 1, E'-----META-START-----\ncreated: c\nupdated: u\nsummary: deploys\nheat: 3\n-----META-END-----\n\nbody', TRUE, 10, 20),
+                   ('t-1', 'a-1', 'persona.md', 1, '# Me', TRUE, 5, 5);
+                 DROP TABLE {s}.scene_versions, {s}.scenes, {s}.persona_versions;
                  ALTER TABLE agent_memory.departments RENAME COLUMN department_id TO instance_id;
                  ALTER TABLE agent_memory.departments RENAME TO instances;
                  ALTER INDEX agent_memory.departments_pkey RENAME TO instances_pkey;
@@ -123,7 +127,7 @@ async fn postgres_data_from_0_2_is_migrated() {
                 role.as_str(),
                 version
             ),
-            ("legacy", "department", "20", "member", 2)
+            ("legacy", "department", "20", "member", 3)
         );
         let left: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM pg_class WHERE relname IN ('instances', 'instances_pkey')",
@@ -132,6 +136,25 @@ async fn postgres_data_from_0_2_is_migrated() {
         .await
         .unwrap();
         assert_eq!(left, 0);
+        let (scene, summary, heat, op, persona): (String, String, i64, String, String) =
+            sqlx::query_as(&format!(
+                "SELECT v.slug, v.summary, v.heat, v.op, (SELECT body FROM {s}.persona_versions)
+                 FROM {s}.scene_versions v JOIN {s}.scenes sc ON sc.id = v.scene_id"
+            ))
+            .fetch_one(&mut *c)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                scene.as_str(),
+                summary.as_str(),
+                heat,
+                op.as_str(),
+                persona.as_str()
+            ),
+            ("deploy.md", "deploys", 3, "import", "# Me"),
+            "profile files are imported once"
+        );
         drop(c);
         db.pool().close().await;
     }

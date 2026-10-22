@@ -7,6 +7,7 @@ pub mod lifecycle;
 pub mod local_lock;
 pub mod openai;
 pub mod postgres;
+pub mod profile_versions;
 pub mod redis;
 pub mod sqlite;
 pub mod sqlite_to_postgres;

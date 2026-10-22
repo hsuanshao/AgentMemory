@@ -215,7 +215,6 @@ pub async fn build(config: &Config) -> Result<App> {
             l1: Arc::new(l1),
             l2: Arc::new(SceneExtractor::new(
                 Arc::clone(&llm),
-                Arc::clone(&profiles),
                 Arc::clone(&memory),
                 Arc::clone(&clock),
                 settings.max_scenes,

@@ -145,6 +145,44 @@ const TABLES: &[Table] = &[
         ],
     ),
     table(
+        "scenes",
+        &[
+            ("id", Text),
+            ("team_id", Text),
+            ("agent_id", Text),
+            ("created_at_ms", Int),
+        ],
+    ),
+    table(
+        "scene_versions",
+        &[
+            ("scene_id", Text),
+            ("version", Int),
+            ("op", Text),
+            ("slug", Text),
+            ("summary", Text),
+            ("heat", Int),
+            ("body", Text),
+            ("attrs", Json),
+            ("parents", Json),
+            ("author", Text),
+            ("created_at_ms", Int),
+        ],
+    ),
+    table(
+        "persona_versions",
+        &[
+            ("team_id", Text),
+            ("agent_id", Text),
+            ("version", Int),
+            ("op", Text),
+            ("body", Text),
+            ("attrs", Json),
+            ("author", Text),
+            ("created_at_ms", Int),
+        ],
+    ),
+    table(
         "memory_prompts",
         &[
             ("id", Text),

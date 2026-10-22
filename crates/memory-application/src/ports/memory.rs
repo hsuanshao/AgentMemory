@@ -3,7 +3,9 @@
 use async_trait::async_trait;
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage};
-use memory_domain::profile::{ProfileFile, ProfileScope};
+use memory_domain::profile::{
+    NewPersonaVersion, NewSceneVersion, PersonaVersion, ProfileScope, SceneVersion,
+};
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use serde::Serialize;
 
@@ -159,44 +161,71 @@ pub trait AtomRepository: Send + Sync {
     ) -> DomainResult<usize>;
 }
 
-/// Versioned profile files (scenes + persona) of a team + agent.
+/// Append-only versions of the scenes (L2) and persona (L3) of a team +
+/// agent. Writes never change a stored version; only [`purge`] deletes.
+///
+/// [`purge`]: ProfileVersionStore::purge
 #[async_trait]
-pub trait ProfileFileRepository: Send + Sync {
-    /// Head versions of files whose path starts with `prefix`.
-    async fn list(
+pub trait ProfileVersionStore: Send + Sync {
+    /// Latest version of every live scene whose slug starts with `prefix`,
+    /// ordered by slug.
+    async fn scene_heads(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
-    ) -> DomainResult<Vec<ProfileFile>>;
-    async fn read(
+    ) -> DomainResult<Vec<SceneVersion>>;
+    /// The scene currently named `slug` (the live one, else the one retired
+    /// last), at `version` or its latest version.
+    async fn scene(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
-        path: &str,
+        slug: &str,
         version: Option<u32>,
-    ) -> DomainResult<Option<ProfileFile>>;
-    /// Writes a new head version; identical content keeps the version.
-    async fn write(
+    ) -> DomainResult<Option<SceneVersion>>;
+    /// Appends the versions in one transaction, each as its scene's next
+    /// version. A version identical to its scene's latest one is not
+    /// stored; the latest one is returned in its place. Creating a scene
+    /// whose slug a live scene already has is a conflict.
+    async fn append_scenes(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
-        path: &str,
-        content: &str,
-    ) -> DomainResult<ProfileFile>;
-    /// Removes `path`, or every file below it when it ends with `/`.
-    async fn remove(
-        &self,
-        department: &DepartmentId,
-        profile: &ProfileScope,
-        path: &str,
-    ) -> DomainResult<usize>;
-    async fn count(
+        versions: Vec<NewSceneVersion>,
+    ) -> DomainResult<Vec<SceneVersion>>;
+    /// Live scenes whose slug starts with `prefix`.
+    async fn count_scenes(
         &self,
         department: &DepartmentId,
         profile: Option<&ProfileScope>,
         prefix: &str,
     ) -> DomainResult<usize>;
+    async fn persona(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        version: Option<u32>,
+    ) -> DomainResult<Option<PersonaVersion>>;
+    /// Appends the next version; a body identical to the latest one keeps
+    /// the latest version.
+    async fn append_persona(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        version: NewPersonaVersion,
+    ) -> DomainResult<PersonaVersion>;
+    /// Profiles with a persona.
+    async fn count_personas(
+        &self,
+        department: &DepartmentId,
+        profile: Option<&ProfileScope>,
+    ) -> DomainResult<usize>;
+    /// Deletes every scene and persona version of the profile, the one way
+    /// history is removed (clearing a chat memory). Returns the number of
+    /// scenes and personas that existed.
+    async fn purge(&self, department: &DepartmentId, profile: &ProfileScope)
+        -> DomainResult<usize>;
 }
 
 /// Rows moved by [`ScopeMigrationStore::reassign_default`].
@@ -204,6 +233,7 @@ pub trait ProfileFileRepository: Send + Sync {
 pub struct MovedRows {
     pub conversations: usize,
     pub atoms: usize,
+    /// Scene and persona rows (L2/L3), legacy files included.
     pub profile_files: usize,
     pub skill_versions: usize,
 }

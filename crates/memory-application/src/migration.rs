@@ -9,7 +9,7 @@ use memory_domain::profile::ProfileScope;
 use memory_domain::scope::{DepartmentId, MemoryScope, SegmentId};
 use serde::{Deserialize, Serialize};
 
-use crate::ports::memory::{MovedRows, ProfileFileRepository, ScopeMigrationStore};
+use crate::ports::memory::{MovedRows, ProfileVersionStore, ScopeMigrationStore};
 use crate::ports::meta::MetaStore;
 use crate::ports::pipeline::PipelineStateRepository;
 
@@ -45,7 +45,7 @@ pub struct MigrationReport {
 
 pub struct LegacyScopeMigration {
     meta: Arc<dyn MetaStore>,
-    profiles: Arc<dyn ProfileFileRepository>,
+    profiles: Arc<dyn ProfileVersionStore>,
     rows: Arc<dyn ScopeMigrationStore>,
     state: Arc<dyn PipelineStateRepository>,
 }
@@ -53,7 +53,7 @@ pub struct LegacyScopeMigration {
 impl LegacyScopeMigration {
     pub fn new(
         meta: Arc<dyn MetaStore>,
-        profiles: Arc<dyn ProfileFileRepository>,
+        profiles: Arc<dyn ProfileVersionStore>,
         rows: Arc<dyn ScopeMigrationStore>,
         state: Arc<dyn PipelineStateRepository>,
     ) -> Self {
@@ -102,12 +102,16 @@ impl LegacyScopeMigration {
         department: &DepartmentId,
         to: &MemoryScope,
     ) -> DomainResult<()> {
-        if self
+        let target = ProfileScope::from(to);
+        let scenes = self
             .profiles
-            .count(department, Some(&ProfileScope::from(to)), "")
-            .await?
-            > 0
-        {
+            .count_scenes(department, Some(&target), "")
+            .await?;
+        let personas = self
+            .profiles
+            .count_personas(department, Some(&target))
+            .await?;
+        if scenes + personas > 0 {
             return Err(DomainError::conflict(
                 "target_has_profile",
                 "the target agent already has L2/L3 files; migrate into a fresh agent",

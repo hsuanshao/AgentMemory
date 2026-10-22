@@ -1,5 +1,5 @@
-//! Postgres adapter for L0 conversations, L1 atoms and versioned profile
-//! files.
+//! Postgres adapter for L0 conversations, L1 atoms and the scene / persona
+//! versions of L2 / L3.
 //!
 //! Sequence numbers come from `BIGSERIAL` columns. A rewrite of an existing
 //! id takes a fresh value (`seq = DEFAULT` on conflict), matching SQLite's
@@ -15,21 +15,26 @@ use chrono::{DateTime, Utc};
 use memory_application::common::{Page, Scored};
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    MovedRows, ProfileFileRepository, ScopeMigrationStore, Sequenced,
+    MovedRows, ProfileVersionStore, ScopeMigrationStore, Sequenced,
 };
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
-use memory_domain::profile::{ProfileFile, ProfileScope};
+use memory_domain::profile::{
+    NewPersonaVersion, NewSceneVersion, PersonaOp, PersonaVersion, ProfileScope, SceneOp,
+    SceneVersion,
+};
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use pgvector::Vector;
 use sqlx::postgres::PgRow;
+use sqlx::PgConnection;
 use tracing::warn;
 
-use super::db::{pg_err, xact_lock, PgDb};
+use super::db::{pg_err, xact_lock, PgDb, Schema};
 use super::sql::{
-    args, count, execute, fetch_all, fetch_optional, get, tsquery_literal, tsvector_literal, Arg,
-    Where,
+    args, count, doc, execute, fetch_all, fetch_optional, get, to_doc, tsquery_literal,
+    tsvector_literal, Arg, Where,
 };
+use crate::profile_versions::{slug_taken, unknown_scene};
 use crate::sqlite::sql::{from_ms, like_prefix, to_ms};
 
 pub struct PostgresMemoryStore {
@@ -650,162 +655,242 @@ impl AtomRepository for PostgresMemoryStore {
 
 // ── L2 / L3 ─────────────────────────────────────────────────────────────
 
-const FILE_COLUMNS: &str = "path, content, version, created_at_ms, updated_at_ms";
+const SCENE_COLUMNS: &str = "v.scene_id, v.version, v.op, v.slug, v.summary, v.heat, v.body, v.attrs, v.parents, v.author, v.created_at_ms, s.created_at_ms AS scene_created_at_ms";
 
-fn file_from_row(row: &PgRow) -> DomainResult<ProfileFile> {
-    Ok(ProfileFile {
-        path: get(row, "path")?,
-        content: get(row, "content")?,
+/// The latest version of each scene: `v` is a version, `s` its scene.
+const IS_LATEST: &str =
+    "v.version = (SELECT MAX(m.version) FROM {s}.scene_versions m WHERE m.scene_id = v.scene_id)";
+
+fn is_latest(s: &Schema) -> String {
+    let s = s.to_string();
+    IS_LATEST.replace("{s}", &s)
+}
+
+fn scene_from_row(row: &PgRow) -> DomainResult<SceneVersion> {
+    Ok(SceneVersion {
+        scene_id: get(row, "scene_id")?,
         version: to_u32(get(row, "version")?),
+        op: SceneOp::parse(&get::<String>(row, "op")?)?,
+        slug: get(row, "slug")?,
+        summary: get(row, "summary")?,
+        heat: to_u32(get(row, "heat")?),
+        body: get(row, "body")?,
+        attrs: doc(row, "attrs")?,
+        parents: doc(row, "parents")?,
+        author: get(row, "author")?,
+        scene_created_at: from_ms(get(row, "scene_created_at_ms")?),
         created_at: from_ms(get(row, "created_at_ms")?),
-        updated_at: from_ms(get(row, "updated_at_ms")?),
     })
 }
+
+fn persona_from_row(row: &PgRow) -> DomainResult<PersonaVersion> {
+    Ok(PersonaVersion {
+        version: to_u32(get(row, "version")?),
+        op: PersonaOp::parse(&get::<String>(row, "op")?)?,
+        body: get(row, "body")?,
+        attrs: doc(row, "attrs")?,
+        author: get(row, "author")?,
+        created_at: from_ms(get(row, "created_at_ms")?),
+    })
+}
+
+const PERSONA_COLUMNS: &str = "version, op, body, attrs, author, created_at_ms";
 
 fn profile_ids(p: &ProfileScope) -> (String, String) {
     (p.team_id.to_string(), p.agent_id.to_string())
 }
 
 /// SQLite's `LIKE` ignores ASCII case; `ILIKE` keeps that behaviour.
-const PREFIX_MATCH: &str = "path ILIKE ? ESCAPE '\\'";
+const SLUG_PREFIX: &str = "v.slug ILIKE ? ESCAPE '\\'";
+
+async fn latest_scene(
+    conn: &mut PgConnection,
+    s: &Schema,
+    scene_id: &str,
+) -> DomainResult<Option<SceneVersion>> {
+    fetch_optional(
+        conn,
+        &format!("SELECT {SCENE_COLUMNS} FROM {s}.scene_versions v JOIN {s}.scenes s ON s.id = v.scene_id WHERE v.scene_id = ? ORDER BY v.version DESC LIMIT 1"),
+        &args![scene_id],
+    )
+    .await?
+    .as_ref()
+    .map(scene_from_row)
+    .transpose()
+}
+
+/// Appends one version inside the caller's transaction (see
+/// [`ProfileVersionStore::append_scenes`]).
+async fn append_scene(
+    tx: &mut PgConnection,
+    s: &Schema,
+    team: &str,
+    agent: &str,
+    new: NewSceneVersion,
+    now: i64,
+) -> DomainResult<SceneVersion> {
+    let owner = fetch_optional(
+        tx,
+        &format!("SELECT team_id, agent_id FROM {s}.scenes WHERE id = ?"),
+        &args![new.scene_id.as_str()],
+    )
+    .await?
+    .map(|r| -> DomainResult<(String, String)> { Ok((get(&r, "team_id")?, get(&r, "agent_id")?)) })
+    .transpose()?;
+    if owner.as_ref().is_some_and(|(t, a)| t != team || a != agent) {
+        return Err(unknown_scene(&new.scene_id));
+    }
+    let latest = latest_scene(tx, s, &new.scene_id).await?;
+    if let Some(latest) = &latest {
+        if latest.same_content(&new) || (!latest.is_live() && new.op == SceneOp::Retire) {
+            return Ok(latest.clone());
+        }
+    }
+    if new.op != SceneOp::Retire {
+        let taken = count(
+            tx,
+            &format!(
+                "SELECT COUNT(*) FROM {s}.scene_versions v JOIN {s}.scenes s ON s.id = v.scene_id \
+                 WHERE s.team_id = ? AND s.agent_id = ? AND v.scene_id <> ? AND v.slug = ? AND v.op <> 'retire' AND {}",
+                is_latest(s)
+            ),
+            &args![team, agent, new.scene_id.as_str(), new.slug.as_str()],
+        )
+        .await?;
+        if taken > 0 {
+            return Err(slug_taken(&new.slug));
+        }
+    }
+    if owner.is_none() {
+        execute(
+            tx,
+            &format!(
+                "INSERT INTO {s}.scenes (id, team_id, agent_id, created_at_ms) VALUES (?,?,?,?)"
+            ),
+            &args![new.scene_id.as_str(), team, agent, now],
+        )
+        .await?;
+    }
+    let version = latest.as_ref().map_or(1, |l| l.version + 1);
+    execute(
+        tx,
+        &format!("INSERT INTO {s}.scene_versions (scene_id, version, op, slug, summary, heat, body, attrs, parents, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)"),
+        &[
+            Arg::from(new.scene_id.as_str()),
+            Arg::from(version),
+            Arg::from(new.op.as_str()),
+            Arg::from(new.slug.as_str()),
+            Arg::from(new.summary.as_str()),
+            Arg::from(new.heat),
+            Arg::from(new.body.as_str()),
+            to_doc(&new.attrs)?,
+            to_doc(&new.parents)?,
+            Arg::from(new.author.clone()),
+            Arg::from(now),
+        ],
+    )
+    .await?;
+    Ok(SceneVersion {
+        version,
+        scene_created_at: latest.map_or(from_ms(now), |l| l.scene_created_at),
+        created_at: from_ms(now),
+        scene_id: new.scene_id,
+        op: new.op,
+        slug: new.slug,
+        summary: new.summary,
+        heat: new.heat,
+        body: new.body,
+        attrs: new.attrs,
+        parents: new.parents,
+        author: new.author,
+    })
+}
 
 #[async_trait]
-impl ProfileFileRepository for PostgresMemoryStore {
-    async fn list(
+impl ProfileVersionStore for PostgresMemoryStore {
+    async fn scene_heads(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         prefix: &str,
-    ) -> DomainResult<Vec<ProfileFile>> {
+    ) -> DomainResult<Vec<SceneVersion>> {
         let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
         let rows = fetch_all(
             &mut *self.db.conn().await?,
             &format!(
-                "SELECT {FILE_COLUMNS} FROM {s}.profile_files WHERE team_id = ? AND agent_id = ? AND is_head AND {PREFIX_MATCH} ORDER BY path"
+                "SELECT {SCENE_COLUMNS} FROM {s}.scene_versions v JOIN {s}.scenes s ON s.id = v.scene_id \
+                 WHERE s.team_id = ? AND s.agent_id = ? AND {} AND v.op <> 'retire' AND {SLUG_PREFIX} ORDER BY v.slug",
+                is_latest(&s)
             ),
             &args![team, agent, like_prefix(prefix)],
         )
         .await?;
-        rows.iter().map(file_from_row).collect()
+        rows.iter().map(scene_from_row).collect()
     }
 
-    async fn read(
+    async fn scene(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
-        path: &str,
+        slug: &str,
         version: Option<u32>,
-    ) -> DomainResult<Option<ProfileFile>> {
+    ) -> DomainResult<Option<SceneVersion>> {
         let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
-        let (cond, v) = match version {
-            Some(v) => ("version = ?", vec![Arg::from(v)]),
-            None => ("is_head", vec![]),
-        };
-        let mut params = args![team, agent, path].to_vec();
-        params.extend(v);
-        fetch_optional(
-            &mut *self.db.conn().await?,
-            &format!("SELECT {FILE_COLUMNS} FROM {s}.profile_files WHERE team_id = ? AND agent_id = ? AND path = ? AND {cond}"),
-            &params,
+        let mut conn = self.db.conn().await?;
+        let scene_id: Option<String> = fetch_optional(
+            &mut conn,
+            &format!(
+                "SELECT v.scene_id FROM {s}.scene_versions v JOIN {s}.scenes s ON s.id = v.scene_id \
+                 WHERE s.team_id = ? AND s.agent_id = ? AND v.slug = ? AND {} \
+                 ORDER BY v.op = 'retire', v.created_at_ms DESC LIMIT 1",
+                is_latest(&s)
+            ),
+            &args![team, agent, slug],
         )
         .await?
-        .as_ref()
-        .map(file_from_row)
-        .transpose()
+        .map(|r| get(&r, "scene_id"))
+        .transpose()?;
+        let Some(scene_id) = scene_id else {
+            return Ok(None);
+        };
+        match version {
+            None => latest_scene(&mut conn, &s, &scene_id).await,
+            Some(v) => fetch_optional(
+                &mut conn,
+                &format!("SELECT {SCENE_COLUMNS} FROM {s}.scene_versions v JOIN {s}.scenes s ON s.id = v.scene_id WHERE v.scene_id = ? AND v.version = ?"),
+                &args![scene_id, v],
+            )
+            .await?
+            .as_ref()
+            .map(scene_from_row)
+            .transpose(),
+        }
     }
 
-    async fn write(
+    async fn append_scenes(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
-        path: &str,
-        content: &str,
-    ) -> DomainResult<ProfileFile> {
+        versions: Vec<NewSceneVersion>,
+    ) -> DomainResult<Vec<SceneVersion>> {
         let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
         let now = to_ms(Utc::now());
         let mut tx = self.db.begin().await?;
-        // Concurrent writers of one file would both derive `head + 1`.
-        xact_lock(&mut tx, &format!("{s}.profile_files:{team}/{agent}/{path}")).await?;
-        let head = fetch_optional(
-            &mut tx,
-            &format!("SELECT version, content, created_at_ms FROM {s}.profile_files WHERE team_id = ? AND agent_id = ? AND path = ? AND is_head"),
-            &args![team.as_str(), agent.as_str(), path],
-        )
-        .await?
-        .map(|r| -> DomainResult<(u32, String, i64)> {
-            Ok((to_u32(get(&r, "version")?), get(&r, "content")?, get(&r, "created_at_ms")?))
-        })
-        .transpose()?;
-        let file = match head {
-            Some((version, old, created)) if old == content => ProfileFile {
-                path: path.to_owned(),
-                content: content.to_owned(),
-                version,
-                created_at: from_ms(created),
-                updated_at: from_ms(now),
-            },
-            other => {
-                let (version, created) = other.map_or((1, now), |(v, _, c)| (v + 1, c));
-                execute(
-                    &mut tx,
-                    &format!("UPDATE {s}.profile_files SET is_head = FALSE WHERE team_id = ? AND agent_id = ? AND path = ?"),
-                    &args![team.as_str(), agent.as_str(), path],
-                )
-                .await?;
-                execute(
-                    &mut tx,
-                    &format!("INSERT INTO {s}.profile_files (team_id, agent_id, path, version, content, is_head, created_at_ms, updated_at_ms) VALUES (?,?,?,?,?,TRUE,?,?)"),
-                    &args![team.as_str(), agent.as_str(), path, version, content, created, now],
-                )
-                .await?;
-                ProfileFile {
-                    path: path.to_owned(),
-                    content: content.to_owned(),
-                    version,
-                    created_at: from_ms(created),
-                    updated_at: from_ms(now),
-                }
-            }
-        };
+        // Concurrent writers of one profile would both derive `latest + 1`
+        // and could both claim a free slug.
+        xact_lock(&mut tx, &format!("{s}.scenes:{team}/{agent}")).await?;
+        let mut written = Vec::with_capacity(versions.len());
+        for v in versions {
+            written.push(append_scene(&mut tx, &s, &team, &agent, v, now).await?);
+        }
         tx.commit().await.map_err(pg_err)?;
-        Ok(file)
+        Ok(written)
     }
 
-    async fn remove(
-        &self,
-        department: &DepartmentId,
-        profile: &ProfileScope,
-        path: &str,
-    ) -> DomainResult<usize> {
-        let s = self.db.schema(department).await?;
-        let (team, agent) = profile_ids(profile);
-        let (cond, value) = if path.ends_with('/') {
-            (PREFIX_MATCH, like_prefix(path))
-        } else {
-            ("path = ?", path.to_owned())
-        };
-        let params = args![team, agent, value];
-        let mut tx = self.db.begin().await?;
-        let heads = count(
-            &mut tx,
-            &format!("SELECT COUNT(*) FROM {s}.profile_files WHERE team_id = ? AND agent_id = ? AND is_head AND {cond}"),
-            &params,
-        )
-        .await?;
-        execute(
-            &mut tx,
-            &format!("DELETE FROM {s}.profile_files WHERE team_id = ? AND agent_id = ? AND {cond}"),
-            &params,
-        )
-        .await?;
-        tx.commit().await.map_err(pg_err)?;
-        Ok(heads)
-    }
-
-    async fn count(
+    async fn count_scenes(
         &self,
         department: &DepartmentId,
         profile: Option<&ProfileScope>,
@@ -814,16 +899,160 @@ impl ProfileFileRepository for PostgresMemoryStore {
         let s = self.db.schema(department).await?;
         let mut w = Where::default();
         if let Some(p) = profile {
-            profile_where(&mut w, p);
+            w.eq("s.team_id", p.team_id.to_string())
+                .eq("s.agent_id", p.agent_id.to_string());
         }
-        w.raw("is_head", [])
-            .raw(PREFIX_MATCH, [Arg::from(like_prefix(prefix))]);
+        w.raw(&is_latest(&s), [])
+            .raw("v.op <> 'retire'", [])
+            .raw(SLUG_PREFIX, [Arg::from(like_prefix(prefix))]);
         count(
             &mut *self.db.conn().await?,
-            &format!("SELECT COUNT(*) FROM {s}.profile_files {}", w.sql()),
+            &format!(
+                "SELECT COUNT(*) FROM {s}.scene_versions v JOIN {s}.scenes s ON s.id = v.scene_id {}",
+                w.sql()
+            ),
             &w.params,
         )
         .await
+    }
+
+    async fn persona(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        version: Option<u32>,
+    ) -> DomainResult<Option<PersonaVersion>> {
+        let s = self.db.schema(department).await?;
+        let (team, agent) = profile_ids(profile);
+        let mut params = args![team, agent].to_vec();
+        let cond = match version {
+            Some(v) => {
+                params.push(Arg::from(v));
+                "AND version = ?"
+            }
+            None => "",
+        };
+        fetch_optional(
+            &mut *self.db.conn().await?,
+            &format!("SELECT {PERSONA_COLUMNS} FROM {s}.persona_versions WHERE team_id = ? AND agent_id = ? {cond} ORDER BY version DESC LIMIT 1"),
+            &params,
+        )
+        .await?
+        .as_ref()
+        .map(persona_from_row)
+        .transpose()
+    }
+
+    async fn append_persona(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        new: NewPersonaVersion,
+    ) -> DomainResult<PersonaVersion> {
+        let s = self.db.schema(department).await?;
+        let (team, agent) = profile_ids(profile);
+        let now = to_ms(Utc::now());
+        let mut tx = self.db.begin().await?;
+        xact_lock(&mut tx, &format!("{s}.persona_versions:{team}/{agent}")).await?;
+        let latest = fetch_optional(
+            &mut tx,
+            &format!("SELECT {PERSONA_COLUMNS} FROM {s}.persona_versions WHERE team_id = ? AND agent_id = ? ORDER BY version DESC LIMIT 1"),
+            &args![team.as_str(), agent.as_str()],
+        )
+        .await?
+        .as_ref()
+        .map(persona_from_row)
+        .transpose()?;
+        if let Some(latest) = latest.as_ref().filter(|l| l.body == new.body) {
+            return Ok(latest.clone());
+        }
+        let version = latest.map_or(1, |l| l.version + 1);
+        execute(
+            &mut tx,
+            &format!("INSERT INTO {s}.persona_versions (team_id, agent_id, version, op, body, attrs, author, created_at_ms) VALUES (?,?,?,?,?,?,?,?)"),
+            &[
+                Arg::from(team.as_str()),
+                Arg::from(agent.as_str()),
+                Arg::from(version),
+                Arg::from(new.op.as_str()),
+                Arg::from(new.body.as_str()),
+                to_doc(&new.attrs)?,
+                Arg::from(new.author.clone()),
+                Arg::from(now),
+            ],
+        )
+        .await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(PersonaVersion {
+            version,
+            op: new.op,
+            body: new.body,
+            attrs: new.attrs,
+            author: new.author,
+            created_at: from_ms(now),
+        })
+    }
+
+    async fn count_personas(
+        &self,
+        department: &DepartmentId,
+        profile: Option<&ProfileScope>,
+    ) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
+        let mut w = Where::default();
+        if let Some(p) = profile {
+            profile_where(&mut w, p);
+        }
+        count(
+            &mut *self.db.conn().await?,
+            &format!(
+                "SELECT COUNT(*) FROM (SELECT DISTINCT team_id, agent_id FROM {s}.persona_versions {}) p",
+                w.sql()
+            ),
+            &w.params,
+        )
+        .await
+    }
+
+    async fn purge(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+    ) -> DomainResult<usize> {
+        let s = self.db.schema(department).await?;
+        let (team, agent) = profile_ids(profile);
+        let ids = args![team.as_str(), agent.as_str()];
+        let mut tx = self.db.begin().await?;
+        let scenes = count(
+            &mut tx,
+            &format!("SELECT COUNT(*) FROM {s}.scenes WHERE team_id = ? AND agent_id = ?"),
+            &ids,
+        )
+        .await?;
+        let persona = count(
+            &mut tx,
+            &format!("SELECT COUNT(*) FROM (SELECT 1 FROM {s}.persona_versions WHERE team_id = ? AND agent_id = ? LIMIT 1) p"),
+            &ids,
+        )
+        .await?;
+        execute(
+            &mut tx,
+            &format!("DELETE FROM {s}.scene_versions WHERE scene_id IN (SELECT id FROM {s}.scenes WHERE team_id = ? AND agent_id = ?)"),
+            &ids,
+        )
+        .await?;
+        for table in ["scenes", "persona_versions", "profile_files"] {
+            // `profile_files` is the pre-version storage, which would
+            // otherwise keep a copy.
+            execute(
+                &mut tx,
+                &format!("DELETE FROM {s}.{table} WHERE team_id = ? AND agent_id = ?"),
+                &ids,
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(pg_err)?;
+        Ok(scenes + persona)
     }
 }
 
@@ -868,11 +1097,19 @@ impl ScopeMigrationStore for PostgresMemoryStore {
             &[team, agent, user, ft, fa, fu],
         )
         .await?;
-        let profile_files = run(
+        run(
             format!("UPDATE {s}.profile_files SET team_id = $1, agent_id = $2 WHERE team_id = $3 AND agent_id = $4"),
             &[team, agent, ft, fa],
         )
         .await?;
+        let mut profile_files = 0;
+        for table in ["scenes", "persona_versions"] {
+            profile_files += run(
+                format!("UPDATE {s}.{table} SET team_id = $1, agent_id = $2 WHERE team_id = $3 AND agent_id = $4"),
+                &[team, agent, ft, fa],
+            )
+            .await?;
+        }
         let skill_versions = run(
             format!(
                 "UPDATE {s}.skills SET team_id = $1, owner_agent_id = $2, \

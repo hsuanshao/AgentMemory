@@ -18,6 +18,7 @@ pub const REGISTRY_SCHEMA: &str = "agent_memory";
 pub const MIGRATIONS: &[(i64, &str)] = &[
     (1, "instance renamed to department"),
     (2, "team role reviewer removed"),
+    (3, "scenes and personas stored as append-only versions"),
 ];
 
 /// The latest schema version.
@@ -82,6 +83,22 @@ CREATE TABLE IF NOT EXISTS $S.profile_files (
     PRIMARY KEY (team_id, agent_id, path, version)
 );
 CREATE INDEX IF NOT EXISTS ix_profile_head ON $S.profile_files(team_id, agent_id, is_head, path);
+
+CREATE TABLE IF NOT EXISTS $S.scenes (
+    id $K PRIMARY KEY, team_id $K NOT NULL, agent_id $K NOT NULL, created_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_scenes_profile ON $S.scenes(team_id, agent_id);
+CREATE TABLE IF NOT EXISTS $S.scene_versions (
+    scene_id $K NOT NULL, version BIGINT NOT NULL, op $K NOT NULL, slug $K NOT NULL,
+    summary TEXT NOT NULL, heat BIGINT NOT NULL, body TEXT NOT NULL,
+    attrs JSONB NOT NULL, parents JSONB NOT NULL, author $K, created_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (scene_id, version)
+);
+CREATE TABLE IF NOT EXISTS $S.persona_versions (
+    team_id $K NOT NULL, agent_id $K NOT NULL, version BIGINT NOT NULL, op $K NOT NULL,
+    body TEXT NOT NULL, attrs JSONB NOT NULL, author $K, created_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (team_id, agent_id, version)
+);
 
 CREATE TABLE IF NOT EXISTS $S.memory_prompts (
     id $K PRIMARY KEY, layer $K NOT NULL, status $K NOT NULL, created_at_ms BIGINT NOT NULL, doc JSONB NOT NULL

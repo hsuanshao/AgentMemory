@@ -15,6 +15,8 @@ const L1_REPLY: &str = r###"[{"scene_name":"I (the AI) am planning a release wit
   {"content":"The user always runs integration tests before a release","type":"persona","priority":80,"source_message_ids":[]},
   {"content":"low value chatter","type":"persona","priority":10,"source_message_ids":[]}]}]"###;
 const L2_REPLY: &str = r###"{"operations":[{"action":"create","file":"Release Planning","summary":"How the user ships releases","content":"## Core narrative\nRuns integration tests, then releases on Monday."}],"persona_update_request":null}"###;
+/// L2's answer when a scene named `Legacy-Release.md` already exists.
+const L2_MERGE_REPLY: &str = r###"{"operations":[{"action":"merge","file":"Release Planning","merge_from":["Legacy-Release.md"],"summary":"How the user ships releases","content":"## Core narrative\nRuns integration tests, then releases on Monday."}],"persona_update_request":null}"###;
 const L3_REPLY: &str =
     "```markdown\n# User Narrative Profile\n> **Archetype**: careful shipper\n```";
 const SKILL_REPLY: &str = r###"{"actions":[{"action":"create","name":"release-checklist","content":"---\nname: release-checklist\ndescription: Checklist before shipping a release\n---\n1. Run integration tests\n2. Tag and release"}],"summary":"saved release checklist"}"###;
@@ -27,7 +29,12 @@ async fn fake_llm(Json(req): Json<Value>) -> Json<Value> {
     } else if system.starts_with("You reconcile") {
         "[]"
     } else if system.starts_with("You are a Memory Consolidation") {
-        L2_REPLY
+        let input = req["messages"][1]["content"].as_str().unwrap_or_default();
+        if input.contains("### Legacy-Release.md") {
+            L2_MERGE_REPLY
+        } else {
+            L2_REPLY
+        }
     } else if system.starts_with("You are a Persona Architect") {
         L3_REPLY
     } else if system.starts_with("You review a finished agent conversation") {
@@ -278,6 +285,90 @@ async fn the_pipeline_runs_on_the_postgres_backend() {
             json!({"department_id": client.department}),
         )
         .await;
+}
+
+/// Scenes are append-only: rewrites, merges and removals add versions, and
+/// every earlier version stays readable.
+#[tokio::test(flavor = "multi_thread")]
+async fn scene_versions_survive_merges_and_removals() {
+    let (_data, client) = start().await;
+    let write = |content: &'static str| {
+        client.call(
+            "/v3/scenario/write",
+            client.scoped(
+                json!({"path": "Legacy-Release.md", "content": content, "summary": "old notes"}),
+            ),
+        )
+    };
+    assert_eq!(write("first draft").await["data"]["version"], 1);
+    assert_eq!(write("second draft").await["data"]["version"], 2);
+    let read = |path: &'static str, version: Option<u32>| {
+        client.call(
+            "/v3/scenario/read",
+            client.scoped(json!({"path": path, "version": version})),
+        )
+    };
+    let first = read("Legacy-Release.md", Some(1)).await;
+    assert!(
+        first["data"]["content"]
+            .as_str()
+            .unwrap()
+            .ends_with("first draft"),
+        "{first}"
+    );
+
+    // L2 merges the legacy scene into a new one.
+    client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "We release v2 next Monday; I always run integration tests first."},
+                {"role": "assistant", "content": "Noted, I will remind you."}
+            ]})),
+        )
+        .await;
+    client
+        .wait_for(|s| s["l1"]["total"] == 2 && s["generation_logs"].as_u64().unwrap_or(0) >= 2)
+        .await;
+    let scenes = client
+        .call("/v3/scenario/ls", client.scoped(json!({})))
+        .await;
+    let entries = scenes["data"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{scenes}");
+    assert_eq!(entries[0]["path"], "Release-Planning.md");
+    assert_eq!(entries[0]["heat"], 2, "the merge adds the absorbed heat");
+
+    let merged_away = read("Legacy-Release.md", None).await;
+    assert!(merged_away["data"]["content"].is_null(), "{merged_away}");
+    let kept = read("Legacy-Release.md", Some(2)).await;
+    assert!(
+        kept["data"]["content"]
+            .as_str()
+            .unwrap()
+            .ends_with("second draft"),
+        "{kept}"
+    );
+
+    // Removing retires the scene; its versions stay.
+    let removed = client
+        .call(
+            "/v3/scenario/rm",
+            client.scoped(json!({"path": "Release-Planning.md"})),
+        )
+        .await;
+    assert_eq!(removed["data"]["removed"], 1, "{removed}");
+    let scenes = client
+        .call("/v3/scenario/ls", client.scoped(json!({})))
+        .await;
+    assert_eq!(scenes["data"]["total"], 0, "{scenes}");
+    let old = read("Release-Planning.md", Some(1)).await;
+    assert!(
+        old["data"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Core narrative"),
+        "{old}"
+    );
 }
 
 async fn assert_conversation_is_distilled(client: &Client) {

@@ -106,6 +106,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 * `conversation/add` `{session_id, messages: [{role: user|assistant, content, timestamp?}]}`：寫入 L0 並驅動蒸餾管線。
 * `session/add`：儲存原始的 session 回合物件（需要 `x-memory-user-id` 與 `x-memory-session-id`，由 middleware 依授權後的範圍設定）。
 * L0/L1 以 team + agent + user 劃分範圍；L2（`scenario/*`）與 L3（`core/*`）只以 team + agent 劃分。
+* 場景和 persona 只追加版本。`scenario/write`、`core/write` 會新增一個以呼叫者為作者的版本。`scenario/rm` 會讓場景退役：它不再出現在 `ls`、`count` 和不帶 `version` 的 `read`，但帶 `version` 的 `read` 仍能取得它的任何版本；被合併掉的場景也一樣。
 
 ### Skills
 

@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use memory_application::admin::DepartmentLifecycle;
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::memory::{
-    AtomRepository, ConversationRepository, ProfileFileRepository, ScopeMigrationStore,
+    AtomRepository, ConversationRepository, ProfileVersionStore, ScopeMigrationStore,
 };
 use memory_application::ports::meta::MetaStore;
 use memory_application::ports::pipeline::{
@@ -46,7 +46,7 @@ use crate::config::Config;
 pub struct Storage {
     pub conversations: Arc<dyn ConversationRepository>,
     pub atoms: Arc<dyn AtomRepository>,
-    pub profiles: Arc<dyn ProfileFileRepository>,
+    pub profiles: Arc<dyn ProfileVersionStore>,
     /// Upgrade path for the legacy `default` buckets.
     pub scope_migration: Arc<dyn ScopeMigrationStore>,
     pub meta: Arc<dyn MetaStore>,

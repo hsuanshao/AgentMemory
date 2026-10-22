@@ -166,8 +166,8 @@ The metadata plane has its own, finer rules (`memory-domain/src/meta/access.rs`)
 | --- | --- | --- | --- |
 | L0 conversation | Raw turns as captured (text only) | team / agent / user / session | `conversations` rows |
 | L1 atom | Distilled facts: `episodic`, `persona`, `instruction` | team / agent / user | `atoms` rows + full-text + vector index |
-| L2 scene | Topic documents (`scene_blocks/*.md`) with heat and summary | team / agent | versioned `profile_files` |
-| L3 persona | One narrative profile (`persona.md`) | team / agent | versioned `profile_files` |
+| L2 scene | Topic documents (`scene_blocks/*.md`) with heat and summary | team / agent | append-only `scenes` + `scene_versions` |
+| L3 persona | One narrative profile (`persona.md`) | team / agent | append-only `persona_versions` |
 | Skills | Reusable procedures distilled from tool-heavy turns | team / agent | `skills` + resource files |
 
 ```mermaid
@@ -359,7 +359,7 @@ flowchart LR
 ## 10. Design notes
 
 - **Storage layout.** `<data>/system.db` holds durable pipeline timers for every department. `<data>/departments/<id>/memory.db` holds L0–L3, metadata, skills and logs of one department on SQLite. `<data>/departments/<id>/{sessions,skills}/` holds raw session turns and skill resource files.
-- **Versioned profiles.** L2 scenes and the L3 persona are `ProfileFile`s, so every edit can be recovered by version.
+- **Append-only profiles.** Every change to an L2 scene or the L3 persona is a new version; nothing rewrites or deletes one except clearing the chat memory. A scene keeps a fixed id across versions, a merge lists the versions it absorbed as parents, and a scene that goes away gets a final `retire` version. The key fields are columns, the body stays markdown, and `attrs` keeps anything else; the markdown files clients see (`scene_blocks/*.md` with a META header, `persona.md` with the Scene Navigation) are rendered from them.
 - **Late binding.** Two construction cycles, memory ↔ pipeline and meta ↔ chat-memory, are broken with `OnceLock`-registered collaborators instead of a bidirectional dependency graph.
 - **Coordination ports.** `KeyLock` (`ports/coordination.rs`) guards pipeline-state read-modify-write. The worker uses a separate `KeyLock` for per-job exclusivity; otherwise local stripes could make a job wait on itself. `QueueBackend` gives the worker pop / ack / extend / push_later / dead_letter, so delivery semantics belong to the backend.
 - **Department destruction** composes each backend's cleanup step (`CompositeLifecycle`): storage (drop file or schema), files, state.
