@@ -4,7 +4,7 @@
 
 ## 目錄
 
-- [0.3.2 之後（未發布）：蒸餾 CLI 的參數](#032-之後未發布蒸餾-cli-的參數)
+- [升級到 0.4.0](#升級到-040)
 - [升級到 0.3.0](#升級到-030)
 - [0.1.1 到 0.2.x 之間升級](#011-到-02x-之間升級)
 - [從 0.1.1 之前的版本升級](#從-011-之前的版本升級)
@@ -17,7 +17,14 @@
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
 
-## 0.3.2 之後（未發布）：蒸餾 CLI 的參數
+## 升級到 0.4.0
+
+```bash
+git fetch --tags && git checkout v0.4.0
+./upgrade.sh
+```
+
+**授權：** 從 0.4.0 開始，server 端改用 Business Source License 1.1；`amem` client 和各工具的 plugin 維持 MIT。請確認你的使用方式是否在 [COMMERCIAL.zh-tw.md](../COMMERCIAL.zh-tw.md) 的免費範圍內。這一版不需要遷移資料。
 
 > [!WARNING]
 > **只要 `AGENT_MEMORY_LLM_CLI_ARGS`（`llm.cli.args`）讓蒸餾用的 CLI 拿到比預設更多的能力，memory-core 就不會啟動。** 升級前請先檢查你的 `.env`。
@@ -65,7 +72,7 @@ docker compose run --rm --no-deps -T memory-core check-config
 
    ```bash
    cd /path/to/agent-memory
-   git fetch --tags && git checkout v0.3.2
+   git fetch --tags && git checkout v0.4.0
    ./upgrade.sh
    ```
 
@@ -127,7 +134,7 @@ docker compose up -d --build
 
   ```bash
   cd /path/to/agent-memory        # 有 .env 的目錄
-  git fetch --tags && git checkout v0.3.2  # 或：git pull
+  git fetch --tags && git checkout v0.4.0  # 或：git pull
   ```
 
 ## A. 自動升級：`upgrade.sh`

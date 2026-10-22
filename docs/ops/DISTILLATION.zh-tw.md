@@ -120,7 +120,7 @@ Panel 上的 **Re-run** 按鈕效果相同，每次 10 筆。重跑的 job 會�
 ## 6. 工具與蒸餾
 
 > [!WARNING]
-> **只要 `AGENT_MEMORY_LLM_CLI_ARGS` 讓 CLI 拿到比預設更多的能力，不論 `AGENT_MEMORY_LLM_CLI_HARDENING` 怎麼設，memory-core 都不會啟動。** 錯誤訊息會指出是哪個參數，請把它拿掉。見[會被拒絕的參數](#會被拒絕的參數)和 [UPGRADE](../UPGRADE.zh-tw.md#032-之後未發布蒸餾-cli-的參數)。
+> **只要 `AGENT_MEMORY_LLM_CLI_ARGS` 讓 CLI 拿到比預設更多的能力，不論 `AGENT_MEMORY_LLM_CLI_HARDENING` 怎麼設，memory-core 都不會啟動。** 錯誤訊息會指出是哪個參數，請把它拿掉。見[會被拒絕的參數](#會被拒絕的參數)和 [UPGRADE](../UPGRADE.zh-tw.md#升級到-040)。
 
 蒸餾讀的是對話內容，而對話內容不可信，任何參與對話的人都能在裡面寫指令。所以蒸餾模型永遠不會拿到工具，也不會略過權限檢查（#37）。memory-core 的做法是：
 

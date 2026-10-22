@@ -120,7 +120,7 @@ Find what was dropped and why with **Panel → Generation logs** (`#/logs?status
 ## 6. Tools and distillation
 
 > [!WARNING]
-> **memory-core does not start when `AGENT_MEMORY_LLM_CLI_ARGS` gives the CLI more capability than its defaults**, whatever `AGENT_MEMORY_LLM_CLI_HARDENING` says. The error names the argument; remove it. See [Arguments that are refused](#arguments-that-are-refused) and [UPGRADE](../UPGRADE.md#after-032-unreleased-distillation-cli-arguments).
+> **memory-core does not start when `AGENT_MEMORY_LLM_CLI_ARGS` gives the CLI more capability than its defaults**, whatever `AGENT_MEMORY_LLM_CLI_HARDENING` says. The error names the argument; remove it. See [Arguments that are refused](#arguments-that-are-refused) and [UPGRADE](../UPGRADE.md#to-040).
 
 Distillation reads conversation text, which is untrusted: anyone in a conversation can write instructions into it. So the distillation model never gets a tool or a skipped permission check (#37). Instead:
 

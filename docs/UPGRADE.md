@@ -4,7 +4,7 @@
 
 ## Contents
 
-- [After 0.3.2 (unreleased): distillation CLI arguments](#after-032-unreleased-distillation-cli-arguments)
+- [To 0.4.0](#to-040)
 - [To 0.3.0](#to-030)
 - [Within 0.1.1 – 0.2.x](#within-011--02x)
 - [From a version before 0.1.1](#from-a-version-before-011)
@@ -17,7 +17,14 @@
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
 
-## After 0.3.2 (unreleased): distillation CLI arguments
+## To 0.4.0
+
+```bash
+git fetch --tags && git checkout v0.4.0
+./upgrade.sh
+```
+
+**License:** from 0.4.0 the server is under the Business Source License 1.1; the `amem` client and the plugins stay MIT. Check whether your use is within the free tiers in [COMMERCIAL.md](../COMMERCIAL.md). No data migration is needed.
 
 > [!WARNING]
 > **memory-core no longer starts when `AGENT_MEMORY_LLM_CLI_ARGS` (`llm.cli.args`) gives the distillation CLI more capability than its defaults.** Check your `.env` before you upgrade.
@@ -65,7 +72,7 @@ docker compose run --rm --no-deps -T memory-core check-config
 
    ```bash
    cd /path/to/agent-memory
-   git fetch --tags && git checkout v0.3.2
+   git fetch --tags && git checkout v0.4.0
    ./upgrade.sh
    ```
 
@@ -127,7 +134,7 @@ This part is for people running a server older than 0.1.1. It also applies when 
 
   ```bash
   cd /path/to/agent-memory        # the directory with .env
-  git fetch --tags && git checkout v0.3.2  # or: git pull
+  git fetch --tags && git checkout v0.4.0  # or: git pull
   ```
 
 ## A. Automatic: `upgrade.sh`

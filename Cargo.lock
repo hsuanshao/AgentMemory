@@ -1064,7 +1064,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memory-application"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "memory-client"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "regex",
  "reqwest",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "memory-domain"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "memory-gateway"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1118,7 +1118,7 @@ dependencies = [
 
 [[package]]
 name = "memory-infrastructure"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "memory-server"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",

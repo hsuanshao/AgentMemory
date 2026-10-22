@@ -6,6 +6,8 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-22
+
 ### Added
 - memory-core turns off the built-in tools of `claude` and `codex` before they distil, with `llm.cli.hardening` (`AGENT_MEMORY_LLM_CLI_HARDENING`, default `auto`); every CLI is told in the prompt that it has no tools (#37).
 - A tool call from a self-hosted OpenAI-compatible model (`tool_calls`, `function_call` or tool-call markup, with no answer) fails with the new code `LLM_TOOL_REQUEST` and is dropped without retries, like a refused CLI tool call; an answer next to one is used without the markup (#37).
@@ -14,7 +16,7 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ### Changed
 - **License: from 0.4.0 the server is licensed under the Business Source License 1.1** instead of MIT. Free for evaluation, personal and non-profit use, and for an organization with up to 1 department and 10 members; larger production use needs a commercial license. Each version becomes Apache 2.0 four years after release. The `amem` client (`crates/memory-client/`) and the plugins (`clients/`) stay MIT, and 0.3.2 and earlier remain MIT. See [COMMERCIAL.md](COMMERCIAL.md).
-- **memory-core refuses to start when `llm.cli.args` give the distillation CLI more than its defaults, e.g. `--dangerously-skip-permissions`, `--allowedTools` or a writable codex sandbox. The error names the argument (#37).** This includes codex `--search`, `--profile` and `-c` settings that add MCP servers, web search, features or a writable sandbox. Check `AGENT_MEMORY_LLM_CLI_ARGS` before upgrading ([UPGRADE](docs/UPGRADE.md#after-032-unreleased-distillation-cli-arguments)).
+- **memory-core refuses to start when `llm.cli.args` give the distillation CLI more than its defaults, e.g. `--dangerously-skip-permissions`, `--allowedTools` or a writable codex sandbox. The error names the argument (#37).** This includes codex `--search`, `--profile` and `-c` settings that add MCP servers, web search, features or a writable sandbox. Check `AGENT_MEMORY_LLM_CLI_ARGS` before upgrading ([UPGRADE](docs/UPGRADE.md#to-040)).
 - L1 extraction sees the session's 10 newest episodic memories (up to 3,000 characters). A memory that makes one of them out of date names it in `supersedes`, and that memory is revised in place instead of staying next to the news (#43).
 - L2 writes scene summaries and bodies as the current state rather than a log of the batch's changes, and drops settled open questions (#43).
 - A refused CLI tool call is now reported as `LLM_TOOL_REQUEST` instead of `LLM_UNAVAILABLE`; dead letters written before still count as not retryable.
@@ -89,7 +91,8 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 First public release: memory-core, the L0→L3 distillation pipeline, hybrid recall, the metadata plane, the Monitor Panel, `amem` with plugins for Claude Code, Codex, Antigravity and Hermes, and `install.sh`. Clients authenticate with per-user keys.
 
-[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.0
 [0.3.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.2
 [0.3.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.1
 [0.3.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.0
