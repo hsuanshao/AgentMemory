@@ -1,3 +1,4 @@
+import { getConnInfo } from "@hono/node-server/conninfo";
 import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { UserKeyVerifier } from "../../auth/user-key-verifier.js";
@@ -32,25 +33,43 @@ export function coreProxyRoutes(deps: CoreProxyDeps): Hono<AppEnv> {
     if (body === INVALID_JSON) return c.json(errorEnvelope(400, PanelErrors.BAD_REQUEST, requestId), 400);
 
     const userKey = c.req.header("x-memory-user-key")?.trim() || undefined;
-    const denied = await checkUserKey(deps.verifier, path, userKey, requestId);
+    const call = { requestId, forwardedFor: forwardedFor(c) };
+    const denied = await checkUserKey(deps.verifier, path, userKey, call);
     if (denied) return c.json(errorEnvelope(denied.status, denied.message, requestId), denied.status);
 
-    const response = await deps.core.callV3(path, body, { requestId, userKey });
+    const response = await deps.core.callV3(path, body, { ...call, userKey });
     return relay(c, response);
   });
 
   return app;
 }
 
+/**
+ * The chain Core sees: the `X-Forwarded-For` this request arrived with (a
+ * TLS proxy in front of the Panel) and the address that connected here.
+ * A browser can write the header too; Core reads the chain from the right
+ * and stops at the first address it does not trust, so that is harmless.
+ */
+function forwardedFor(c: Context<AppEnv>): string | undefined {
+  let peer: string | undefined;
+  try {
+    peer = getConnInfo(c).remote.address;
+  } catch {
+    peer = undefined; // no socket (tests calling `app.request`)
+  }
+  const chain = [c.req.header("x-forwarded-for")?.trim(), peer].filter((p): p is string => Boolean(p));
+  return chain.length > 0 ? chain.join(", ") : undefined;
+}
+
 async function checkUserKey(
   verifier: UserKeyVerifier | undefined,
   path: string,
   userKey: string | undefined,
-  requestId: string,
+  call: { requestId: string; forwardedFor?: string },
 ): Promise<{ status: 401 | 403; message: string } | undefined> {
   if (!verifier || PUBLIC_V3_PATHS.has(path)) return undefined;
   if (!userKey) return { status: 401, message: PanelErrors.MISSING_USER_KEY };
-  const user = await verifier.verify(userKey, requestId);
+  const user = await verifier.verify(userKey, call);
   if (!user) return { status: 401, message: PanelErrors.UNAUTHORIZED };
   if (ADMIN_ONLY_V3_PATHS.has(path) && user.user_type !== "system_admin") {
     return { status: 403, message: PanelErrors.ADMIN_ONLY };

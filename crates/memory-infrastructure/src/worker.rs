@@ -4,6 +4,7 @@
 //! (in-process here, Redis for multi-node) and per-job exclusivity is a
 //! [`KeyLock`] (local or distributed).
 
+use memory_application::audit::CredentialGuard;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -642,6 +643,21 @@ pub fn spawn_embedding_backfill(
                 ),
                 Ok(_) => {}
                 Err(err) => warn!(error = %err, "embedding backfill failed"),
+            }
+        }
+    })
+}
+
+/// Hourly, drops audit events past their retention period.
+pub fn spawn_audit_pruner(guard: Arc<CredentialGuard>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+        loop {
+            ticker.tick().await;
+            match guard.prune().await {
+                Ok(0) => {}
+                Ok(n) => info!(removed = n, "audit log pruned"),
+                Err(err) => warn!(error = %err, "audit log pruning failed"),
             }
         }
     })

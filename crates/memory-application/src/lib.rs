@@ -1,6 +1,7 @@
 //! Application rules: use cases orchestrating the domain through ports.
 
 pub mod admin;
+pub mod audit;
 pub mod common;
 pub mod memory;
 pub mod meta;

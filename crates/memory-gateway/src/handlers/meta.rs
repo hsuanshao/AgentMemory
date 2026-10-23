@@ -2,6 +2,7 @@
 
 use axum::extract::{Path, State};
 use axum::response::Response;
+use axum::Extension;
 use memory_application::meta::{
     AddMemberInput, AppendParticipationInput, BindingInput, Caller, CreateAgentInput,
     CreateAssetInput, CreateKeyInput, CreateTaskInput, CreateTeamInput, CreateUserInput,
@@ -9,6 +10,7 @@ use memory_application::meta::{
     ListTasksInput, ListUsersInput, Pagination, UpdateAgentInput, UpdateAssetInput, UpdateKeyInput,
     UpdateTaskInput, UpdateTeamInput, VerifyResult,
 };
+use memory_application::ports::audit::AuditKind;
 use memory_application::ports::meta::UserFilter;
 use memory_application::redaction::{
     CreateRedactionRuleInput, TestRedactionInput, UpdateRedactionRuleInput,
@@ -21,6 +23,7 @@ use serde_json::{json, Value};
 
 use crate::context::{Ctx, JsonBody};
 use crate::envelope::{ok, ApiError};
+use crate::guard::{describe_user_key, CredentialRejected, Origin};
 use crate::handlers::department_exists;
 use crate::state::SharedState;
 
@@ -105,23 +108,27 @@ pub async fn dispatch(
     if (resource.as_str(), action.as_str()) == ("auth", "verify") {
         let key = required(&ctx, &body, "user_key")?;
         // Same answer as a wrong key: callers cannot probe department names.
-        if !department_exists(&s, &ctx, &department).await? {
-            return Ok(ok(
-                &ctx.request_id,
-                VerifyResult {
-                    valid: false,
-                    user: None,
-                },
-            ));
-        }
-        return Ok(ok(
-            &ctx.request_id,
+        let result = if department_exists(&s, &ctx, &department).await? {
             s.services
                 .meta
                 .verify(&department, key)
                 .await
-                .map_err(|e| ctx.err(e))?,
-        ));
+                .map_err(|e| ctx.err(e))?
+        } else {
+            VerifyResult {
+                valid: false,
+                user: None,
+            }
+        };
+        let valid = result.valid;
+        let mut resp = ok(&ctx.request_id, result);
+        if !valid {
+            // Counted like any refused key (`guard`).
+            resp.extensions_mut().insert(CredentialRejected {
+                credential: Some(describe_user_key(key)),
+            });
+        }
+        return Ok(resp);
     }
     let who = caller(&s, &ctx, &department).await?;
     let meta = &s.services.meta;
@@ -523,6 +530,7 @@ pub async fn config_user(
 
 pub async fn internal_init_admin(
     State(s): State<SharedState>,
+    origin: Option<Extension<Origin>>,
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
@@ -544,6 +552,14 @@ pub async fn internal_init_admin(
         )
         .await
         .map_err(|e| ctx.err(e))?;
+    record_key_issued(
+        &s,
+        origin,
+        &ctx,
+        "/v3/internal/meta/user/init-admin",
+        "first administrator",
+    )
+    .await;
     Ok(ok(&ctx.request_id, result))
 }
 
@@ -595,6 +611,7 @@ pub async fn internal_migrate_default_scope(
 /// ensures team and agent, moves the legacy data, optionally issues a key.
 pub async fn internal_upgrade(
     State(s): State<SharedState>,
+    origin: Option<Extension<Origin>>,
     ctx: Ctx,
     JsonBody(body): JsonBody,
 ) -> ApiResult {
@@ -605,5 +622,25 @@ pub async fn internal_upgrade(
         .run(&department, ctx.parse(&body)?)
         .await
         .map_err(|e| ctx.err(e))?;
+    if report.user_key.is_some() {
+        let detail = format!("key for {} (internal/upgrade)", report.username);
+        record_key_issued(&s, origin, &ctx, "/v3/internal/upgrade", &detail).await;
+    }
     Ok(ok(&ctx.request_id, report))
+}
+
+/// Keys minted with the server API key are recorded in the audit log.
+async fn record_key_issued(
+    s: &SharedState,
+    origin: Option<Extension<Origin>>,
+    ctx: &Ctx,
+    path: &str,
+    detail: &str,
+) {
+    let origin = origin.map(|Extension(o)| o).unwrap_or_default();
+    let attempt = origin.attempt(ctx, path, Some("server API key".into()));
+    s.services
+        .guard
+        .record(AuditKind::KeyIssued, &attempt, Some(detail.to_owned()))
+        .await;
 }

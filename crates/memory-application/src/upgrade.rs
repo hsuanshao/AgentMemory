@@ -4,6 +4,10 @@
 //! exist, move the legacy `default` buckets there and, on request, issue a
 //! fresh user key for the clients. Safe to repeat: names are looked up
 //! before anything is created and an empty legacy bucket is a no-op.
+//!
+//! A key is issued only along with legacy data to move, unless key
+//! recovery is allowed (`AGENT_MEMORY_ALLOW_KEY_RECOVERY`): otherwise the
+//! server API key alone would mint a system admin's key for any department.
 
 use std::sync::Arc;
 
@@ -29,7 +33,8 @@ pub struct UpgradeInput {
     /// Agent that receives the legacy data; defaults to the agent the
     /// first-run bootstrap creates (`default-agent-<admin>`).
     pub agent_name: Option<String>,
-    /// Also issue a new user key for the admin, returned once.
+    /// Also issue a new user key for the admin, returned once. Refused when
+    /// there is no legacy data to move and key recovery is off.
     #[serde(default)]
     pub issue_key: bool,
     /// Report the plan without creating or moving anything.
@@ -60,11 +65,20 @@ pub struct UpgradeReport {
 pub struct LegacyUpgrade {
     meta: Arc<MetaService>,
     migration: Arc<LegacyScopeMigration>,
+    allow_key_recovery: bool,
 }
 
 impl LegacyUpgrade {
-    pub fn new(meta: Arc<MetaService>, migration: Arc<LegacyScopeMigration>) -> Self {
-        Self { meta, migration }
+    pub fn new(
+        meta: Arc<MetaService>,
+        migration: Arc<LegacyScopeMigration>,
+        allow_key_recovery: bool,
+    ) -> Self {
+        Self {
+            meta,
+            migration,
+            allow_key_recovery,
+        }
     }
 
     pub async fn run(
@@ -72,6 +86,16 @@ impl LegacyUpgrade {
         department: &DepartmentId,
         input: UpgradeInput,
     ) -> DomainResult<UpgradeReport> {
+        if input.issue_key
+            && !input.dry_run
+            && !self.allow_key_recovery
+            && self.migration.pending(department).await?.is_empty()
+        {
+            return Err(DomainError::permission_denied(
+                "issue_key: there is no legacy data to move; to recover a lost administrator \
+                 key, set AGENT_MEMORY_ALLOW_KEY_RECOVERY=true for one restart",
+            ));
+        }
         let (admin, username) = self
             .admin(department, input.admin_username.as_deref())
             .await?;

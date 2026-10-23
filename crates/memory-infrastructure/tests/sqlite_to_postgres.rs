@@ -150,6 +150,7 @@ async fn seed(pool: &Arc<DepartmentPool>, department: &DepartmentId) {
         key_id: "key-1".into(),
         user_id: "usr-1".into(),
         key_value: format!("sk-mem-{}", "x".repeat(32)),
+        key_hint: None,
         name: None,
         status: KeyStatus::Active,
         is_default: true,

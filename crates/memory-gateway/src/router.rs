@@ -12,7 +12,8 @@ use tower_http::trace::TraceLayer;
 use crate::authz;
 use crate::context::{Ctx, DEPARTMENT_ID, USER_KEY};
 use crate::envelope::ApiError;
-use crate::handlers::{department_exists, memory, meta, ops, skill};
+use crate::guard;
+use crate::handlers::{audit, department_exists, memory, meta, ops, skill};
 use crate::state::SharedState;
 use memory_application::meta::{invalid_user_key, Caller};
 use memory_domain::error::DomainError;
@@ -63,8 +64,8 @@ async fn known_department(
     path: &str,
     unknown: fn(&Ctx) -> ApiError,
 ) -> Result<(), ApiError> {
-    // Names its department in the body and needs no header.
-    if path == "/v3/department/destroy" {
+    // Name their department in the body and need no header.
+    if matches!(path, "/v3/department/destroy" | "/v3/internal/audit/list") {
         return Ok(());
     }
     let department = ctx.department()?;
@@ -285,6 +286,7 @@ fn system_admin_routes() -> Router<SharedState> {
         .route("/knowledge/delete", post(ops::knowledge_delete))
         .route("/knowledge/list", post(ops::knowledge_list))
         .route("/chat-memory/clear", post(ops::chat_memory_clear))
+        .route("/audit/list", post(audit::department_list))
 }
 
 /// The server operator's: bootstrap, upgrades, destruction and the
@@ -322,6 +324,7 @@ fn operator_routes() -> Router<SharedState> {
             "/internal/memory-generation-log/summary",
             post(ops::generation_log_summary),
         )
+        .route("/internal/audit/list", post(audit::operator_list))
 }
 
 /// Three trust zones, none of which lets one department reach another:
@@ -379,7 +382,13 @@ pub fn build_router(state: SharedState) -> Router {
 
     let mut app = Router::new()
         .route("/health", get(ops::health))
-        .nest("/v3", v3)
+        .nest(
+            "/v3",
+            v3.layer(middleware::from_fn_with_state(
+                state.clone(),
+                guard::guard_credentials,
+            )),
+        )
         .fallback(not_found)
         .layer(TraceLayer::new_for_http());
     if let Some(cors) = cors(&state.settings.cors_origins) {

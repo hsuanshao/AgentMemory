@@ -217,6 +217,9 @@ async fn start_with(configure: impl FnOnce(&mut Config)) -> (tempfile::TempDir, 
     let mut config = Config::default();
     config.data.base_dir = data.path().to_string_lossy().into_owned();
     config.server.api_key = Some("test-key".into());
+    // Tests refuse credentials on purpose; only the throttling test throttles.
+    config.server.throttle.delay_after = 10_000;
+    config.server.throttle.lock_after = 10_000;
     configure(&mut config);
     config.memory.pipeline.l2_delay_after_l1_seconds = 0;
     config.memory.pipeline.l2_min_interval_seconds = 0;
@@ -2561,6 +2564,9 @@ async fn a_job_failing_after_its_department_was_destroyed_is_dropped() {
     let mut config = Config::default();
     config.data.base_dir = data_b.path().to_string_lossy().into_owned();
     config.server.api_key = Some("test-key".into());
+    // Tests refuse credentials on purpose; only the throttling test throttles.
+    config.server.throttle.delay_after = 10_000;
+    config.server.throttle.lock_after = 10_000;
     configure(&mut config);
     config.worker.scan_interval_ms = 50;
     let app = wiring::build(&config).await.unwrap();
@@ -3330,4 +3336,135 @@ async fn a_later_turn_supersedes_an_out_of_date_atom_of_the_session() {
     // An id the model was not shown is ignored: that memory is stored as new.
     assert!(atoms.iter().any(|a| a["id"] != in_progress.as_str()
         && a["content"] == "The team adopted kebab-case file names"));
+}
+
+/// Refused credentials are counted per client address: from a trusted proxy
+/// the address is the one it forwards. `auth/verify` counts too; the last
+/// allowed failure locks the address out (429), not its neighbours. Every
+/// refusal is in the audit log: a department's own events for its system
+/// admins, every event for the operator. A key is issued by
+/// `internal/upgrade` only with legacy data to move.
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_credentials_are_throttled_and_audited() {
+    let base_url = spawn_fake_llm().await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.server.throttle.lock_after = 4;
+        config.server.trusted_proxies = vec!["127.0.0.1".into()];
+    })
+    .await;
+    let send = |path: &str, key: Option<&str>, forwarded: Option<&str>, body: Value| {
+        let mut req = client
+            .http
+            .post(format!("{}{path}", client.base))
+            .header("x-memory-department-id", &client.department);
+        if let Some(key) = key {
+            req = req.header("x-memory-user-key", key);
+        }
+        if let Some(ip) = forwarded {
+            req = req.header("x-forwarded-for", ip);
+        }
+        req.json(&body).send()
+    };
+    let far = Some("203.0.113.9");
+    let wrong = "sk-mem-wrong-key-guess-0000000000000000";
+
+    // No legacy data: the server API key alone mints no admin key.
+    let issued = client
+        .http
+        .post(format!("{}/v3/internal/upgrade", client.base))
+        .bearer_auth("test-key")
+        .header("x-memory-department-id", &client.department)
+        .json(&json!({"issue_key": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(issued.status(), 403);
+
+    // A member is refused the audit log (403 is not a failed credential).
+    let member = send("/v3/audit/list", Some(&client.member_key), None, json!({}));
+    assert_eq!(member.await.unwrap().status(), 403);
+
+    for _ in 0..2 {
+        let r = send("/v3/stats/overview", Some(wrong), far, json!({}));
+        assert_eq!(r.await.unwrap().status(), 401);
+    }
+    let verify = send(
+        "/v3/meta/auth/verify",
+        None,
+        far,
+        json!({"user_key": wrong}),
+    );
+    let verify: Value = verify.await.unwrap().json().await.unwrap();
+    assert_eq!(verify["data"]["valid"], false);
+    let fourth = send("/v3/recall", Some(wrong), far, json!({"query": "x"}));
+    assert_eq!(fourth.await.unwrap().status(), 401);
+
+    // Locked out, even with a good key; the proxy's other clients are not.
+    let locked = send(
+        "/v3/stats/overview",
+        Some(&client.admin_key),
+        far,
+        json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(locked.status(), 429);
+    assert!(locked.headers().contains_key("retry-after"));
+    let near = send(
+        "/v3/stats/overview",
+        Some(&client.admin_key),
+        None,
+        json!({}),
+    );
+    assert_eq!(near.await.unwrap().status(), 200);
+
+    let listed: Value = send("/v3/audit/list", Some(&client.admin_key), None, json!({}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = listed["data"]["items"].as_array().unwrap();
+    // Newest first; events of the same millisecond in any order.
+    let mut kinds: Vec<&str> = items.iter().map(|e| e["kind"].as_str().unwrap()).collect();
+    kinds.sort_unstable();
+    assert_eq!(
+        kinds,
+        [
+            "credential_rejected",
+            "credential_rejected",
+            "credential_rejected",
+            "credential_rejected",
+            "key_issued",
+            "source_locked"
+        ],
+        "{listed}"
+    );
+    assert_eq!(items.last().unwrap()["kind"], "key_issued", "init-admin");
+    let rejected = items
+        .iter()
+        .find(|e| e["path"] == "/v3/recall")
+        .expect("the fourth failure");
+    assert_eq!(rejected["source"], "203.0.113.9");
+    let credential = rejected["credential"].as_str().unwrap();
+    assert!(credential.starts_with("user key sha256:"), "{credential}");
+    assert!(!listed.to_string().contains(wrong), "never the key itself");
+
+    // The operator filters any department's events.
+    let operator = client
+        .http
+        .post(format!("{}/v3/internal/audit/list", client.base))
+        .bearer_auth("test-key")
+        .json(&json!({"department_id": client.department, "kind": "source_locked"}))
+        .send()
+        .await
+        .unwrap();
+    let operator: Value = operator.json().await.unwrap();
+    assert_eq!(
+        operator["data"]["items"].as_array().unwrap().len(),
+        1,
+        "{operator}"
+    );
 }

@@ -381,3 +381,71 @@ async fn postgres_from_0_4_1_gets_the_backfill_index() {
         .await
         .unwrap();
 }
+
+/// A 0.4.2 database (migrations 1–5, plaintext user keys) gets migration 6:
+/// each key becomes its digest with a hint, and a converted key is not
+/// converted again.
+#[tokio::test]
+async fn postgres_from_0_4_2_stores_key_digests() {
+    let Ok(url) = std::env::var("AGENT_MEMORY_TEST_POSTGRES_URL") else {
+        eprintln!("skipping: set AGENT_MEMORY_TEST_POSTGRES_URL");
+        return;
+    };
+    let name = format!("amem_m6_{}", uuid::Uuid::new_v4().simple());
+    let mut admin = PgConnection::connect(&url).await.unwrap();
+    admin
+        .execute(format!("CREATE DATABASE {name}").as_str())
+        .await
+        .unwrap();
+    let db_url = with_database(&url, &name);
+    let dept = department("keys");
+    let s = quote_ident(&schema_name(&dept));
+    let plain = "sk-mem-plain0001";
+    let rewind = format!(
+        "DELETE FROM agent_memory.schema_migrations WHERE version >= 6; \
+         UPDATE {s}.meta_user_keys SET key_value = '{plain}', doc = doc - 'key_hint' || jsonb_build_object('key_value', '{plain}') WHERE key_id = 'k-1'"
+    );
+    {
+        let db = PgDb::connect(&db_url, 2, Some(2)).await.unwrap();
+        db.create_department(&dept).await.unwrap();
+        db.conn()
+            .await
+            .unwrap()
+            .execute(
+                format!(
+                    "INSERT INTO {s}.meta_user_keys VALUES ('k-1', 'u-1', '{plain}', '', '{{\"key_id\":\"k-1\",\"user_id\":\"u-1\",\"key_value\":\"{plain}\"}}'); {rewind}"
+                )
+                .as_str(),
+            )
+            .await
+            .unwrap();
+        db.pool().close().await;
+    }
+    let expected = memory_domain::meta::digest_user_key(plain);
+    for round in 0..2 {
+        let db = PgDb::connect(&db_url, 2, Some(2)).await.unwrap();
+        db.schema(&dept).await.unwrap();
+        let mut c = db.conn().await.unwrap();
+        let (value, doc_value, hint): (String, String, String) = sqlx::query_as(&format!(
+            "SELECT key_value, doc->>'key_value', doc->>'key_hint' FROM {s}.meta_user_keys WHERE key_id = 'k-1'"
+        ))
+        .fetch_one(&mut *c)
+        .await
+        .unwrap();
+        assert_eq!(
+            (value.as_str(), doc_value.as_str(), hint.as_str()),
+            (expected.as_str(), expected.as_str(), "0001"),
+            "round {round}"
+        );
+        // Second round: forget migration 6 again; the digest must stay put.
+        c.execute("DELETE FROM agent_memory.schema_migrations WHERE version >= 6")
+            .await
+            .unwrap();
+        drop(c);
+        db.pool().close().await;
+    }
+    admin
+        .execute(format!("DROP DATABASE {name} WITH (FORCE)").as_str())
+        .await
+        .unwrap();
+}

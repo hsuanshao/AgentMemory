@@ -25,6 +25,8 @@ import type {
   PanelConfig,
   PipelineStatus,
   RecallResult,
+  AuditEvent,
+  AuditKind,
   RedactionRule,
   RedactionRuleListing,
   RedactionTestResult,
@@ -174,6 +176,9 @@ export function createCoreApi(client: PanelClient) {
         call<RedactionRule>(`meta/redaction-rule/${enabled ? "enable" : "disable"}`, { rule_id: ruleId }),
       testRedaction: (input: { text: string; kind?: string; pattern?: string }) =>
         call<RedactionTestResult>("meta/redaction-rule/test", input),
+
+      auditEvents: (input: { kind?: AuditKind; limit?: number; offset?: number } = {}) =>
+        call<{ items: AuditEvent[] }>("audit/list", input),
     },
   };
 }

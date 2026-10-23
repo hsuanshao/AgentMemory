@@ -6,6 +6,7 @@ use std::time::Instant;
 use memory_application::admin::{
     ChatMemoryService, DepartmentDirectory, DepartmentLifecycle, KnowledgeService, StatsService,
 };
+use memory_application::audit::CredentialGuard;
 use memory_application::memory::recall::RecallService;
 use memory_application::memory::service::MemoryService;
 use memory_application::memory::session::SessionService;
@@ -19,7 +20,7 @@ use memory_application::skill::extraction::SkillExtractionService;
 use memory_application::skill::service::SkillService;
 use memory_application::upgrade::LegacyUpgrade;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GatewaySettings {
     /// Bearer token required on ops, metadata and internal routes (None =
     /// open). The data plane is authorized by user key instead.
@@ -28,6 +29,8 @@ pub struct GatewaySettings {
     pub max_body_bytes: usize,
     pub max_session_body_bytes: usize,
     pub version: String,
+    /// Proxies whose `X-Forwarded-For` names the client.
+    pub trusted_proxies: crate::client::TrustedProxies,
 }
 
 /// Facts `/health` reports about dependencies.
@@ -61,6 +64,8 @@ pub struct Services {
     pub departments: Arc<dyn DepartmentDirectory>,
     pub migration: Arc<LegacyScopeMigration>,
     pub upgrade: Arc<LegacyUpgrade>,
+    /// Credential failures: throttling and the audit log.
+    pub guard: Arc<CredentialGuard>,
 }
 
 pub struct AppState {

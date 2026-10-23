@@ -1,6 +1,7 @@
 //! HTTP handlers: translate requests into use-case calls and results into
 //! envelopes. No business rules live here.
 
+pub mod audit;
 pub mod memory;
 pub mod meta;
 pub mod ops;

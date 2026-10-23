@@ -7,6 +7,7 @@ use anyhow::Result;
 use memory_application::admin::{
     ChatMemoryService, DepartmentLifecycle, KnowledgeService, StatsService,
 };
+use memory_application::audit::{CredentialGuard, ThrottlePolicy};
 use memory_application::memory::backfill::EmbeddingBackfill;
 use memory_application::memory::recall::{RecallService, RecallSettings};
 use memory_application::memory::search::AtomSearcher;
@@ -30,6 +31,7 @@ use memory_application::skill::service::{SkillService, SkillSettings};
 use memory_application::upgrade::LegacyUpgrade;
 use memory_domain::pipeline::PipelineSettings;
 use memory_domain::retrieval::SearchMode;
+use memory_gateway::client::TrustedProxies;
 use memory_gateway::{AppState, GatewaySettings, HealthFacts, Services};
 use memory_infrastructure::cli_llm::{harden, CliLlm, CliLlmSettings, Hardened, PromptMode};
 use memory_infrastructure::fs::LocalFileStore;
@@ -39,13 +41,13 @@ use memory_infrastructure::openai::{
 };
 use memory_infrastructure::system::{RandomIds, SystemClock};
 use memory_infrastructure::worker::{
-    spawn_dead_letter_sweeper, spawn_embedding_backfill, spawn_scanner, spawn_worker, WorkerQueue,
-    WorkerSettings,
+    spawn_audit_pruner, spawn_dead_letter_sweeper, spawn_embedding_backfill, spawn_scanner,
+    spawn_worker, WorkerQueue, WorkerSettings,
 };
 use tokio::task::JoinHandle;
 
 use crate::backends::{build_coordination, build_storage};
-use crate::config::{expand_home, Config};
+use crate::config::{expand_home, Config, ThrottleConfig};
 
 pub struct App {
     pub state: Arc<AppState>,
@@ -325,6 +327,15 @@ pub async fn build(config: &Config) -> Result<App> {
     let upgrade = Arc::new(LegacyUpgrade::new(
         Arc::clone(&meta),
         Arc::clone(&migration),
+        config.server.allow_key_recovery,
+    ));
+    let guard = Arc::new(CredentialGuard::new(
+        Arc::clone(&coordination.failures),
+        Arc::clone(&storage.audit),
+        Arc::clone(&clock),
+        Arc::clone(&ids),
+        throttle_policy(&config.server.throttle),
+        Duration::from_secs(u64::from(config.server.audit_retention_days.max(1)) * 86_400),
     ));
     let services = Services {
         recall: Arc::new(RecallService::new(
@@ -361,6 +372,7 @@ pub async fn build(config: &Config) -> Result<App> {
         departments: Arc::clone(&storage.departments),
         migration,
         upgrade,
+        guard: Arc::clone(&guard),
     };
 
     let w = &config.worker;
@@ -387,6 +399,7 @@ pub async fn build(config: &Config) -> Result<App> {
         ),
         spawn_dead_letter_sweeper(queue, pipeline.clone(), worker),
         spawn_scanner(pipeline, worker.scan_interval),
+        spawn_audit_pruner(guard),
     ];
     let e = &config.memory.embedding;
     if embedder.dimensions().is_some() && e.backfill_interval_secs > 0 {
@@ -416,10 +429,22 @@ pub async fn build(config: &Config) -> Result<App> {
             max_body_bytes: config.server.max_body_bytes,
             max_session_body_bytes: config.server.max_session_body_bytes,
             version: env!("CARGO_PKG_VERSION").into(),
+            trusted_proxies: TrustedProxies::parse(&config.server.trusted_proxies)
+                .map_err(anyhow::Error::msg)?,
         },
         started_at: Instant::now(),
     });
     Ok(App { state, background })
+}
+
+fn throttle_policy(t: &ThrottleConfig) -> ThrottlePolicy {
+    ThrottlePolicy {
+        window: Duration::from_secs(t.window_minutes.max(1) * 60),
+        delay_after: t.delay_after.max(1),
+        lock_after: t.lock_after.max(1),
+        lock_for: Duration::from_secs(t.lock_minutes.max(1) * 60),
+        ..ThrottlePolicy::default()
+    }
 }
 
 /// Forwards conversation events to an observer registered after

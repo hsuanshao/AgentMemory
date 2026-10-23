@@ -595,3 +595,32 @@ async fn dead_letters_are_capped_to_the_newest() {
     }
     assert_eq!(q.counts().await.unwrap(), (0, 10_000));
 }
+
+/// Failure counts are shared through Redis and expire by themselves.
+#[tokio::test]
+async fn failure_counts_and_locks_expire() {
+    use memory_application::ports::audit::FailureCounter;
+    use memory_infrastructure::redis::RedisFailureCounter;
+
+    let Some((url, keys)) = redis().await else {
+        return;
+    };
+    let a = RedisFailureCounter::new(conn(&url).await, &keys);
+    let b = RedisFailureCounter::new(conn(&url).await, &keys);
+    let window = Duration::from_millis(400);
+    assert_eq!(a.add("10.0.0.1", window).await.unwrap(), 1);
+    assert_eq!(
+        b.add("10.0.0.1", window).await.unwrap(),
+        2,
+        "another replica"
+    );
+    assert_eq!(b.state("10.0.0.1").await.unwrap().failures, 2);
+    a.lock("10.0.0.1", Duration::from_millis(400))
+        .await
+        .unwrap();
+    assert!(b.state("10.0.0.1").await.unwrap().locked_for.is_some());
+    assert_eq!(b.state("10.0.0.2").await.unwrap().locked_for, None);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let after = b.state("10.0.0.1").await.unwrap();
+    assert_eq!((after.failures, after.locked_for), (0, None));
+}

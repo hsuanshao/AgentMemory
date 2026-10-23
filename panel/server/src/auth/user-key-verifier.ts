@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CoreClient } from "../core-client/port.js";
 
 export interface VerifiedUser {
@@ -20,7 +21,9 @@ export interface UserKeyVerifierOptions {
 /**
  * Verifies browser user keys against Core `meta/auth/verify`, caching the
  * verdict briefly so every proxied call does not cost an extra round trip.
- * Core transport errors propagate (they are not cached).
+ * The cache holds digests, not keys, and a revoked key stops working here
+ * within `ttlMs` (Core refuses it at once). Core transport errors propagate
+ * (they are not cached).
  */
 export class UserKeyVerifier {
   private readonly cache = new Map<string, CacheEntry>();
@@ -29,27 +32,28 @@ export class UserKeyVerifier {
   private readonly now: () => number;
 
   constructor(private readonly core: CoreClient, options: UserKeyVerifierOptions = {}) {
-    this.ttlMs = options.ttlMs ?? 60_000;
+    this.ttlMs = options.ttlMs ?? 10_000;
     this.maxEntries = options.maxEntries ?? 1_000;
     this.now = options.now ?? Date.now;
   }
 
-  async verify(userKey: string, requestId: string): Promise<VerifiedUser | null> {
-    const cached = this.cache.get(userKey);
+  async verify(userKey: string, call: { requestId: string; forwardedFor?: string }): Promise<VerifiedUser | null> {
+    const digest = createHash("sha256").update(userKey).digest("hex");
+    const cached = this.cache.get(digest);
     if (cached && cached.expiresAt > this.now()) return cached.user;
 
-    const response = await this.core.callV3("meta/auth/verify", { user_key: userKey }, { requestId });
+    const response = await this.core.callV3("meta/auth/verify", { user_key: userKey }, call);
     const user = extractUser(response.body);
-    this.remember(userKey, user);
+    this.remember(digest, user);
     return user;
   }
 
-  private remember(userKey: string, user: VerifiedUser | null): void {
+  private remember(digest: string, user: VerifiedUser | null): void {
     if (this.cache.size >= this.maxEntries) {
       const oldest = this.cache.keys().next().value;
       if (oldest !== undefined) this.cache.delete(oldest);
     }
-    this.cache.set(userKey, { user, expiresAt: this.now() + this.ttlMs });
+    this.cache.set(digest, { user, expiresAt: this.now() + this.ttlMs });
   }
 }
 

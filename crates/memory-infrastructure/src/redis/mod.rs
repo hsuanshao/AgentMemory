@@ -17,6 +17,8 @@
 //! | `{p}:queue:dedupe:{dedupe_key}`       | string | item id of a waiting first try |
 //! | `{p}:queue:dead`                      | list   | newest 10,000 dead letters     |
 //! | `{p}:lock:state:{key}` / `:job:{key}` | string | lock owner token (with PX TTL) |
+//! | `{p}:auth:failures:{source}`        | string | credential failures in window  |
+//! | `{p}:auth:locked:{source}`          | string | set while the source is locked |
 //! | `{p}:lock:migrate`                    | string | held while migrating           |
 //! | `{p}:schema_version`                  | string | version reached, see `migrate` |
 //!
@@ -27,6 +29,7 @@ mod lock;
 pub mod migrate;
 mod queue;
 mod state;
+mod throttle;
 
 use std::time::Duration;
 
@@ -37,6 +40,7 @@ use memory_domain::error::{DomainError, DomainResult};
 pub use lock::RedisKeyLock;
 pub use queue::RedisQueue;
 pub use state::RedisPipelineState;
+pub use throttle::RedisFailureCounter;
 
 /// Bounds start-up so a missing Redis fails the boot instead of hanging it.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);

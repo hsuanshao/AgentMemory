@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { UserKeyVerifier } from "../src/auth/user-key-verifier.js";
+import { FetchCoreClient } from "../src/core-client/fetch-core-client.js";
 import { buildApp, CORE, coreFetch, jsonResponse, ok, post } from "./helpers.js";
 
 describe("POST /api/core/*", () => {
@@ -166,5 +168,41 @@ describe("GET /api/core-health", () => {
     const fetchFn = coreFetch(() => Promise.reject(new TypeError("ECONNREFUSED")));
     const res = await buildApp(fetchFn).request("/api/core-health");
     expect(res.status).toBe(502);
+  });
+});
+
+describe("client address and verdict cache", () => {
+  it("passes the incoming X-Forwarded-For on to Core, also on verify", async () => {
+    const fetchFn = coreFetch(() => jsonResponse(ok({})));
+    const app = buildApp(fetchFn);
+    await app.request("/api/core/stats/overview", post("", {}, { "x-forwarded-for": "203.0.113.9" }));
+    const sent = fetchFn.mock.calls.map(([, init]) => new Headers(init?.headers).get("x-forwarded-for"));
+    expect(sent).toEqual(["203.0.113.9", "203.0.113.9"]);
+  });
+
+  it("keeps a verdict for ten seconds only", async () => {
+    let now = 0;
+    const core = new FetchCoreClient({
+      baseUrl: CORE,
+      departmentId: "dept-1",
+      timeoutMs: 1_000,
+      fetchFn: coreFetch(() => jsonResponse(ok({}))),
+    });
+    const verify = vi.spyOn(core, "callV3");
+    const verifier = new UserKeyVerifier(core, { now: () => now });
+    await verifier.verify("sk-mem-good", { requestId: "r" });
+    now = 9_999;
+    await verifier.verify("sk-mem-good", { requestId: "r" });
+    expect(verify).toHaveBeenCalledTimes(1);
+    now = 10_001;
+    await verifier.verify("sk-mem-good", { requestId: "r" });
+    expect(verify).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends a content security policy", async () => {
+    const res = await buildApp(coreFetch(() => jsonResponse(ok({})))).request("/api/core-health");
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
   });
 });

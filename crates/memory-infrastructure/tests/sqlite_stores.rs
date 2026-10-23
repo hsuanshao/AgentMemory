@@ -244,6 +244,7 @@ fn key(id: &str, user: &str, value: &str, default: bool, created: &str) -> UserK
         key_id: id.into(),
         user_id: user.into(),
         key_value: value.into(),
+        key_hint: None,
         name: None,
         status: KeyStatus::Active,
         is_default: default,

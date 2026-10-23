@@ -1,5 +1,6 @@
 //! SQLite adapters.
 
+pub mod audit_store;
 pub mod db;
 pub mod memory_store;
 pub mod meta_store;

@@ -105,7 +105,12 @@ pub struct User {
 pub struct UserKey {
     pub key_id: String,
     pub user_id: String,
+    /// `sha256:<hex>` of the key ([`digest_user_key`]); the key itself is
+    /// shown once, when it is created, and never stored.
     pub key_value: String,
+    /// The key's last four characters, for [`UserKey::masked`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_hint: Option<String>,
     pub name: Option<String>,
     pub status: KeyStatus,
     pub is_default: bool,
@@ -115,19 +120,28 @@ pub struct UserKey {
 }
 
 pub const USER_KEY_PREFIX: &str = "sk-mem-";
+/// What a stored key value starts with.
+pub const KEY_DIGEST_PREFIX: &str = "sha256:";
+
+/// The stored form of a user key: its SHA-256, so a copy of the database
+/// (or a backup) holds no usable key.
+pub fn digest_user_key(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(key.as_bytes());
+    let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{KEY_DIGEST_PREFIX}{hex}")
+}
+
+/// The last four characters of a key, kept to tell keys apart.
+pub fn key_hint(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    chars[chars.len().saturating_sub(4)..].iter().collect()
+}
 
 impl UserKey {
     /// `sk-mem-****abcd`: the only form ever shown after creation.
     pub fn masked(&self) -> String {
-        let tail: String = self
-            .key_value
-            .chars()
-            .rev()
-            .take(4)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+        let tail = self.key_hint.clone().unwrap_or_default();
         format!("{USER_KEY_PREFIX}****{tail}")
     }
 
@@ -273,4 +287,20 @@ pub struct AclEntry {
 /// `chat_memory-{team}-{agent}`: one chat-memory asset per agent.
 pub fn chat_memory_asset_id(team_id: &str, agent_id: &str) -> String {
     format!("chat_memory-{team_id}-{agent_id}")
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn keys_are_stored_as_digests_with_a_hint() {
+        let d = digest_user_key("sk-mem-abc");
+        assert!(d.starts_with(KEY_DIGEST_PREFIX));
+        assert_eq!(d.len(), KEY_DIGEST_PREFIX.len() + 64);
+        assert_eq!(d, digest_user_key("sk-mem-abc"));
+        assert_ne!(d, digest_user_key("sk-mem-abd"));
+        assert_eq!(key_hint("sk-mem-abcdef"), "cdef");
+        assert_eq!(key_hint("ab"), "ab");
+    }
 }

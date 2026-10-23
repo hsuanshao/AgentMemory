@@ -31,7 +31,9 @@ export class FetchCoreClient implements CoreClient {
 
   private baseHeaders(ctx: CoreCallContext): Headers {
     // No server API key: Core authorizes the user key of each call.
-    return new Headers({ accept: "application/json", "x-request-id": ctx.requestId });
+    const headers = new Headers({ accept: "application/json", "x-request-id": ctx.requestId });
+    if (ctx.forwardedFor) headers.set("x-forwarded-for", ctx.forwardedFor);
+    return headers;
   }
 
   private async send(path: string, init: RequestInit): Promise<CoreResponse> {
