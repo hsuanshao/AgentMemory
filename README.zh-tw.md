@@ -166,7 +166,7 @@ docs/ops/                    給維護者：測試、發版、儲存搬移的內
 | --- | --- | --- |
 | `AGENT_MEMORY_CONFIG` | 自動尋找 `memory-core.yaml` | 設定檔路徑 |
 | `AGENT_MEMORY_HOST` / `AGENT_MEMORY_PORT` | `127.0.0.1` / `8420` | 綁定位址；非 loopback 必須設定 API key |
-| `AGENT_MEMORY_API_KEY` | 未設定 | 伺服器 API key（Bearer），只用於營運者路由：`internal/*`（init-admin、升級）與 `department/destroy`。client、部門管理員和 Panel 都用 user key |
+| `AGENT_MEMORY_API_KEY` | 未設定 | 伺服器 API key（Bearer），只用於營運者路由：`internal/*`（init-admin、升級）與 `department/destroy`。client、部門管理員和 Panel 都用 user key。請當成 root 憑證保管（[ARCHITECTURE](docs/ARCHITECTURE.zh-tw.md#三個信任區)） |
 | `AGENT_MEMORY_STORAGE_BACKEND` / `AGENT_MEMORY_POSTGRES_URL` | `sqlite` / 未設定 | 儲存後端（見「儲存與協調後端」） |
 | `AGENT_MEMORY_COORDINATION_BACKEND` / `AGENT_MEMORY_REDIS_URL` | `local` / 未設定 | 協調後端 |
 | `AGENT_MEMORY_DATA_DIR` | `~/.agent-memory` | 資料目錄（每個部門一個 SQLite） |

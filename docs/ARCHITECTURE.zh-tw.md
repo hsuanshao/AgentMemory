@@ -140,7 +140,11 @@ flowchart LR
   O --> H
 ```
 
-因此遠端 client、部門管理員和 Panel 都不需要伺服器 API key。它只能開啟營運者路由：初始化（`init-admin`）、升級、`department/destroy`，以及 `memory-server generations`／`dead-letters` 看整個部門的檢視。user key 只在自己的部門有效，所以一個部門的管理員管不到另一個部門。User key 外洩時，影響範圍只有該使用者在其部門裡能做的事。
+因此遠端 client、部門管理員和 Panel 都不需要伺服器 API key。它只能開啟營運者路由：初始化（`init-admin`）、升級、`department/destroy`，以及 `memory-server generations`／`dead-letters` 看整個部門的檢視。user key 只在自己的部門有效，所以一個部門的管理員管不到另一個部門。
+
+**請把伺服器 API key 當成 root 憑證保管。** 持有它的人可以替新部門建立第一位管理員（`init-admin`）、替任何部門的系統管理員發一把新 key（`internal/upgrade` 加上 `issue_key`）、列出部門的使用者、讀取每個部門的 dead letter 與生成紀錄，以及刪除部門。它只該留在營運者手上，不要放進部門管理員執行的腳本；如果曾經交給別人，請更換。
+
+User key 外洩時，影響範圍只有該使用者在其部門裡能做的事。
 
 部門的儲存空間是在第一次使用時建立的，所以兩個信任區都會先確認部門是否存在（`DepartmentDirectory`：SQLite 檔，或 Postgres 的登記資料列），確認時不會建立它。在 Postgres 上每個請求都會查登記表，所以一台機器刪除部門後，其他機器立刻就會把它當成不存在。只有 `init-admin` 會建立部門，儲存層本身也不會開啟其他部門：不論是請求還是背景工作，用到不存在的部門都會得到 `unknown_department`，而不會建立它。worker 在每個 job 執行前也會確認（同時清掉這台機器過期的資訊），部門已不存在的 job 直接丟棄，不重試、不進 dead letter；部門被刪除後才失敗的 job 也一樣丟棄。`department/destroy` 會刪除該部門的 dead letter；在 SQLite 上，它會在持有 pool 鎖的期間一次完成「移出 pool」與「把目錄搬開」，中間沒有任何操作能重新開啟它。對不存在的部門，`auth/verify` 回 `valid: false`，資料面的回應和 user key 錯誤時相同，所以回應內容看不出部門是否存在。回應時間則看得出來：不存在的部門查完登記表就被拒絕，存在的部門配上錯誤的 key 還要再查一次 key。部門名稱不視為機密，所以接受這一點。
 

@@ -164,7 +164,7 @@ Config file keys (`server`, `data`, `llm`, `memory.pipeline`, `memory.recall`, `
 | --- | --- | --- |
 | `AGENT_MEMORY_CONFIG` | Auto-discover `memory-core.yaml` | Config file path |
 | `AGENT_MEMORY_HOST` / `AGENT_MEMORY_PORT` | `127.0.0.1` / `8420` | Bind address; an API key is required for non-loopback addresses |
-| `AGENT_MEMORY_API_KEY` | Unset | Server API key (Bearer) for the operator routes only: `internal/*` (init-admin, upgrades) and `department/destroy`. Clients, department admins and the Panel use user keys |
+| `AGENT_MEMORY_API_KEY` | Unset | Server API key (Bearer) for the operator routes only: `internal/*` (init-admin, upgrades) and `department/destroy`. Clients, department admins and the Panel use user keys. Treat it as a root credential ([ARCHITECTURE](docs/ARCHITECTURE.md#three-trust-zones)) |
 | `AGENT_MEMORY_STORAGE_BACKEND` / `AGENT_MEMORY_POSTGRES_URL` | `sqlite` / unset | Storage backend (see "Storage and Coordination Backends") |
 | `AGENT_MEMORY_COORDINATION_BACKEND` / `AGENT_MEMORY_REDIS_URL` | `local` / unset | Coordination backend |
 | `AGENT_MEMORY_DATA_DIR` | `~/.agent-memory` | Data directory (one SQLite per department) |

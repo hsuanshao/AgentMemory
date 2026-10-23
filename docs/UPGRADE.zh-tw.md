@@ -43,7 +43,7 @@
 2. **Panel 另外單獨執行**（`docker run`、`npm start`）。從它的環境移除 `CORE_API_KEY`。`PANEL_REQUIRE_USER_KEY=false` 不再能匿名存取：沒有 user key 的呼叫會被 Core 拒絕。
 3. **自己的腳本或監控**只帶伺服器 API key 呼叫上述路由的，改送系統管理員的 `x-memory-user-key`；替自動化另外建一個使用者（Panel → Metadata → Users），可以和個人的 key 分開。要看整個部門的 dead letter 與生成紀錄，請用伺服器 API key 呼叫上面的 `internal/…` 路由，或用 `memory-server dead-letters`／`memory-server generations`。
 4. **`memory-server generations`／`dead-letters`。** 不用做任何事：它們改呼叫 `internal/…` 路由。請在升級後的 image 裡執行；舊版 memory-core 沒有這些路由。
-5. **曾經拿到伺服器 API key 來管理部門的管理員**現在不需要它了。升級後請更換 `.env` 裡的 `AGENT_MEMORY_API_KEY` 並重新啟動（`docker compose up -d`），讓只有營運者持有它。`upgrade.sh` 與 `install.sh` 都從 `.env` 讀取它。
+5. **曾經拿到伺服器 API key 來管理部門的管理員**現在不需要它了，也不該再保留：它是 root 憑證。持有它的人可以替新部門建立第一位管理員（`init-admin`）、替任何部門的系統管理員發一把新 key（`internal/upgrade` 加上 `issue_key`）、列出部門的使用者、讀取每個部門的 dead letter 與生成紀錄，以及刪除部門。升級後請更換 `.env` 裡的 `AGENT_MEMORY_API_KEY` 並重新啟動（`docker compose up -d`），讓只有營運者持有它。`upgrade.sh` 與 `install.sh` 都從 `.env` 讀取它。
 
 升級前，先找出腳本裡的這類呼叫：
 
