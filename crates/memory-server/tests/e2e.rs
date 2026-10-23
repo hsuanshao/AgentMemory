@@ -3468,3 +3468,39 @@ async fn refused_credentials_are_throttled_and_audited() {
         "{operator}"
     );
 }
+
+/// A new department gets exactly one first administrator, however many
+/// `init-admin` calls arrive at once (they are serialised per department;
+/// the window this closes is too narrow to hit reliably from a test), and
+/// a chosen key must be as strong as a generated one.
+#[tokio::test(flavor = "multi_thread")]
+async fn init_admin_creates_one_administrator_with_a_strong_key() {
+    let (_data, client) = start().await;
+    let department = format!("{}-race", client.department);
+    let init = |username: String, key: Option<&'static str>| {
+        let mut body = json!({ "username": username });
+        if let Some(key) = key {
+            body["user_key"] = json!(key);
+        }
+        client
+            .http
+            .post(format!("{}/v3/internal/meta/user/init-admin", client.base))
+            .bearer_auth("test-key")
+            .header("x-memory-department-id", &department)
+            .json(&body)
+            .send()
+    };
+    let weak = init("weak".into(), Some("sk-mem-short")).await.unwrap();
+    assert_eq!(weak.status(), 400);
+
+    let mut calls = tokio::task::JoinSet::new();
+    for i in 0..8 {
+        calls.spawn(init(format!("admin{i}"), None));
+    }
+    let mut statuses = Vec::new();
+    while let Some(done) = calls.join_next().await {
+        statuses.push(done.unwrap().unwrap().status().as_u16());
+    }
+    assert_eq!(statuses.iter().filter(|s| **s == 200).count(), 1, "{statuses:?}");
+    assert!(statuses.iter().all(|s| matches!(s, 200 | 409)), "{statuses:?}");
+}

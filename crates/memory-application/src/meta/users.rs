@@ -320,6 +320,12 @@ impl MetaService {
         username: &str,
         user_key: Option<String>,
     ) -> DomainResult<BootstrapResult> {
+        // Two concurrent calls would otherwise both find no users and each
+        // create a system admin.
+        let _bootstrap = self
+            .locks
+            .lock(&format!("init-admin:{}", department.as_str()))
+            .await?;
         if self.store.count_users(department).await? > 0 {
             return Err(DomainError::conflict(
                 "already_initialized",

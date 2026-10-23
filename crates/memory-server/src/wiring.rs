@@ -263,6 +263,7 @@ pub async fn build(config: &Config) -> Result<App> {
             max_teams_per_department: config.metadata.max_teams_per_department,
             max_active_keys_per_user: config.metadata.max_active_keys_per_user,
         },
+        Arc::clone(&coordination.state_locks),
     ));
     let chat_memory = Arc::new(ChatMemoryService::new(
         Arc::clone(&conversations),

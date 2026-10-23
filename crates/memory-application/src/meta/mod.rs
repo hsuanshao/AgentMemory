@@ -12,6 +12,7 @@ mod teams;
 mod users;
 mod visibility;
 
+use crate::ports::coordination::KeyLock;
 use std::sync::{Arc, OnceLock};
 
 use chrono::SecondsFormat;
@@ -97,6 +98,8 @@ pub struct MetaService {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) ids: Arc<dyn IdGenerator>,
     pub(crate) settings: MetaSettings,
+    /// Serialises `init-admin` per department (across replicas with Redis).
+    pub(crate) locks: Arc<dyn KeyLock>,
     cleaner: OnceLock<Arc<dyn ChatMemoryCleaner>>,
 }
 
@@ -106,12 +109,14 @@ impl MetaService {
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
         settings: MetaSettings,
+        locks: Arc<dyn KeyLock>,
     ) -> Self {
         Self {
             store,
             clock,
             ids,
             settings,
+            locks,
             cleaner: OnceLock::new(),
         }
     }
