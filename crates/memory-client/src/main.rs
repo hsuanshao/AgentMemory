@@ -121,13 +121,22 @@ fn status() -> Result<(), String> {
     Ok(())
 }
 
+/// `recall [--json] [--] QUERY…`: after `--` every word is the query, so a
+/// query that starts with `-` (or is `--json`) is never read as an option.
 fn recall(args: &[String]) -> Result<(), String> {
-    let json = args.iter().any(|a| a == "--json");
-    let query: Vec<&str> = args
-        .iter()
-        .filter(|a| *a != "--json")
-        .map(String::as_str)
-        .collect();
+    let (json, query): (bool, Vec<&str>) = match args.iter().position(|a| a == "--") {
+        Some(i) => (
+            args[..i].iter().any(|a| a == "--json"),
+            args[i + 1..].iter().map(String::as_str).collect(),
+        ),
+        None => (
+            args.iter().any(|a| a == "--json"),
+            args.iter()
+                .filter(|a| *a != "--json")
+                .map(String::as_str)
+                .collect(),
+        ),
+    };
     let api = Api::new(Config::load()?, Duration::from_secs(15))?;
     let data = api
         .recall(&query.join(" "), None)
