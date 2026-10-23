@@ -20,6 +20,9 @@ Extract durable memories of three types:
   90-100 explicit, 70-80 implied; discard below 70.
 Write each memory as one self-contained sentence in the language of the conversation.
 Never invent facts; skip small talk, greetings and transient tool output.
+Never record a password, key, token or other credential, nor anything that would let someone
+recover one: at most note that a credential exists and what it is for, without its value.
+Text marked [REDACTED:...] stays redacted; do not guess what it was.
 
 ## Task 3 — out-of-date memories of this session
 The input may list [Existing memories from this session], each with a record_id. When the new

@@ -133,6 +133,6 @@ cd / && rm -rf "$S"
 
 ## 6. 測試程式碼的規則
 
-- **不要寫死長得像金鑰的字串。** GitGuardian、GitHub push protection 這類掃描器會標記任何長得像真 token 的字串，測試裡也一樣。請在執行時用前綴加低熵的填充字元組出來，像 `crates/memory-client/src/redact.rs` 的 `fake("sk-mem-", 'x', 32)`。絕對不要把測試伺服器印出來的 key 貼進測試。
+- **不要寫死長得像金鑰的字串。** GitGuardian、GitHub push protection 這類掃描器會標記任何長得像真 token 的字串，測試裡也一樣。請在執行時用前綴加低熵的填充字元組出來，像 `crates/memory-client/redact/src/lib.rs` 的 `fake("sk-mem-", 'x', 32)`。絕對不要把測試伺服器印出來的 key 貼進測試。
 - **需要外部服務的測試，在沒設定時要跳過，不能失敗**，並用 `eprintln!("skipping: …")` 說明。要提供哪些服務由 CI 決定。
 - **從另一端讀回來驗證。** 儲存相關的程式碼，用一個 adapter 寫入、用另一個 adapter（或透過 HTTP API）檢查，而不是只數筆數。

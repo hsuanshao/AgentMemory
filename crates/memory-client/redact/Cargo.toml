@@ -1,0 +1,12 @@
+[package]
+name = "memory-redact"
+description = "Secret redaction shared by the amem client and memory-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+
+# Under crates/memory-client/, so MIT like the client: memory-core depends on
+# it too, and a BSL crate may use MIT code but not the other way round.
+[dependencies]
+regex.workspace = true

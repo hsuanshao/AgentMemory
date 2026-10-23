@@ -158,6 +158,8 @@ pub async fn build(config: &Config) -> Result<App> {
 
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let ids: Arc<dyn IdGenerator> = Arc::new(RandomIds);
+    // Every write path redacts with the same rules (#57).
+    let redactor = Arc::new(config.redaction.redactor()?);
     let llm = llm(config);
     let embedder = embedder(config);
 
@@ -175,6 +177,7 @@ pub async fn build(config: &Config) -> Result<App> {
     // a forwarding observer breaks the cycle.
     let observer = Arc::new(LateObserver::default());
     let memory = Arc::new(MemoryService::new(
+        Arc::clone(&redactor),
         Arc::clone(&conversations),
         Arc::clone(&atoms),
         Arc::clone(&profiles),
@@ -196,6 +199,7 @@ pub async fn build(config: &Config) -> Result<App> {
     ));
     let settings = pipeline_settings(config);
     let l1 = L1Extractor::new(
+        Arc::clone(&redactor),
         Arc::clone(&llm),
         Arc::clone(&atoms),
         Arc::clone(&embedder),
@@ -257,6 +261,7 @@ pub async fn build(config: &Config) -> Result<App> {
     meta.register_chat_memory_cleaner(chat_memory.clone() as Arc<dyn ChatMemoryCleaner>);
 
     let skills = Arc::new(SkillService::new(
+        Arc::clone(&redactor),
         Arc::clone(&storage.skills),
         files.clone(),
         meta.clone(),
@@ -269,6 +274,7 @@ pub async fn build(config: &Config) -> Result<App> {
         },
     ));
     let skill_extraction = Arc::new(SkillExtractionService::new(
+        Arc::clone(&redactor),
         Arc::clone(&storage.skill_buffers),
         skills.clone(),
         pipeline.clone(),
@@ -307,7 +313,11 @@ pub async fn build(config: &Config) -> Result<App> {
             Arc::clone(&memory),
             recall_settings(config),
         )),
-        session: Arc::new(SessionService::new(files, Arc::clone(&ids))),
+        session: Arc::new(SessionService::new(
+            Arc::clone(&redactor),
+            files,
+            Arc::clone(&ids),
+        )),
         stats: Arc::new(StatsService::new(
             Arc::clone(&conversations),
             Arc::clone(&atoms),

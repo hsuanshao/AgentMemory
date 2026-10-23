@@ -12,6 +12,7 @@ memory-core distils conversations in the background: L1 extracts memories, L2 fo
 - [4. Changing the model](#4-changing-the-model)
 - [5. Dead letters and redrive](#5-dead-letters-and-redrive)
 - [6. Tools and distillation](#6-tools-and-distillation)
+- [7. Secrets and redaction](#7-secrets-and-redaction)
 
 ## 1. What is recorded
 
@@ -170,3 +171,49 @@ memory-core never sends `tools` in its request. A reply that is only a tool call
 - tool-call markup such as `<tool_call>…</tool_call>`.
 
 A reply that also contains an answer is used without the tool-call markup, so a model that adds a stray tool call is not dropped for it. An empty reply without a tool call is still retried as a transient failure.
+
+## 7. Secrets and redaction
+
+Distillation turns whatever it reads into lasting memories, so secrets are removed before anything is stored. Each match becomes `[REDACTED:<kind>]`.
+
+**Where.** The `amem` client redacts a turn before it is queued or sent. memory-core redacts again on every write path, so a client that calls the HTTP API directly is covered too:
+
+- conversations (`/v3/conversation/add`) and raw session turns (`/v3/session/add`). In a raw turn, a value under a secret field name (`password`, `pass`, `pin`, `otp`, `dbPassword`, `access_token`, `SECRET_KEY_BASE`, `credentials`, …) is replaced whole as `[REDACTED:secret-field]`, since the text rules cannot see the name;
+- the skill-extraction buffer (`/v3/skill/conversation/add`), skill content, and skill files that are UTF-8 text (`.sh`, `.env.example`, …);
+- atoms written through the API and atoms the L1 model writes (a model can spell out a secret its input did not contain);
+- scenes and the persona, from L2/L3 and from the API.
+
+The L1 and skill prompts also tell the model never to record a credential's value.
+
+**Rules** (`crates/memory-client/redact`, shared by `amem` and memory-core):
+
+| Kind | Catches |
+| --- | --- |
+| `private-key`, `jwt`, `openai-key`, `github-token`, … | Known token and key formats |
+| `secret-assignment` | `password=…`, `api_key: …`: an English key name containing the secret word (`DB_PASSWORD=`, `SECRET_KEY_BASE=`, `GITHUB_TOKEN_RO=`); a key that ends in a setting word (`count`, `limit`, `length`, `type`, …) or counts `tokens` is a setting, so `max_tokens=` and `token_count:` stay, while `RATE_LIMIT_TOKEN=` and `MAX_API_KEY=` are redacted |
+| `secret-phrase` | A password named in natural language, then its value. Words, with common abbreviations: English (`password`, `pw`, `pwd`, `pass`, `psw`, …), Chinese (`密碼`, `密码`, `口令`, `金鑰`, …), Japanese (`パスワード`, `パス`, …), Korean (`비밀번호`, `비번`, …), Vietnamese (`mật khẩu`, `mk`), Thai, Indonesian/Malay, Hindi, Arabic, Spanish, Portuguese, French, German, Turkish and Russian. After `:`, `=` or `：` any value is redacted; after an "is" word (`是`, `là`, `は`, `는`, `es`, …) or a space, only one that looks like a secret (a digit, a symbol, or mixed case). Words with an everyday meaning (`token`, `pass`, `mk`, `clave`, `パス`, `トークン`, `รหัส`, …) need `:`, `=` or an "is" word, so `token 4096` and `tests pass 100ms` stay |
+| `password-shape` | No word needed: 8+ ASCII characters with a letter, a digit and one of `!@#$%^&+=?~\|` inside. Left alone: URLs, paths, `x=1` settings, email addresses, query strings (`?page=2&sort=asc1`), code (identifiers or numbers joined by `&&`, `\|\|`, `!=`, `==`, such as `cmd1&&cmd2`) and a whole model reference (`4@qwen3-8b`, `Claude@Opus-5.5`). A model name inside a string is not enough: `Falcon#2024x` is redacted |
+
+**Settings.**
+
+```yaml
+redaction:
+  passwordShape: true          # AGENT_MEMORY_REDACTION_PASSWORD_SHAPE
+  patterns:                    # AGENT_MEMORY_REDACTION_PATTERNS (a JSON list)
+    - kind: tw-national-id
+      pattern: '\b[A-Z][12]\d{8}\b'
+    - kind: phone
+      pattern: '(?P<keep>\btel:\s*)\+?\d[\d -]{7,}\d'
+```
+
+- A `keep` group keeps that part of the match (here the `tel:` label).
+- memory-core refuses to start when a pattern does not compile, or when `AGENT_MEMORY_REDACTION_PATTERNS` is not a JSON list. `memory-server check-config` reports the same.
+- In `.env`, Docker Compose expands `$`. Write `$$` for a literal `$`, or put patterns in the config file.
+- Personal data such as ids and phone numbers is not redacted by default. Which formats matter depends on the country and the deployment, so add them here.
+- These settings apply to memory-core only. `amem` always uses the built-in rules, shape rule included, so turning `passwordShape` off or adding patterns does not change what the client redacts before sending.
+
+**Limits.**
+
+- Rules are heuristics: a safety net, not a guarantee.
+- Data stored before an upgrade is not rewritten.
+- Binary skill resource files (not UTF-8) are not scanned.

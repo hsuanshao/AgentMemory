@@ -19,6 +19,57 @@ pub struct Config {
     pub worker: WorkerConfig,
     pub storage: StorageConfig,
     pub coordination: CoordinationConfig,
+    pub redaction: RedactionConfig,
+}
+
+/// Secrets redacted before anything is stored or distilled (#57). The
+/// built-in rules always apply; these settings add to them.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RedactionConfig {
+    /// Also redact strings shaped like a password (8+ ASCII characters
+    /// mixing letters, digits and a password symbol). On by default.
+    pub password_shape: bool,
+    /// Extra patterns, e.g. national ids or phone numbers. A `keep` group
+    /// keeps that part of the match.
+    pub patterns: Vec<RedactionPattern>,
+    /// `AGENT_MEMORY_REDACTION_PATTERNS` that is not a JSON list of
+    /// patterns; reported by validation.
+    #[serde(skip)]
+    pub env_error: Option<String>,
+}
+
+impl Default for RedactionConfig {
+    fn default() -> Self {
+        Self {
+            password_shape: true,
+            patterns: Vec::new(),
+            env_error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedactionPattern {
+    pub kind: String,
+    pub pattern: String,
+}
+
+impl RedactionConfig {
+    /// The redactor these settings describe; fails on a pattern that does
+    /// not compile.
+    pub fn redactor(&self) -> Result<memory_redact::Redactor> {
+        if let Some(e) = &self.env_error {
+            bail!("AGENT_MEMORY_REDACTION_PATTERNS must be a JSON list of {{\"kind\", \"pattern\"}}: {e}");
+        }
+        let extra: Vec<(String, String)> = self
+            .patterns
+            .iter()
+            .map(|p| (p.kind.clone(), p.pattern.clone()))
+            .collect();
+        memory_redact::Redactor::new(&extra, self.password_shape)
+            .map_err(|e| anyhow::anyhow!("redaction.patterns: {e}"))
+    }
 }
 
 /// Where memory, metadata and skills are persisted.
@@ -592,6 +643,15 @@ impl Config {
         if let Some(d) = env("AGENT_MEMORY_EMBEDDING_DIMENSIONS").and_then(|d| d.parse().ok()) {
             e.dimensions = d;
         }
+        if let Some(on) = env("AGENT_MEMORY_REDACTION_PASSWORD_SHAPE") {
+            self.redaction.password_shape = matches!(on.as_str(), "1" | "true" | "on" | "yes");
+        }
+        if let Some(json) = env("AGENT_MEMORY_REDACTION_PATTERNS") {
+            match serde_json::from_str::<Vec<RedactionPattern>>(&json) {
+                Ok(patterns) => self.redaction.patterns = patterns,
+                Err(e) => self.redaction.env_error = Some(e.to_string()),
+            }
+        }
         if let Some(enabled) = env("AGENT_MEMORY_SKILL_ENABLED") {
             self.skill.enabled = matches!(enabled.as_str(), "1" | "true" | "on" | "yes");
         }
@@ -611,6 +671,7 @@ impl Config {
             );
         }
         self.validate_llm()?;
+        self.redaction.redactor()?;
         self.validate_backends()
     }
 
@@ -718,6 +779,32 @@ mod tests {
         assert_eq!(c.llm.provider, "openai");
         assert_eq!(c.llm.cli.prompt_mode, "stdin");
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn redaction_patterns_are_checked_at_startup() {
+        let yaml = "redaction:\n  passwordShape: false\n  patterns:\n    - kind: tw-national-id\n      pattern: '\\b[A-Z][12]\\d{8}\\b'\n";
+        let c: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(!c.redaction.password_shape);
+        let r = c.redaction.redactor().unwrap();
+        assert_eq!(r.redact("A123456789"), "[REDACTED:tw-national-id]");
+        assert!(c.validate().is_ok());
+
+        let mut bad = Config::default();
+        bad.redaction.patterns.push(RedactionPattern {
+            kind: "broken".into(),
+            pattern: "(".into(),
+        });
+        let err = bad.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("redaction.patterns") && err.contains("broken"),
+            "{err}"
+        );
+
+        let mut env = Config::default();
+        env.redaction.env_error = Some("expected value".into());
+        let err = env.validate().unwrap_err().to_string();
+        assert!(err.contains("AGENT_MEMORY_REDACTION_PATTERNS"), "{err}");
     }
 
     #[test]

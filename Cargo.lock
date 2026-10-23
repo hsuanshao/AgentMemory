@@ -1070,6 +1070,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "memory-domain",
+ "memory-redact",
  "serde",
  "serde_json",
  "sha2",
@@ -1083,7 +1084,7 @@ name = "memory-client"
 version = "0.4.1"
 dependencies = [
  "libc",
- "regex",
+ "memory-redact",
  "reqwest",
  "serde",
  "serde_json",
@@ -1145,6 +1146,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "memory-redact"
+version = "0.4.1"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "memory-server"
 version = "0.4.1"
 dependencies = [
@@ -1157,6 +1165,7 @@ dependencies = [
  "memory-domain",
  "memory-gateway",
  "memory-infrastructure",
+ "memory-redact",
  "reqwest",
  "serde",
  "serde_json",

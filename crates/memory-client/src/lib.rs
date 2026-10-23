@@ -8,5 +8,5 @@ pub mod config;
 pub mod hooks;
 pub mod mcp;
 pub mod queue;
-pub mod redact;
+pub use memory_redact as redact;
 pub mod transcript;

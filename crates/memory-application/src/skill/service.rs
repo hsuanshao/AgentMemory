@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use memory_redact::Redactor;
+
 use base64::Engine;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use memory_domain::scope::DepartmentId;
@@ -225,7 +227,13 @@ struct Resource {
     is_executable: bool,
 }
 
-fn decode_resources(inputs: Vec<ResourceInput>) -> DomainResult<Vec<Resource>> {
+/// Decodes uploaded files. A file that is UTF-8 text (`.sh`, `.env.example`,
+/// …), however it was encoded, is redacted like the skill itself; anything
+/// else is binary and stored as sent.
+fn decode_resources(
+    redactor: &Redactor,
+    inputs: Vec<ResourceInput>,
+) -> DomainResult<Vec<Resource>> {
     if inputs.len() > 100 {
         return Err(skill_error(
             ErrorKind::InvalidInput,
@@ -259,6 +267,10 @@ fn decode_resources(inputs: Vec<ResourceInput>) -> DomainResult<Vec<Resource>> {
                     format!("{} exceeds 5MB", r.path),
                 ));
             }
+            let bytes = match String::from_utf8(bytes) {
+                Ok(text) => redactor.redact(&text).into_bytes(),
+                Err(binary) => binary.into_bytes(),
+            };
             Ok(Resource {
                 mime_type: r.mime_type.unwrap_or_else(|| guess_mime(&r.path).into()),
                 path: r.path,
@@ -270,6 +282,7 @@ fn decode_resources(inputs: Vec<ResourceInput>) -> DomainResult<Vec<Resource>> {
 }
 
 pub struct SkillService {
+    redactor: Arc<Redactor>,
     repo: Arc<dyn SkillRepository>,
     resources: Arc<dyn SkillResourceStore>,
     meta: Arc<MetaService>,
@@ -280,6 +293,7 @@ pub struct SkillService {
 
 impl SkillService {
     pub fn new(
+        redactor: Arc<Redactor>,
         repo: Arc<dyn SkillRepository>,
         resources: Arc<dyn SkillResourceStore>,
         meta: Arc<MetaService>,
@@ -288,6 +302,7 @@ impl SkillService {
         settings: SkillSettings,
     ) -> Self {
         Self {
+            redactor,
             repo,
             resources,
             meta,
@@ -325,6 +340,7 @@ impl SkillService {
         metadata: Option<Value>,
     ) -> DomainResult<SkillSummary> {
         let (team, agent, user) = who.require_writer()?;
+        let content = &self.redactor.redact(content);
         let fm = parse_frontmatter(content)?;
         if fm.name != name {
             return Err(skill_error(
@@ -345,7 +361,7 @@ impl SkillService {
                 format!("skill name exists: {name}"),
             ));
         }
-        let resources = decode_resources(resources)?;
+        let resources = decode_resources(&self.redactor, resources)?;
         let skill_id = self.new_skill_id(department).await?;
         let now = self.now_ms();
         let mut manifest = Vec::new();
@@ -447,7 +463,10 @@ impl SkillService {
         writes: Vec<Resource>,
         removes: Vec<String>,
     ) -> DomainResult<SkillSummary> {
-        let content = content.unwrap_or_else(|| head.content.clone());
+        let content = match content {
+            Some(c) => self.redactor.redact(&c),
+            None => head.content.clone(),
+        };
         let fm = parse_frontmatter(&content)?;
         if fm.name != head.name {
             return Err(skill_error(
@@ -623,7 +642,7 @@ impl SkillService {
         let head = self
             .head_for_write(department, who, skill_id, expected)
             .await?;
-        let writes = decode_resources(files)?;
+        let writes = decode_resources(&self.redactor, files)?;
         self.append_next(department, who, head, None, writes, Vec::new())
             .await
     }
