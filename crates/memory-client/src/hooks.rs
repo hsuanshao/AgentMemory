@@ -136,6 +136,8 @@ impl CursorLock {
             Err(e) => {
                 // Better an unlocked write than a hook that fails.
                 log(&format!("cursor lock failed: {e}"));
+                #[cfg(test)]
+                tests::LOCK_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 Self(None)
             }
         }
@@ -160,31 +162,38 @@ impl CursorLock {
     /// or stuck, and the hook writes without the lock rather than hang.
     const WAIT: Duration = Duration::from_secs(1);
 
+    /// Waits in the kernel's queue with a blocking `flock` on a clone of
+    /// the descriptor, so waiters take turns. Polling with `LOCK_NB` let a
+    /// writer that releases and locks again in a loop starve the other one
+    /// past `WAIT`, which then wrote unlocked and lost updates. On timeout
+    /// the waiting thread is left behind: if it gets the lock later, its
+    /// clone is closed right away, and the lock goes with the last one.
     #[cfg(unix)]
     fn lock(file: &std::fs::File) -> std::io::Result<()> {
         use std::io::ErrorKind;
         use std::os::unix::io::AsRawFd;
-        let deadline = std::time::Instant::now() + Self::WAIT;
-        loop {
-            // SAFETY: flock on a descriptor this File owns; it is released
-            // when the File is closed.
-            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-                return Ok(());
-            }
-            let e = std::io::Error::last_os_error();
-            match e.kind() {
-                ErrorKind::Interrupted => {}
-                ErrorKind::WouldBlock if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(5));
+        let waiter = file.try_clone()?;
+        let (done, locked) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = loop {
+                // SAFETY: flock on a descriptor this thread owns; the lock
+                // belongs to the open file, shared with `file`.
+                if unsafe { libc::flock(waiter.as_raw_fd(), libc::LOCK_EX) } == 0 {
+                    break Ok(());
                 }
-                ErrorKind::WouldBlock => {
-                    return Err(std::io::Error::new(
-                        ErrorKind::TimedOut,
-                        format!("held by another process for {:?}", Self::WAIT),
-                    ));
+                let e = std::io::Error::last_os_error();
+                if e.kind() != ErrorKind::Interrupted {
+                    break Err(e);
                 }
-                _ => return Err(e),
-            }
+            };
+            let _ = done.send(result);
+        });
+        match locked.recv_timeout(Self::WAIT) {
+            Ok(result) => result,
+            Err(_) => Err(std::io::Error::new(
+                ErrorKind::TimedOut,
+                format!("held by another process for {:?}", Self::WAIT),
+            )),
         }
     }
 
@@ -562,6 +571,11 @@ pub fn codex_stop() {
 mod tests {
     use super::*;
 
+    /// Times a writer gave up on the lock, for failure messages. Global:
+    /// the held-lock test gives up once on purpose.
+    pub(super) static LOCK_FAILURES: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
     #[test]
     fn system_context_goes_once_until_it_changes() {
         let mut state = json!({});
@@ -710,8 +724,9 @@ mod tests {
             w.join().unwrap();
         }
         let after = Cursor::at(path);
-        assert_eq!(after.state["a"], 20);
-        assert_eq!(after.state["b"], 20);
+        let failures = LOCK_FAILURES.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(after.state["a"], 20, "lock failures: {failures}");
+        assert_eq!(after.state["b"], 20, "lock failures: {failures}");
     }
 
     #[test]
