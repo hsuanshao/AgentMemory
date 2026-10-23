@@ -320,9 +320,11 @@ async fn the_pipeline_runs_on_the_postgres_backend() {
         destroyed["data"]["cleaned"]["storage"]["postgres"]["removed"], true,
         "{destroyed}"
     );
-    // Gone for good: reading does not bring it back.
+    // Gone for good: reading does not bring it back (and its keys are gone).
     let stats = client.call("/v3/stats/overview", json!({})).await;
-    assert_eq!(stats["code"], 404, "{stats}");
+    assert_eq!(stats["code"], 401, "{stats}");
+    let id = memory_domain::scope::SegmentId::parse("department", &client.department).unwrap();
+    assert!(!client.state.services.departments.exists(&id).await.unwrap());
 }
 
 /// Scenes are append-only: rewrites, merges and removals add versions, and
@@ -1236,6 +1238,104 @@ async fn a_raw_session_turn_is_stored() {
     }
 }
 
+/// Department routes take a user of that department; the server API key
+/// alone opens only the operator routes. An admin of one department has no
+/// say in another.
+#[tokio::test(flavor = "multi_thread")]
+async fn departments_are_administered_by_their_own_users() {
+    let (_data, client) = start().await;
+    let post = |path: &str, department: &str, bearer: bool, key: Option<&str>| {
+        let mut req = client
+            .http
+            .post(format!("{}{path}", client.base))
+            .header("x-memory-department-id", department);
+        if bearer {
+            req = req.bearer_auth("test-key");
+        }
+        if let Some(key) = key {
+            req = req.header("x-memory-user-key", key);
+        }
+        req.json(&json!({})).send()
+    };
+    let status = |res: reqwest::Response| res.status().as_u16();
+    let a = client.department.as_str();
+    let department_routes = [
+        "/v3/pipeline/status",
+        "/v3/pipeline/dead-letter/list",
+        "/v3/stats/overview",
+        "/v3/memory-generation-log/list",
+        "/v3/meta/team/list",
+        "/v3/memory-prompt/setting/list",
+        "/v3/knowledge/list",
+    ];
+
+    // The server key alone: no caller.
+    for path in department_routes {
+        assert_eq!(
+            status(post(path, a, true, None).await.unwrap()),
+            401,
+            "{path}"
+        );
+    }
+
+    // An admin of department B, with or without the server key.
+    let b = format!("{a}-b");
+    let res = client
+        .http
+        .post(format!("{}/v3/internal/meta/user/init-admin", client.base))
+        .bearer_auth("test-key")
+        .header("x-memory-department-id", &b)
+        .json(&json!({"username": "b-admin"}))
+        .send()
+        .await
+        .unwrap();
+    let b_admin: Value = res.json().await.unwrap();
+    let b_key = b_admin["data"]["user_key"].as_str().unwrap().to_owned();
+    for path in department_routes {
+        for bearer in [false, true] {
+            let code = status(post(path, a, bearer, Some(&b_key)).await.unwrap());
+            assert_eq!(code, 401, "{path} with B's key (bearer {bearer})");
+        }
+        let code = status(post(path, &b, false, Some(&b_key)).await.unwrap());
+        assert!(!matches!(code, 401 | 403), "{path} in B: {code}");
+    }
+
+    // Department-wide settings: system admins only.
+    for path in ["/v3/memory-prompt/setting/list", "/v3/knowledge/list"] {
+        assert_eq!(
+            status(
+                post(path, a, false, Some(&client.member_key))
+                    .await
+                    .unwrap()
+            ),
+            403,
+            "member {path}"
+        );
+        let code = status(post(path, a, false, Some(&client.admin_key)).await.unwrap());
+        assert!(!matches!(code, 401 | 403), "admin {path}: {code}");
+    }
+
+    // Operator routes: the server key, never a user key alone.
+    for path in [
+        "/v3/internal/pipeline/dead-letter/list",
+        "/v3/internal/memory-generation-log/summary",
+    ] {
+        assert_eq!(
+            status(post(path, a, true, None).await.unwrap()),
+            200,
+            "{path}"
+        );
+        assert_eq!(
+            status(post(path, a, false, Some(&client.admin_key)).await.unwrap()),
+            401,
+            "{path} without the server key"
+        );
+    }
+    post("/v3/department/destroy", &b, true, None)
+        .await
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_departments_get_no_storage() {
     let (data, client) = start().await;
@@ -1292,7 +1392,15 @@ async fn assert_unknown_department_refused(client: &Client) {
     let wrong_key = client
         .call_as("/v3/recall", "ak_wrong", json!({"query": "x"}))
         .await;
-    for path in ["/v3/recall", "/v3/session/add", "/v3/skill/list"] {
+    // So do the department routes.
+    for path in [
+        "/v3/recall",
+        "/v3/session/add",
+        "/v3/skill/list",
+        "/v3/stats/overview",
+        "/v3/meta/team/list",
+        "/v3/memory-prompt/setting/list",
+    ] {
         let res = send(path, Some("ak_wrong"), json!({"query": "x"}))
             .await
             .unwrap();
@@ -1315,8 +1423,11 @@ async fn assert_unknown_department_refused(client: &Client) {
         json!({"valid": false, "user": null}),
         "{body}"
     );
-    // Bearer routes: 404.
-    for path in ["/v3/stats/overview", "/v3/meta/team/list"] {
+    // Operator routes (server API key): 404.
+    for path in [
+        "/v3/internal/meta/user/list-by-department",
+        "/v3/internal/pipeline/dead-letter/list",
+    ] {
         let res = send(path, None, json!({})).await.unwrap();
         assert_eq!(res.status(), 404, "{path}");
     }
@@ -1332,8 +1443,12 @@ async fn assert_unknown_department_refused(client: &Client) {
     .await
     .unwrap();
     assert_eq!(res.status(), 200);
+    let admin: Value = res.json().await.unwrap();
+    let admin_key = admin["data"]["user_key"].as_str().unwrap().to_owned();
     assert!(client.state.services.departments.exists(&id).await.unwrap());
-    let res = send("/v3/stats/overview", None, json!({})).await.unwrap();
+    let res = send("/v3/stats/overview", Some(&admin_key), json!({}))
+        .await
+        .unwrap();
     assert_eq!(res.status(), 200);
     let res = send(
         "/v3/department/destroy",
@@ -2458,7 +2573,14 @@ async fn operational_state_is_visible_by_role() {
             .collect()
     };
 
-    assert_eq!(ids(&sessions("").await), ["s-bob", "s-carol", "s-member"]);
+    // A system admin sees the whole department; the server key alone is
+    // no caller here.
+    assert_eq!(
+        ids(&sessions(&client.admin_key).await),
+        ["s-bob", "s-carol", "s-member"]
+    );
+    let keyless = client.call_as("/v3/pipeline/status", "", json!({})).await;
+    assert_eq!(keyless["code"], 401, "{keyless}");
     let led = sessions(&lead_key).await;
     assert_eq!(ids(&led), ["s-bob", "s-member"]);
     assert_eq!(led[0]["username"], "bob");

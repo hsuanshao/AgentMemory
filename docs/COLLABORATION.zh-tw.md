@@ -130,11 +130,11 @@ curl -X POST "$CORE/v3/meta/agent/update" \
 
 ### 使用 API
 
-以下是用 `curl` 完成相同步驟。Metadata 呼叫需要伺服器 API key（Bearer），**以及**系統管理者的 user key：
+以下是用 `curl` 完成相同步驟。Metadata 呼叫需要該部門系統管理者的 user key；不需要伺服器 API key（它也不能代替 user key）：
 
 ```bash
 CORE=https://memory.example.com
-H=(-H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: default"
+H=(-H "x-memory-department-id: default"
    -H "x-memory-user-key: $ADMIN_KEY" -H "content-type: application/json")
 
 # 建立使用者（回應包含 user_id 和 default_user_key，key 只顯示一次）
@@ -274,21 +274,22 @@ ACL 的 `deny` 條目會被儲存，但目前不會被套用。
 
 | 呼叫者 | 看得到 |
 | --- | --- |
-| 只帶伺服器 API key、沒有 user key（維運人員、`memory-server` 指令） | 整個部門 |
 | 系統管理者 | 整個部門 |
+| 營運者：在 `/v3/internal/…` 使用伺服器 API key（`memory-server generations`、`dead-letters`） | 整個部門 |
 | Team **admin** 或 **leader** | 該 team 的全部：每位成員的 L0/L1 工作，以及 agent 的 L2/L3 工作 |
 | Team **member** | team 共用的 L2/L3 工作，以及自己的 L0/L1 工作 |
 | 任何人 | 自己不是有效成員的 team，一律看不到 |
 
 - Skill 擷取的 dead letter 只記錄 task，所以只有整個部門的檢視範圍會列出它們。
-- 重跑 dead letter 會消耗部門的 LLM 額度：帶 user key 時，只有系統管理者可以執行。
+- 重跑 dead letter 會消耗部門的 LLM 額度：只有系統管理者（或營運者）可以執行。
+- 這些路由需要該部門的 user key。只帶伺服器 API key 會得到 401；它只能開啟 `/v3/internal/…` 的檢視。
 - Worker 最後一次的錯誤可能來自任何 team，所以只有整個部門的檢視範圍看得到。不需要 key 的 `/health` 一律不顯示它。
 - 看得到某一列，不代表能讀取記憶。每一列都帶有 `can_read_memory`，也就是第 9 節資料平面的規則：自己的範圍，以及所屬 team 的共用層。Panel 只在它為 true 時才把那一列連到記憶瀏覽器。Leader 看得到某位成員的 session 已經蒸餾，但打不開它。
 - 每一列都有唯一的 `key`，以及 `team_name`、`agent_name`、`username`。id 已經不存在時，名稱會是空的。
 
 ## 13. 部門與儲存
 
-- 部門由 `init-admin`（見下）建立。對不存在的部門，其他請求一律拒絕，也不會存下任何東西：資料面路由的回應和 user key 錯誤時相同，`meta/auth/verify` 回 `valid: false`，其他路由回 404 `unknown_department`。回應內容看不出部門是否存在，但回應時間看得出來（部門名稱不視為機密；見 [ARCHITECTURE](ARCHITECTURE.zh-tw.md#兩種信任區)）。用 SQLite 時是 `<data>/departments/<id>/memory.db` 這個資料庫檔；用 Postgres 時是一個獨立的 schema。檔案（skill 資源、原始 session 回合）放在 `<data>/departments/<id>/` 底下。
+- 部門由 `init-admin`（見下）建立。對不存在的部門，其他請求一律拒絕，也不會存下任何東西：資料面與部門路由的回應和 user key 錯誤時相同，`meta/auth/verify` 回 `valid: false`，營運者路由（伺服器 API key）回 404 `unknown_department`。回應內容看不出部門是否存在，但回應時間看得出來（部門名稱不視為機密；見 [ARCHITECTURE](ARCHITECTURE.zh-tw.md#三個信任區)）。用 SQLite 時是 `<data>/departments/<id>/memory.db` 這個資料庫檔；用 Postgres 時是一個獨立的 schema。檔案（skill 資源、原始 session 回合）放在 `<data>/departments/<id>/` 底下。
 - 使用者是每個部門各自獨立的，所以每個新的部門都需要自己的管理者：用該部門的 `x-memory-department-id` 呼叫 `POST /v3/internal/meta/user/init-admin`。
 - 一套 Panel 只服務一個部門（`CORE_DEPARTMENT_ID`）。要管理另一個部門，請再部署一套 Panel。
 - `POST /v3/department/destroy` 會刪除一個部門及其所有內容，包括它的 dead letter。需要伺服器 API key；要刪除的部門寫在 body，不需要 header。佇列裡還在等待的該部門 job，會在 worker 取出時丟棄；如果在那之前又用同一個部門 ID 重新初始化，這種 job 會在新的部門上執行。

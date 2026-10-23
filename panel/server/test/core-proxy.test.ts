@@ -15,7 +15,7 @@ describe("POST /api/core/*", () => {
     const [url, init] = call!;
     expect(String(url)).toBe(`${CORE}/v3/atomic/query`);
     const headers = new Headers(init?.headers);
-    expect(headers.get("authorization")).toBe("Bearer secret-core-key");
+    expect(headers.get("authorization")).toBeNull();
     expect(headers.get("x-memory-department-id")).toBe("dept-1");
     expect(headers.get("x-memory-user-key")).toBe("sk-mem-good");
     expect(headers.get("x-request-id")).toBe("rid-1");
@@ -151,7 +151,7 @@ describe("user key guard", () => {
 });
 
 describe("GET /api/core-health", () => {
-  it("proxies Core /health with the Bearer key", async () => {
+  it("proxies Core /health without the server API key", async () => {
     const fetchFn = coreFetch(() => jsonResponse({ status: "ok", version: "0.1.0", uptime: 12 }));
     const res = await buildApp(fetchFn).request("/api/core-health");
     expect(res.status).toBe(200);
@@ -159,7 +159,7 @@ describe("GET /api/core-health", () => {
     const [url, init] = fetchFn.mock.calls[0]!;
     expect(String(url)).toBe(`${CORE}/health`);
     expect(init?.method).toBe("GET");
-    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer secret-core-key");
+    expect(new Headers(init?.headers).get("authorization")).toBeNull();
   });
 
   it("maps an unreachable Core to 502", async () => {

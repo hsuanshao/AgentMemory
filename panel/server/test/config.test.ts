@@ -7,7 +7,7 @@ describe("loadConfig", () => {
       port: 8125,
       host: "0.0.0.0",
       coreUrl: "http://127.0.0.1:8420",
-      coreApiKey: undefined,
+      staleCoreApiKey: false,
       coreDepartmentId: "default",
       coreTimeoutMs: 15_000,
       uiDistDir: undefined,
@@ -25,7 +25,7 @@ describe("loadConfig", () => {
       UI_DIST_DIR: "/srv/ui",
       PANEL_REQUIRE_USER_KEY: "false",
     });
-    expect(cfg).toMatchObject({ port: 9000, coreUrl: "http://core:8420", coreApiKey: "k", coreTimeoutMs: 500, requireUserKey: false });
+    expect(cfg).toMatchObject({ port: 9000, coreUrl: "http://core:8420", staleCoreApiKey: true, coreTimeoutMs: 500, requireUserKey: false });
   });
 
   it("rejects invalid numbers and URLs", () => {

@@ -154,7 +154,10 @@ pub async fn generations(args: impl Iterator<Item = String>) -> Result<()> {
 
     let core = Core::new(department)?;
     let summary = core
-        .call("memory-generation-log/summary", json!({ "hours": hours }))
+        .call(
+            "internal/memory-generation-log/summary",
+            json!({ "hours": hours }),
+        )
         .await?;
     let now = Utc::now().timestamp_millis();
     let mut list_body = json!({
@@ -166,7 +169,9 @@ pub async fn generations(args: impl Iterator<Item = String>) -> Result<()> {
     if let Some(layer) = &layer {
         list_body["layer"] = json!(layer);
     }
-    let recent = core.call("memory-generation-log/list", list_body).await?;
+    let recent = core
+        .call("internal/memory-generation-log/list", list_body)
+        .await?;
     if json_out {
         println!(
             "{}",
@@ -249,7 +254,9 @@ pub async fn dead_letters(args: impl Iterator<Item = String>) -> Result<()> {
     }
     if redrive {
         body["limit"] = json!(limit.unwrap_or(10));
-        let data = core.call("pipeline/dead-letter/redrive", body).await?;
+        let data = core
+            .call("internal/pipeline/dead-letter/redrive", body)
+            .await?;
         println!(
             "Requeued {} dead letter(s).",
             data["requeued"].as_u64().unwrap_or(0)
@@ -258,7 +265,9 @@ pub async fn dead_letters(args: impl Iterator<Item = String>) -> Result<()> {
     }
 
     body["limit"] = json!(limit.unwrap_or(50));
-    let data = core.call("pipeline/dead-letter/list", body).await?;
+    let data = core
+        .call("internal/pipeline/dead-letter/list", body)
+        .await?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&data["items"])?);
         return Ok(());

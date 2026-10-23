@@ -3,13 +3,21 @@ export interface PanelConfig {
   readonly port: number;
   readonly host: string;
   readonly coreUrl: string;
-  /** Bearer token sent to Core. Never exposed to the browser. */
-  readonly coreApiKey: string | undefined;
+  /**
+   * `CORE_API_KEY` is set, though the panel no longer uses it: Core takes the
+   * signed-in user's key on every route the panel calls, and the server API
+   * key is for the operator only.
+   */
+  readonly staleCoreApiKey: boolean;
   readonly coreDepartmentId: string;
   readonly coreTimeoutMs: number;
   /** Directory holding the built SPA; `undefined` disables static serving. */
   readonly uiDistDir: string | undefined;
-  /** When true, every proxied call except auth/verify must carry a valid user key. */
+  /**
+   * When true, every proxied call except auth/verify must carry a valid user
+   * key. When false the panel forwards calls without checking, and Core
+   * still refuses those without a key of the department.
+   */
   readonly requireUserKey: boolean;
 }
 
@@ -32,7 +40,7 @@ export function loadConfig(env: Env = process.env): PanelConfig {
     port: parsePositiveInt(env.PORT, DEFAULTS.port, "PORT"),
     host: nonEmpty(env.HOST) ?? DEFAULTS.host,
     coreUrl: parseUrl(env.CORE_URL ?? DEFAULTS.coreUrl),
-    coreApiKey: nonEmpty(env.CORE_API_KEY),
+    staleCoreApiKey: nonEmpty(env.CORE_API_KEY) !== undefined,
     coreDepartmentId: nonEmpty(env.CORE_DEPARTMENT_ID) ?? DEFAULTS.coreDepartmentId,
     coreTimeoutMs: parsePositiveInt(env.CORE_TIMEOUT_MS, DEFAULTS.coreTimeoutMs, "CORE_TIMEOUT_MS"),
     uiDistDir: nonEmpty(env.UI_DIST_DIR),

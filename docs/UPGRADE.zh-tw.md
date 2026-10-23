@@ -22,9 +22,46 @@
 ## 0.4.1 之後（尚未發布）
 
 > [!IMPORTANT]
-> **部門必須先用 `init-admin` 建立，之後才能使用。** 以前對新的部門名稱發請求就會建立它；現在會被拒絕（資料面回與 user key 錯誤相同的 401，Panel 登入回 `valid: false`，其他路由回 404 `unknown_department`）。已經存在的部門不受影響。如果 Panel、腳本或 client 送出的部門 ID 從沒初始化過，升級後請先對它執行 `init-admin`（[COLLABORATION §13](COLLABORATION.zh-tw.md#13-部門與儲存)）：
+> **部門必須先用 `init-admin` 建立，之後才能使用。** 以前對新的部門名稱發請求就會建立它；現在會被拒絕（資料面與部門路由回與 user key 錯誤相同的 401，Panel 登入回 `valid: false`，營運者路由回 404 `unknown_department`）。已經存在的部門不受影響。如果 Panel、腳本或 client 送出的部門 ID 從沒初始化過，升級後請先對它執行 `init-admin`（[COLLABORATION §13](COLLABORATION.zh-tw.md#13-部門與儲存)）：
 >
 > `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <部門>" -H "content-type: application/json" -d '{"username":"admin"}'`
+### 伺服器 API key 不再能開啟部門路由
+
+> [!IMPORTANT]
+> **只帶 `Authorization: Bearer $AGENT_MEMORY_API_KEY` 呼叫 `meta/*`、`pipeline/*`、`stats/overview`、`memory-generation-log/*`、`memory-prompt/*`、`knowledge/*` 或 `chat-memory/clear` 的請求，升級後會得到 401。** 這些路由現在需要該部門使用者的 user key，伺服器 API key 不能代替使用者。這樣每個部門的管理只會留在該部門裡（[ARCHITECTURE](ARCHITECTURE.zh-tw.md#三個信任區)）。client（`amem` 與各 plugin）不受影響：它們本來就只用 user key。
+
+| 路由 | 以前 | 從這一版起 |
+| --- | --- | --- |
+| `meta/*`、`pipeline/status`、`pipeline/dead-letter/*`、`stats/overview`、`memory-generation-log/*` | 伺服器 API key（`meta/*` 另需 user key） | 該部門使用者的 user key，依呼叫者角色決定權限；伺服器 API key 不予理會 |
+| `memory-prompt/*`、`knowledge/*`、`chat-memory/clear` | 伺服器 API key | 該部門**系統管理員**的 user key |
+| `internal/*`、`department/destroy` | 伺服器 API key | 伺服器 API key（不變） |
+| `internal/pipeline/dead-letter/{list,redrive}`、`internal/memory-generation-log/{list,summary}` | （新增） | 伺服器 API key：營運者看整個部門的檢視 |
+
+依部署方式需要做的事：
+
+1. **用 Docker Compose 跑 Panel（`install.sh`／`upgrade.sh`）。** 不用做任何事：`docker-compose.yml` 不再把 `CORE_API_KEY` 給 Panel，Panel 轉送的是登入使用者的 key。如果 `docker-compose.override.yml` 或其他 env 檔替 `memory-panel` 設定了 `CORE_API_KEY`，請移除；設定還在時，Panel 會記一則警告。
+2. **Panel 另外單獨執行**（`docker run`、`npm start`）。從它的環境移除 `CORE_API_KEY`。`PANEL_REQUIRE_USER_KEY=false` 不再能匿名存取：沒有 user key 的呼叫會被 Core 拒絕。
+3. **自己的腳本或監控**只帶伺服器 API key 呼叫上述路由的，改送系統管理員的 `x-memory-user-key`；替自動化另外建一個使用者（Panel → Metadata → Users），可以和個人的 key 分開。要看整個部門的 dead letter 與生成紀錄，請用伺服器 API key 呼叫上面的 `internal/…` 路由，或用 `memory-server dead-letters`／`memory-server generations`。
+4. **`memory-server generations`／`dead-letters`。** 不用做任何事：它們改呼叫 `internal/…` 路由。請在升級後的 image 裡執行；舊版 memory-core 沒有這些路由。
+5. **曾經拿到伺服器 API key 來管理部門的管理員**現在不需要它了，也不該再保留：它是 root 憑證。持有它的人可以替新部門建立第一位管理員（`init-admin`）、替任何部門的系統管理員發一把新 key（`internal/upgrade` 加上 `issue_key`）、列出部門的使用者、讀取每個部門的 dead letter 與生成紀錄，以及刪除部門。升級後請更換 `.env` 裡的 `AGENT_MEMORY_API_KEY` 並重新啟動（`docker compose up -d`），讓只有營運者持有它。`upgrade.sh` 與 `install.sh` 都從 `.env` 讀取它。
+
+升級前，先找出腳本裡的這類呼叫：
+
+```bash
+grep -rn "Authorization: Bearer" --include='*.sh' --include='*.py' . | grep -v "/v3/internal/\|department/destroy"
+```
+
+升級後，兩邊都確認一下（`H_ADMIN` 帶系統管理員的 user key、`x-memory-department-id` 與 `content-type`）：
+
+```bash
+curl -sS -X POST "$CORE/v3/pipeline/status" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
+  -H "x-memory-department-id: default" -d '{}'        # 401：只帶伺服器 key 在這裡什麼都開不了
+curl -sS -X POST "$CORE/v3/pipeline/status" "${H_ADMIN[@]}" -d '{}'   # "code":0
+```
+
+這項改動沒有寫入任何新資料，所以就這一點而言，退回前一版不需要還原備份。
+
+### 其他改動
 
 **蒸餾用的 CLI 不再繼承 memory-core 的環境變數。** 它只拿到 `PATH`、`HOME`、語系、憑證與 proxy 變數，以及自己的設定（claude 是 `ANTHROPIC_*`／`CLAUDE_*`，codex 是 `OPENAI_*`／`CODEX_*`，agy 是 `GEMINI_*`／`GOOGLE_*`）。依安裝說明登入的 claude、codex 和 agy 不受影響。若 CLI 會讀容器環境裡的其他變數，請把它列在 `AGENT_MEMORY_LLM_CLI_PASS_ENV`（[DISTILLATION §6](ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。**升級前請先確認**：CLI 若透過雲端供應商（claude 走 Bedrock：`AWS_*`；claude 走 Vertex AI：`CLOUD_ML_REGION`、`GOOGLE_APPLICATION_CREDENTIALS`；codex 走 Azure：`AZURE_OPENAI_*`），或 `llm.cli.command` 是 wrapper script，沒列出這些變數，升級後蒸餾就會失敗。
 

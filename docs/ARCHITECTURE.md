@@ -39,7 +39,7 @@ flowchart LR
   end
   Browser((Browser)) -- user key --> PANEL
   AMEM -- "HTTPS, x-memory-user-key" --> CORE
-  PANEL -- "Bearer key + user key<br/>(allowlisted paths)" --> CORE
+  PANEL -- "user key<br/>(allowlisted paths)" --> CORE
   CORE --> STORE
   CORE --> COORD
   CORE -- distillation --> LLM
@@ -50,7 +50,7 @@ flowchart LR
 | memory-core | HTTP API, authorization, memory pipeline, recall | `crates/memory-*` |
 | amem | Client binary used by every integration: recall, capture, offline queue, MCP server | `crates/memory-client` |
 | Integrations | Thin host adapters that call `amem` | `clients/claude-code`, `clients/codex`, `clients/antigravity`, `clients/hermes` |
-| Monitor Panel | Admin and inspection UI. The BFF holds the server API key; the browser holds only a user key | `panel/server`, `panel/web` |
+| Monitor Panel | Admin and inspection UI. The BFF forwards the signed-in user's key and holds no server API key | `panel/server`, `panel/web` |
 | Scripts | Install, upgrade and removal for operators | `install.sh`, `upgrade.sh`, `uninstall.sh` |
 
 ## 2. Code layout (Clean Architecture)
@@ -114,25 +114,30 @@ erDiagram
 - A memory **scope** is `team_id / agent_id / user_id (/ task_id)`. L0/L1 are per user. L2 scenes and the L3 persona are per team + agent.
 - A **user key** (`sk-mem-…`) identifies one user. Keys can be listed, revoked and expire. The **server API key** (`AGENT_MEMORY_API_KEY`, sent as Bearer) identifies the operator, not a user.
 
-### Two trust zones
+### Three trust zones
 
 ```mermaid
 flowchart LR
   R[Request /v3/...] --> Z{Route group}
   Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> KU{"department<br/>exists?"}
+  Z -- "department: meta, pipeline, stats,<br/>generation logs, prompts,<br/>knowledge, chat-memory" --> KU
   KU -- "no: 401, as for a wrong key" --> X[Refused]
-  KU -- yes --> U["require_user<br/>x-memory-user-key only"]
-  Z -- "ops, meta, internal,<br/>department/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
+  KU -- "yes (data plane)" --> U["require_user<br/>user key + scope"]
+  KU -- "yes (department)" --> DM["require_member<br/>user key of the department;<br/>prompts, knowledge, chat-memory:<br/>system admins"]
+  Z -- "operator: internal/*,<br/>department/destroy" --> B["require_bearer<br/>server API key"]
   B --> KB{"department<br/>exists?"}
   KB -- "no: 404 unknown_department" --> X
-  KB -- "yes, or init-admin /<br/>auth/verify" --> D["ops / meta / internal"]
-  D -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
+  KB -- "yes, or init-admin /<br/>destroy" --> O[Operator routes]
   U --> H[Handler]
-  D --> H
-  M --> H
+  DM --> H
+  O --> H
 ```
 
-Remote clients therefore never need the server API key. Leaking a user key exposes only that user's memory, in the teams they belong to.
+Remote clients, department admins and the Panel therefore never need the server API key. It opens only the operator routes: bootstrap (`init-admin`), upgrades, `department/destroy` and the whole-department views of `memory-server generations` / `dead-letters`. A user key works only in its own department, so an admin of one department has no say in another.
+
+**Treat the server API key as a root credential.** Whoever holds it can create the first admin of a new department (`init-admin`), issue a new key for any department's system admin (`internal/upgrade` with `issue_key`), list a department's users, read every department's dead letters and generation logs, and destroy departments. Keep it with the operator, out of scripts that department admins run, and change it if it was ever handed out.
+
+Leaking a user key exposes only what that user may do, in their department.
 
 Storage is created on a department's first use, so both zones first ask whether the department exists (`DepartmentDirectory`: the SQLite file, or the Postgres registry row), without creating it. On Postgres the registry is asked on every request, so a department one replica destroys is unknown to the others at once. Only `init-admin` starts a department, and storage itself opens nothing else: any other use of an unknown department, from a request or a background job, gets `unknown_department` instead of creating it. The worker asks before each job too (which also clears a replica's stale view) and drops a job whose department no longer exists, without retrying or dead-lettering it; a job that fails after its department was destroyed is dropped the same way. `department/destroy` removes the department's dead letters; on SQLite it takes the database out of the pool and moves its directory aside in one step under the pool lock, so nothing can reopen it in between. `auth/verify` answers `valid: false` for an unknown one, and the data plane answers as for a wrong key, so the answer does not tell whether a department exists. The response time can: an unknown department is refused after the registry lookup, a wrong key in a real one after the key lookup too. Department names are not treated as secrets, so this is accepted.
 
@@ -292,12 +297,12 @@ sequenceDiagram
   F->>C: meta/auth/verify (cached briefly)
   C-->>F: user, user_type
   F->>F: path in ADMIN_ONLY_V3_PATHS and not system_admin? → 403
-  F->>C: /v3/<path> + Bearer key + user key
+  F->>C: /v3/<path> + user key
   C-->>F: envelope (core applies its own rules too)
   F-->>B: envelope
 ```
 
-- The **server API key stays on the server** (`panel/server`). The browser only ever holds the user's key.
+- The **Panel holds no server API key.** It forwards the signed-in user's key, and Core applies that user's role. The browser only ever holds the user's key.
 - The **allowlist** (`panel/server/src/http/allowlist.ts`) keeps the BFF from becoming an open proxy: `internal/*` and `department/destroy` are never reachable.
 - **v1 access model:** system admins create and edit users, teams, members and agents. Everyone else gets a read-only view: the L0–L3 tabs still show the data, but the edit and delete actions are hidden.
 - `panel/web` is React + Vite: health, layer counts, pipeline status, the memory browser (L0–L3), skills, and metadata (users, teams, members, agents).

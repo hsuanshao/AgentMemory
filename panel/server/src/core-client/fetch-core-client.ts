@@ -3,7 +3,6 @@ import { CoreTimeoutError, CoreUnavailableError } from "./errors.js";
 
 export interface FetchCoreClientOptions {
   readonly baseUrl: string;
-  readonly apiKey: string | undefined;
   readonly departmentId: string;
   readonly timeoutMs: number;
   /** Injected for tests; defaults to the global `fetch`. */
@@ -31,9 +30,8 @@ export class FetchCoreClient implements CoreClient {
   }
 
   private baseHeaders(ctx: CoreCallContext): Headers {
-    const headers = new Headers({ accept: "application/json", "x-request-id": ctx.requestId });
-    if (this.options.apiKey) headers.set("authorization", `Bearer ${this.options.apiKey}`);
-    return headers;
+    // No server API key: Core authorizes the user key of each call.
+    return new Headers({ accept: "application/json", "x-request-id": ctx.requestId });
   }
 
   private async send(path: string, init: RequestInit): Promise<CoreResponse> {

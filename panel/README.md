@@ -5,8 +5,8 @@ Monitoring and administration console for the Rust **MemoryCore**.
 ```text
 browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
             · serves the React SPA
-            · holds CORE_API_KEY (never sent to the browser)
             · forwards an allowlisted set of /v3 calls
+              with the signed-in user's key (no server API key)
 ```
 
 * `server/`: Hono 4 BFF on Node 22 (ESM, strict TypeScript).
@@ -41,7 +41,6 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 
 The BFF adds these headers to every forwarded call:
 
-* `Authorization: Bearer $CORE_API_KEY`
 * `x-memory-department-id: $CORE_DEPARTMENT_ID`
 * the browser's `x-memory-user-key`
 * `x-request-id`, taken from the browser or generated
@@ -55,7 +54,9 @@ Core responses pass through unchanged. The BFF generates its own errors using Co
 | Core unreachable | 502 | `{"code":502,"message":"CORE_UNAVAILABLE"}` |
 | Missing or invalid user key | 401 | Only when `PANEL_REQUIRE_USER_KEY` is on (the default) |
 
-By default, every proxied call except `meta/auth/verify` needs a user key that Core accepts. Calls that change data or administer the department (`ADMIN_ONLY_V3_PATHS` in `server/src/http/allowlist.ts`) also need a `system_admin` key; anyone else gets `403 forbidden: system_admin_required`, and the UI hides those controls. Verdicts are cached for 60 s. Without this check, anyone who could reach the panel could use the Core API key it holds.
+By default, every proxied call except `meta/auth/verify` needs a user key that Core accepts. Calls that change data or administer the department (`ADMIN_ONLY_V3_PATHS` in `server/src/http/allowlist.ts`) also need a `system_admin` key; anyone else gets `403 forbidden: system_admin_required`, and the UI hides those controls. Verdicts are cached for 60 s.
+
+The BFF holds no server API key. Core authorizes the forwarded user key on every route the panel calls and applies that user's role, so the BFF's own check is a first filter, not the only one: with `PANEL_REQUIRE_USER_KEY=false`, calls without a key still get 401 from Core.
 
 ## Configuration
 
@@ -64,11 +65,11 @@ By default, every proxied call except `meta/auth/verify` needs a user key that C
 | `PORT` | `8125` | Listen port |
 | `HOST` | `0.0.0.0` | Listen address |
 | `CORE_URL` | `http://127.0.0.1:8420` | MemoryCore base URL |
-| `CORE_API_KEY` | (none) | Bearer token for Core (`AGENT_MEMORY_API_KEY` on the Core side) |
+| `CORE_API_KEY` | (none) | No longer used; if set, the panel logs a warning at startup. Remove it so the panel does not hold the server API key |
 | `CORE_DEPARTMENT_ID` | `default` | Sent as `x-memory-department-id` |
 | `CORE_TIMEOUT_MS` | `15000` | Timeout for each Core call |
 | `UI_DIST_DIR` | (none) | Built SPA directory. The Docker image sets it to `/app/web/dist` |
-| `PANEL_REQUIRE_USER_KEY` | `true` | Set to `false` to skip the BFF user-key check (local development only) |
+| `PANEL_REQUIRE_USER_KEY` | `true` | Set to `false` to skip the BFF's own user-key check (local development only); Core still requires a user key |
 
 ## Run locally
 
@@ -79,21 +80,21 @@ npm run build        # web (vite) + server (tsc)
 npm test             # vitest for server and web
 
 # production-style: one process serves the API and the SPA
-CORE_URL=http://127.0.0.1:8420 CORE_API_KEY=change-me UI_DIST_DIR=web/dist npm start
+CORE_URL=http://127.0.0.1:8420 UI_DIST_DIR=web/dist npm start
 # open http://localhost:8125
 
 # development: BFF with tsx watch + Vite dev server (proxies /api to :8125)
-CORE_URL=http://127.0.0.1:8420 CORE_API_KEY=change-me npm run dev
+CORE_URL=http://127.0.0.1:8420 npm run dev
 # open http://localhost:5173
 ```
 
 ## First login: bootstrap an admin
 
-A fresh Core has no users. Create the first `system_admin` user with the internal endpoint, which only needs the Bearer key:
+A fresh Core has no users. Create the first `system_admin` user with the internal endpoint. It takes the server API key (`AGENT_MEMORY_API_KEY` on the Core side), which only the operator holds; the panel does not need it:
 
 ```bash
 curl -s http://127.0.0.1:8420/v3/internal/meta/user/init-admin \
-  -H "Authorization: Bearer $CORE_API_KEY" \
+  -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
   -H "x-memory-department-id: ${CORE_DEPARTMENT_ID:-default}" \
   -H 'content-type: application/json' \
   -d '{"username":"admin"}'
@@ -115,7 +116,6 @@ docker network create memory 2>/dev/null || true
 
 docker run -d --name memory-panel --network memory -p 8125:8125 \
   -e CORE_URL=http://memory-core:8420 \
-  -e CORE_API_KEY=change-me \
   -e CORE_DEPARTMENT_ID=default \
   memory-panel:dev
 ```

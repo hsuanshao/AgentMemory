@@ -37,12 +37,15 @@ This guide covers the common deployment: **one Agent Memory server** (memory-cor
 
 ## 1. How access works
 
-The server has two trust zones:
+The server has three trust zones:
 
 | Zone | Routes | Credential |
 | --- | --- | --- |
-| **User-scoped** | memory (L0–L3), `recall`, `session/add`, `skill/*` | `x-memory-user-key` only |
-| **Bearer-scoped** | pipeline/stats, logs, prompts, `meta/*`, `internal/*` | `Authorization: Bearer <AGENT_MEMORY_API_KEY>` |
+| **User-scoped** | memory (L0–L3), `recall`, `session/add`, `skill/*` | `x-memory-user-key` |
+| **Department** | `meta/*`, pipeline, stats, generation logs; prompts, knowledge and `chat-memory/clear` for system admins | `x-memory-user-key` of a user of that department |
+| **Operator** | `internal/*`, `department/destroy` | `Authorization: Bearer <AGENT_MEMORY_API_KEY>` only |
+
+Clients and department admins never need the server API key; keep it with whoever runs the server.
 
 Every memory call names a **team** and an **agent**:
 
