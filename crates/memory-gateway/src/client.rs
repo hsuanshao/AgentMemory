@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 /// How long a resolved proxy host name is trusted before resolving again
 /// (a restarted container may come back with another address).
 const RESOLVE_EVERY: Duration = Duration::from_secs(30);
+/// A peer missing from the resolved addresses triggers a fresh lookup at
+/// most this often, so a proxy started a moment ago (Caddy after the Panel)
+/// is trusted at once without a lookup per request.
+const RESOLVE_ON_MISS: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Default)]
 pub struct TrustedProxies {
@@ -67,12 +71,13 @@ impl TrustedProxies {
         self.nets.is_empty() && self.hosts.is_empty()
     }
 
-    async fn host_addresses(&self) -> Vec<IpAddr> {
+    async fn host_addresses(&self, looking_for: IpAddr) -> Vec<IpAddr> {
         if self.hosts.is_empty() {
             return Vec::new();
         }
         if let Some((at, addrs)) = self.resolved.lock().ok().and_then(|g| g.clone()) {
-            if at.elapsed() < RESOLVE_EVERY {
+            let age = at.elapsed();
+            if age < RESOLVE_ON_MISS || (age < RESOLVE_EVERY && addrs.contains(&looking_for)) {
                 return addrs;
             }
         }
@@ -96,7 +101,7 @@ impl TrustedProxies {
             return false;
         }
         if hosts.is_none() {
-            *hosts = Some(self.host_addresses().await);
+            *hosts = Some(self.host_addresses(ip).await);
         }
         hosts.as_ref().is_some_and(|h| h.contains(&ip))
     }
