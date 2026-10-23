@@ -36,8 +36,11 @@ impl Api {
                 "not configured: {missing} is empty (run `amem login`)"
             ));
         }
+        // A redirect is not followed: it would take the user key along to
+        // wherever it points.
         let http = reqwest::blocking::Client::builder()
             .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| e.to_string())?;
         Ok(Self { cfg, http })
@@ -65,6 +68,16 @@ impl Api {
             .send()
             .map_err(|e| ApiError::Retryable(format!("{path}: {e}")))?;
         let status = res.status().as_u16();
+        if res.status().is_redirection() {
+            let to = res
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("elsewhere");
+            return Err(ApiError::Retryable(format!(
+                "{path}: HTTP {status}: the server redirects to {to}; set that address with `amem login` (redirects are not followed)"
+            )));
+        }
         let envelope: Value = res.json().unwrap_or(Value::Null);
         if (200..300).contains(&status) && envelope["code"] == 0 {
             return Ok(envelope["data"].clone());
@@ -102,6 +115,55 @@ pub fn recall_context(data: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A one-shot HTTP server answering every request with `response`;
+    /// returns its address and whether a request arrived.
+    fn serve_once(response: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (addr, rx)
+    }
+
+    #[test]
+    fn a_redirect_is_not_followed_with_the_key() {
+        let (elsewhere, reached) = serve_once("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
+        let redirect: &'static str = Box::leak(
+            format!("HTTP/1.1 307 Temporary Redirect\r\nlocation: {elsewhere}/v3/recall\r\ncontent-length: 0\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let (server, _) = serve_once(redirect);
+        let api = Api::new(
+            Config {
+                server_url: server,
+                department_id: "default".into(),
+                user_key: "sk-mem-secret".into(),
+                team_id: "t".into(),
+                agent_id: "a".into(),
+                ..Config::default()
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let err = api.recall("q", None).unwrap_err();
+        assert!(
+            matches!(err, ApiError::Retryable(ref m) if m.contains("redirects to")),
+            "{err}"
+        );
+        assert!(
+            reached.recv_timeout(Duration::from_millis(300)).is_err(),
+            "the key went to the redirect"
+        );
+    }
 
     #[test]
     fn context_joins_both_blocks() {
