@@ -416,7 +416,8 @@ async fn atoms_without_an_embedding_get_one_later() {
     }
 }
 
-/// An embedding service that is down until `up` is set.
+/// An embedding service that is down until `up` is set, and always refuses
+/// text containing "TOO LONG" (as a model with a small input limit does).
 struct FlakyEmbedder {
     up: std::sync::atomic::AtomicBool,
 }
@@ -428,47 +429,74 @@ impl memory_application::ports::system::EmbeddingProvider for FlakyEmbedder {
     }
 
     async fn embed(&self, texts: &[String]) -> memory_domain::error::DomainResult<Vec<Vec<f32>>> {
-        if !self.up.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(memory_domain::error::DomainError::unavailable("timed out"));
+        let up = self.up.load(std::sync::atomic::Ordering::Relaxed);
+        if !up || texts.iter().any(|t| t.contains("TOO LONG")) {
+            return Err(memory_domain::error::DomainError::unavailable("refused"));
         }
         Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
     }
 }
 
-#[tokio::test]
-async fn backfill_waits_out_a_failing_embedding_service() {
-    use memory_application::memory::backfill::{BackfillReport, EmbeddingBackfill};
-
-    let (_dir, pool, department) = setup();
-    let store = Arc::new(SqliteMemoryStore::new(pool, None));
-    for i in 0..3 {
+async fn store_without_embeddings(
+    store: &SqliteMemoryStore,
+    department: &DepartmentId,
+    contents: &[&str],
+) {
+    for (i, content) in contents.iter().enumerate() {
         store
-            .upsert(&department, &atom(&format!("a{i}"), "text", "alice"), None)
+            .upsert(department, &atom(&format!("a{i}"), content, "alice"), None)
             .await
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn backfill_waits_out_a_failing_embedding_service() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    store_without_embeddings(&store, &department, &["one", "two", "three", "four"]).await;
     let embedder = Arc::new(FlakyEmbedder { up: false.into() });
     let backfill = EmbeddingBackfill::new(store.clone(), embedder.clone());
 
-    assert_eq!(
-        backfill.all(10).await.unwrap(),
-        BackfillReport {
-            missing: 3,
-            embedded: 0,
-            skipped: 3
-        }
-    );
+    // Down: stops after a few refusals, embeds nothing, keeps its place.
+    let down = backfill.all(10).await.unwrap();
+    assert!(down.service_down && !down.complete, "{down:?}");
+    assert_eq!(down.embedded, 0);
+
     embedder
         .up
         .store(true, std::sync::atomic::Ordering::Relaxed);
-    assert_eq!(
-        backfill.department(&department, 2).await.unwrap(),
-        BackfillReport {
-            missing: 2,
-            embedded: 2,
-            skipped: 0
-        }
-    );
-    assert_eq!(backfill.all(10).await.unwrap().embedded, 1);
-    assert_eq!(backfill.all(10).await.unwrap(), BackfillReport::default());
+    let part = backfill.department(&department, 3).await.unwrap();
+    assert_eq!((part.embedded, part.complete), (3, false), "{part:?}");
+    let rest = backfill.department(&department, 3).await.unwrap();
+    assert_eq!((rest.embedded, rest.complete), (1, true), "{rest:?}");
+    assert_eq!(backfill.all(10).await.unwrap().missing, 0);
+}
+
+#[tokio::test]
+async fn an_atom_the_service_refuses_does_not_block_the_others() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    // The refused atom is the oldest, so it comes first every time.
+    store_without_embeddings(&store, &department, &["TOO LONG", "two", "three"]).await;
+    let embedder = Arc::new(FlakyEmbedder { up: true.into() });
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder);
+
+    let first = backfill.department(&department, 2).await.unwrap();
+    assert_eq!((first.embedded, first.skipped), (1, 1), "{first:?}");
+    assert!(!first.service_down);
+    // The next run goes on after it instead of starting with it again.
+    let second = backfill.department(&department, 2).await.unwrap();
+    assert_eq!((second.embedded, second.complete), (1, true), "{second:?}");
+    // Then starts over: only the refused one is left.
+    let left = store
+        .missing_embeddings(&department, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].item.content, "TOO LONG");
 }

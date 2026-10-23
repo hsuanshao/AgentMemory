@@ -657,16 +657,22 @@ impl AtomRepository for SqliteMemoryStore {
     async fn missing_embeddings(
         &self,
         department: &DepartmentId,
+        after: Option<i64>,
         limit: usize,
-    ) -> DomainResult<Vec<AtomicMemory>> {
+    ) -> DomainResult<Vec<Sequenced<AtomicMemory>>> {
         self.pool
             .get(department)?
             .call(move |conn| {
                 let mut stmt = conn.prepare(&format!(
-                    "SELECT {ATOM_COLUMNS} FROM atoms WHERE embedding IS NULL ORDER BY seq LIMIT ?"
+                    "SELECT seq, {ATOM_COLUMNS} FROM atoms WHERE embedding IS NULL AND seq > ? ORDER BY seq LIMIT ?"
                 ))?;
                 let atoms = stmt
-                    .query_map([limit as i64], atom_from_row)?
+                    .query_map(params![after.unwrap_or(0), limit as i64], |row| {
+                        Ok(Sequenced {
+                            seq: row.get("seq")?,
+                            item: atom_from_row(row)?,
+                        })
+                    })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(atoms)
             })

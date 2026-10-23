@@ -19,6 +19,9 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (1, "instance renamed to department"),
     (2, "team role reviewer removed"),
     (3, "scenes and personas stored as append-only versions"),
+    // Created with the embedding column (`db::migrate_embedding`), since
+    // the column exists only when embeddings are on.
+    (4, "index of atoms without an embedding"),
 ];
 
 /// The latest schema version.

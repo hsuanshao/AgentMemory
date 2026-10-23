@@ -665,20 +665,27 @@ impl AtomRepository for PostgresMemoryStore {
     async fn missing_embeddings(
         &self,
         department: &DepartmentId,
+        after: Option<i64>,
         limit: usize,
-    ) -> DomainResult<Vec<AtomicMemory>> {
+    ) -> DomainResult<Vec<Sequenced<AtomicMemory>>> {
         if self.db.dims().is_none() {
             return Ok(Vec::new());
         }
         let s = self.db.schema(department).await?;
-        atoms_from_rows(
-            &fetch_all(
-                &mut *self.db.conn().await?,
-                &format!("SELECT {ATOM_COLUMNS} FROM {s}.atoms WHERE embedding IS NULL ORDER BY seq LIMIT ?"),
-                &args![limit as i64],
-            )
-            .await?,
+        fetch_all(
+            &mut *self.db.conn().await?,
+            &format!("SELECT seq, {ATOM_COLUMNS} FROM {s}.atoms WHERE embedding IS NULL AND seq > ? ORDER BY seq LIMIT ?"),
+            &args![after.unwrap_or(0), limit as i64],
         )
+        .await?
+        .iter()
+        .map(|row| {
+            Ok(Sequenced {
+                seq: get(row, "seq")?,
+                item: atom_from_row(row)?,
+            })
+        })
+        .collect()
     }
 
     async fn set_embedding(

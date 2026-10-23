@@ -520,6 +520,13 @@ async fn migrate_embedding(
     dims: usize,
 ) -> DomainResult<()> {
     execute(tx, &schema::embedding_column_ddl(schema, dims), &[]).await?;
+    // The embedding backfill's queue.
+    execute(
+        tx,
+        &format!("CREATE INDEX IF NOT EXISTS ix_atoms_missing_embedding ON {schema}.atoms(seq) WHERE embedding IS NULL"),
+        &[],
+    )
+    .await?;
     let current = count(
         tx,
         "SELECT atttypmod::bigint FROM pg_attribute WHERE attrelid = (?)::regclass AND attname = 'embedding'",

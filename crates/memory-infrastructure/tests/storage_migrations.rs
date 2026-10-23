@@ -317,3 +317,61 @@ async fn newer_postgres_and_redis_schemas_are_refused() {
         eprintln!("skipping redis: set AGENT_MEMORY_TEST_REDIS_URL");
     }
 }
+
+/// A 0.4.1 database (migrations 1–3, no backfill index) gets migration 4:
+/// recorded, and the index created with the embedding column.
+#[tokio::test]
+async fn postgres_from_0_4_1_gets_the_backfill_index() {
+    let Ok(url) = std::env::var("AGENT_MEMORY_TEST_POSTGRES_URL") else {
+        eprintln!("skipping: set AGENT_MEMORY_TEST_POSTGRES_URL");
+        return;
+    };
+    let name = format!("amem_m4_{}", uuid::Uuid::new_v4().simple());
+    let mut admin = PgConnection::connect(&url).await.unwrap();
+    admin
+        .execute(format!("CREATE DATABASE {name}").as_str())
+        .await
+        .unwrap();
+    let db_url = with_database(&url, &name);
+    let dept = department("emb");
+    let s = schema_name(&dept);
+    {
+        let db = PgDb::connect(&db_url, 2, Some(2)).await.unwrap();
+        db.schema(&dept).await.unwrap();
+        db.conn()
+            .await
+            .unwrap()
+            .execute(
+                format!(
+                    "DROP INDEX {}.ix_atoms_missing_embedding; DELETE FROM agent_memory.schema_migrations WHERE version = 4",
+                    quote_ident(&s)
+                )
+                .as_str(),
+            )
+            .await
+            .unwrap();
+        db.pool().close().await;
+    }
+    let db = PgDb::connect(&db_url, 2, Some(2)).await.unwrap();
+    db.schema(&dept).await.unwrap();
+    let mut c = db.conn().await.unwrap();
+    let recorded: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_memory.schema_migrations WHERE version = 4")
+            .fetch_one(&mut *c)
+            .await
+            .unwrap();
+    let indexed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_indexes WHERE schemaname = $1 AND indexname = 'ix_atoms_missing_embedding'",
+    )
+    .bind(&s)
+    .fetch_one(&mut *c)
+    .await
+    .unwrap();
+    assert_eq!((recorded, indexed), (1, 1));
+    drop(c);
+    db.pool().close().await;
+    admin
+        .execute(format!("DROP DATABASE {name} WITH (FORCE)").as_str())
+        .await
+        .unwrap();
+}

@@ -223,7 +223,14 @@ redaction:
 
 With embeddings on, every atom is embedded when it is stored. When that call fails or times out, the atom is still stored: recall finds it by keyword, not by meaning, until it gets an embedding.
 
-**Backfill.** memory-core embeds atoms stored without one every `backfillIntervalSecs` (default 600; the first run waits one interval after start), up to `backfillBatch` atoms per department per run, oldest first. A run stops at a department whose embedding calls fail, and tries again next time. The atom is not rewritten, so L2 does not treat it as new. To run it now and see the result:
+**Backfill.** memory-core embeds atoms stored without one every `backfillIntervalSecs` (default 600; the first run waits one interval after start), up to `backfillBatch` atoms per department per run.
+
+- Each run goes on where the last one stopped, in the order the atoms were written, and starts over at the end.
+- An atom the service refuses on its own (too long for the model, say) is skipped, so it does not hold up the rest; the next pass tries it again.
+- When several atoms in a row are refused, the service is taken as down: the department is left as it is until the next run.
+- The atom is not rewritten, so L2 does not treat it as new.
+
+To run one pass now and see the result:
 
 ```bash
 docker compose exec memory-core memory-server reembed
@@ -241,4 +248,8 @@ docker compose exec memory-core memory-server reembed --department default --lim
 | `worker.concurrency` | `AGENT_MEMORY_WORKER_CONCURRENCY` | 8 | Pipeline jobs (L1/L2/L3/skills) at once |
 | `llm.cli.maxConcurrency` | `AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY` | 2 | CLI model processes at once |
 
+The backfill shares `maxConcurrency` with L1 and `atomic/update`: while it catches up after an outage, their embedding calls may wait for a free slot. It sends 32 atoms per request.
+
 A small or shared embedding server that times out under load: lower `maxConcurrency` first, then raise `timeoutMs`. Many embeddings missing after an outage: run `reembed` once the service is back.
+
+A numeric variable that does not parse (`AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY=abc`) stops memory-core at startup with its name; `memory-server check-config` reports it too.

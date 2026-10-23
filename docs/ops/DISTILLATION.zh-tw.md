@@ -223,7 +223,14 @@ redaction:
 
 開啟 embedding 時，每個 atom 存入時都會算向量。這個呼叫失敗或逾時，atom 還是會存下來：在補上向量之前，recall 只能用關鍵字找到它，無法用語意找到。
 
-**補向量。** memory-core 每隔 `backfillIntervalSecs`（預設 600 秒；啟動後先等一個間隔才跑第一次）會替沒有向量的 atom 補算，每個部門每次最多 `backfillBatch` 個，從最舊的開始。某個部門的 embedding 呼叫失敗時，這一輪就停在那裡，下次再試。atom 本身不會被改寫，所以 L2 不會把它當成新的。要立刻執行並看結果：
+**補向量。** memory-core 每隔 `backfillIntervalSecs`（預設 600 秒；啟動後先等一個間隔才跑第一次）會替沒有向量的 atom 補算，每個部門每次最多 `backfillBatch` 個。
+
+- 每次從上次停下的地方接著做，依 atom 寫入的順序，做到最後再從頭開始。
+- 服務單獨拒絕的 atom（例如內容超過模型上限）會跳過，不會擋住後面的 atom；下一輪再試。
+- 連續好幾個 atom 都被拒絕時，視為服務掛了，這個部門留到下次再做。
+- atom 本身不會被改寫，所以 L2 不會把它當成新的。
+
+要立刻跑一輪並看結果：
 
 ```bash
 docker compose exec memory-core memory-server reembed
@@ -241,4 +248,8 @@ docker compose exec memory-core memory-server reembed --department default --lim
 | `worker.concurrency` | `AGENT_MEMORY_WORKER_CONCURRENCY` | 8 | 同時執行的 pipeline 工作（L1/L2/L3/skill） |
 | `llm.cli.maxConcurrency` | `AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY` | 2 | 同時執行的 CLI 模型程序 |
 
+補向量和 L1、`atomic/update` 共用 `maxConcurrency`：服務中斷後大量補算的期間，它們的 embedding 呼叫可能要排隊。補向量每次請求送 32 個 atom。
+
 embedding 伺服器規格小或與其他服務共用、負載高時會逾時：先調低 `maxConcurrency`，再調高 `timeoutMs`。服務中斷後有大量 atom 沒有向量：等服務恢復後跑一次 `reembed`。
+
+數值型的環境變數無法解析時（例如 `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY=abc`），memory-core 會在啟動時停止並指出是哪一個；`memory-server check-config` 也會回報。

@@ -17,9 +17,11 @@ const USAGE: &str = "\
 memory-server reembed [--department ID] [--limit N] [--json]
 
 Adds embeddings to atoms stored without one (the embedding call failed or
-timed out), oldest first, in every department or one. --limit caps the atoms
-embedded per department (default: all). Stops at a department whose
-embedding calls fail.";
+timed out), in every department or one: one pass over each department's
+atoms without an embedding, oldest first. An atom the service refuses is
+skipped and counted; when several in a row are refused, the service is taken
+as down and the department is left for later. --limit caps the atoms
+embedded per department (default: all).";
 
 /// Atoms read per round; rounds repeat until none are left.
 const ROUND: usize = 200;
@@ -56,25 +58,29 @@ pub async fn run(args: impl Iterator<Item = String>) -> Result<()> {
     if json {
         let rows: Vec<_> = rows
             .iter()
-            .map(|(d, r)| serde_json::json!({"department": d, "embedded": r.embedded, "skipped": r.skipped}))
+            .map(|(d, r)| serde_json::json!({"department": d, "report": r}))
             .collect();
         println!("{}", serde_json::to_string_pretty(&rows)?);
     } else {
         for (department, r) in &rows {
-            match r.skipped {
-                0 => println!("{department}: {} embedded", r.embedded),
-                n => println!(
-                    "{department}: {} embedded, {n} not (the embedding service failed or they changed)",
-                    r.embedded
-                ),
+            let mut line = format!("{department}: {} embedded", r.embedded);
+            if r.skipped > 0 {
+                line += &format!(
+                    ", {} skipped (refused by the service, or changed)",
+                    r.skipped
+                );
             }
+            if r.service_down {
+                line += "; stopped: the embedding service keeps failing";
+            }
+            println!("{line}");
         }
     }
     Ok(())
 }
 
-/// Rounds until no atom is missing an embedding, a round embeds none (the
-/// service fails), or `limit` is reached.
+/// Rounds until the department's queue has been walked once, the embedding
+/// service is down, or `limit` atoms are embedded.
 async fn until_done(
     backfill: &EmbeddingBackfill,
     department: &DepartmentId,
@@ -84,12 +90,13 @@ async fn until_done(
     loop {
         let round = limit.map_or(ROUND, |l| ROUND.min(l - total.embedded));
         let report = backfill.department(department, round).await?;
+        total.missing += report.missing;
         total.embedded += report.embedded;
-        // What the last round could not embed; earlier rounds' leftovers
-        // were retried.
-        total.skipped = report.skipped;
+        total.skipped += report.skipped;
+        total.service_down = report.service_down;
+        total.complete = report.complete;
         let reached = limit.is_some_and(|l| total.embedded >= l);
-        if report.missing == 0 || report.embedded == 0 || reached {
+        if report.complete || report.service_down || reached {
             return Ok(total);
         }
     }

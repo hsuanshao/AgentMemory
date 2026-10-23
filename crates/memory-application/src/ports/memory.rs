@@ -163,12 +163,13 @@ pub trait AtomRepository: Send + Sync {
     /// Departments that have stored data, for sweeps across all of them.
     async fn departments(&self) -> DomainResult<Vec<DepartmentId>>;
     /// Atoms stored without an embedding (the embedding call failed or
-    /// timed out), oldest first.
+    /// timed out) with a seq after `after`, in seq order.
     async fn missing_embeddings(
         &self,
         department: &DepartmentId,
+        after: Option<i64>,
         limit: usize,
-    ) -> DomainResult<Vec<AtomicMemory>>;
+    ) -> DomainResult<Vec<Sequenced<AtomicMemory>>>;
     /// Adds the embedding of an atom that has none, without rewriting the
     /// atom: its seq stays, so L2 does not see it as new. Does nothing when
     /// the atom changed since `updated_at` or got an embedding meanwhile;

@@ -34,11 +34,23 @@ pub async fn exercise(
             .unwrap(),
     );
 
-    let missing = store.missing_embeddings(department, 10).await.unwrap();
+    let missing = store
+        .missing_embeddings(department, None, 10)
+        .await
+        .unwrap();
     assert_eq!(
-        missing.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+        missing
+            .iter()
+            .map(|a| a.item.id.as_str())
+            .collect::<Vec<_>>(),
         [without.id.as_str()]
     );
+    // From a cursor on.
+    assert!(store
+        .missing_embeddings(department, Some(missing[0].seq), 10)
+        .await
+        .unwrap()
+        .is_empty());
     assert!(store.departments().await.unwrap().contains(department));
 
     // The atom changed since it was read: leave it to the next write.
@@ -58,7 +70,7 @@ pub async fn exercise(
         .await
         .unwrap());
     assert!(store
-        .missing_embeddings(department, 10)
+        .missing_embeddings(department, None, 10)
         .await
         .unwrap()
         .is_empty());
