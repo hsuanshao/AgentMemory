@@ -42,9 +42,9 @@ The HTTP status equals `code` in the envelope; `message` explains.
 | Status | When |
 | --- | --- |
 | 400 | Invalid JSON or input; `team_id` / `agent_id` missing on the data plane |
-| 401 | Missing or wrong Bearer key; unknown, revoked or expired user key |
+| 401 | Missing or wrong Bearer key; unknown, revoked or expired user key (also on the data plane for a department that does not exist) |
 | 403 | Not an active member of the team; agent of another team; naming another `user_id` without being a system admin; metadata action not allowed |
-| 404 | Unknown route or entity |
+| 404 | Unknown route or entity; `unknown_department` on a Bearer route for a department that does not exist (run `init-admin` for it) |
 | 409 | Conflict, e.g. `already_initialized`, `target_has_profile` |
 | 413 | Body over `max_body_bytes` (`max_session_body_bytes` for `session/add`) |
 | 429 | Quota exceeded |

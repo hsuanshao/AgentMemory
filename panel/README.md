@@ -94,12 +94,15 @@ A fresh Core has no users. Create the first `system_admin` user with the interna
 ```bash
 curl -s http://127.0.0.1:8420/v3/internal/meta/user/init-admin \
   -H "Authorization: Bearer $CORE_API_KEY" \
+  -H "x-memory-department-id: ${CORE_DEPARTMENT_ID:-default}" \
   -H 'content-type: application/json' \
   -d '{"username":"admin"}'
 # → {"code":0,"data":{"user_id":"…","user_key":"sk-mem-…"}}
 ```
 
 Sign in to the panel with the returned `user_key`. A second call returns 409, because Core is already initialised.
+
+Use the department the panel is configured for (`CORE_DEPARTMENT_ID`). Until `init-admin` has run for that department, Core does not know it, and sign-in reports every key as invalid.
 
 ## Docker
 

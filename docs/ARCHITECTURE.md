@@ -110,7 +110,7 @@ erDiagram
   }
 ```
 
-- A **department** (`x-memory-department-id`, default `default`) is a hard boundary. Each has its own SQLite file or Postgres schema.
+- A **department** (`x-memory-department-id`, default `default`) is a hard boundary. Each has its own SQLite file or Postgres schema, created by `init-admin`.
 - A memory **scope** is `team_id / agent_id / user_id (/ task_id)`. L0/L1 are per user. L2 scenes and the L3 persona are per team + agent.
 - A **user key** (`sk-mem-…`) identifies one user. Keys can be listed, revoked and expire. The **server API key** (`AGENT_MEMORY_API_KEY`, sent as Bearer) identifies the operator, not a user.
 
@@ -119,15 +119,22 @@ erDiagram
 ```mermaid
 flowchart LR
   R[Request /v3/...] --> Z{Route group}
-  Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> U["require_user<br/>x-memory-user-key only"]
+  Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> KU{"department<br/>exists?"}
+  KU -- "no: 401, as for a wrong key" --> X[Refused]
+  KU -- yes --> U["require_user<br/>x-memory-user-key only"]
   Z -- "ops, meta, internal,<br/>department/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
-  B -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
+  B --> KB{"department<br/>exists?"}
+  KB -- "no: 404 unknown_department" --> X
+  KB -- "yes, or init-admin /<br/>auth/verify" --> D["ops / meta / internal"]
+  D -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
   U --> H[Handler]
-  B --> H
+  D --> H
   M --> H
 ```
 
 Remote clients therefore never need the server API key. Leaking a user key exposes only that user's memory, in the teams they belong to.
+
+Storage is created on a department's first use, so both zones first ask whether the department exists (`DepartmentDirectory`: the SQLite file, or the Postgres registry row), without creating it. Only `init-admin` starts a department. `auth/verify` answers `valid: false` for an unknown one, and the data plane answers as for a wrong key, so neither tells whether a department name exists.
 
 ### Data-plane authorization
 

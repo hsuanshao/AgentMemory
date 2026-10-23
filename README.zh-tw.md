@@ -90,7 +90,7 @@ docker run --rm -p 8125:8125 -e CORE_URL=http://host.docker.internal:8420 \
 
 以 admin 的 user key 登入 Panel。在 **Metadata** 中，系統管理員可以建立使用者（每位都會產生一把 user key，只顯示一次）、建立團隊、把使用者指派到團隊並設定角色，以及建立 Agent。其他使用者看到的是唯讀的 Panel。
 
-Client（任何機器上的 agent）只用自己的 **user key** 驗證，不需要 `AGENT_MEMORY_API_KEY`。每次記憶呼叫都要帶上使用者所屬的 `team_id` 與 `agent_id`；成員只能讀寫自己的對話與事實；agent 的場景與 persona 則由使用它的人共用。[docs/COLLABORATION.zh-tw.md](docs/COLLABORATION.zh-tw.md) 從配置方式到隔離機制，完整說明部門、團隊、使用者與 agent。完整規則見 [docs/API.zh-tw.md](docs/API.zh-tw.md)，架構說明見 [docs/ARCHITECTURE.zh-tw.md](docs/ARCHITECTURE.zh-tw.md)。
+Client（任何機器上的 agent）只用自己的 **user key** 驗證，不需要 `AGENT_MEMORY_API_KEY`。每次記憶呼叫都要帶上使用者所屬的 `team_id` 與 `agent_id`；成員只能讀寫自己的對話與事實；agent 的場景與 persona 則由使用它的人共用。[docs/COLLABORATION.zh-tw.md](docs/COLLABORATION.zh-tw.md) 從配置方式到隔離機制，完整說明部門、團隊、使用者與 agent。部門要先對它執行過 `init-admin` 才存在；指定其他部門的請求一律拒絕。完整規則見 [docs/API.zh-tw.md](docs/API.zh-tw.md)，架構說明見 [docs/ARCHITECTURE.zh-tw.md](docs/ARCHITECTURE.zh-tw.md)。
 
 **伺服器與 agent 在不同機器上？** 請參考 [docs/REMOTE-CLIENTS.zh-tw.md](docs/REMOTE-CLIENTS.zh-tw.md)，內容包含 TLS、發放 key、安裝 `amem` client、Claude Code／Codex／Antigravity／Hermes 整合，以及升級時 client 端要做的事。
 

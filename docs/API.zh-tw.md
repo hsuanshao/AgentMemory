@@ -27,9 +27,9 @@ HTTP 狀態碼等於 envelope 中的 `code`，`message` 說明原因。
 | 狀態碼 | 情況 |
 | --- | --- |
 | 400 | JSON 或輸入不合法；資料平面缺少 `team_id` / `agent_id` |
-| 401 | 缺少或錯誤的 Bearer key；user key 不存在、已撤銷或已過期 |
+| 401 | 缺少或錯誤的 Bearer key；user key 不存在、已撤銷或已過期（資料面上部門不存在時也是） |
 | 403 | 不是該 team 的有效成員；agent 屬於別的 team；非系統管理者卻指定其他 `user_id`；不允許的 metadata 操作 |
-| 404 | 路由或資料不存在 |
+| 404 | 路由或資料不存在；Bearer 路由上部門不存在時回 `unknown_department`（先對它執行 `init-admin`） |
 | 409 | 衝突，例如 `already_initialized`、`target_has_profile` |
 | 413 | Body 超過 `max_body_bytes`（`session/add` 為 `max_session_body_bytes`） |
 | 429 | 超過配額 |
