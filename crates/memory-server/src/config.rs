@@ -60,6 +60,19 @@ pub struct RedactionPattern {
 }
 
 impl RedactionConfig {
+    /// These settings as the deployment layer of the rules, checked.
+    pub fn deployment_rules(&self) -> Result<memory_application::redaction::DeploymentRules> {
+        self.redactor()?;
+        Ok(memory_application::redaction::DeploymentRules {
+            password_shape: self.password_shape,
+            patterns: self
+                .patterns
+                .iter()
+                .map(|p| (p.kind.clone(), p.pattern.clone()))
+                .collect(),
+        })
+    }
+
     /// The redactor these settings describe; fails on a pattern that does
     /// not compile.
     pub fn redactor(&self) -> Result<memory_redact::Redactor> {
@@ -903,6 +916,14 @@ mod tests {
             err.contains("redaction.patterns") && err.contains("broken"),
             "{err}"
         );
+
+        let mut kind = Config::default();
+        kind.redaction.patterns.push(RedactionPattern {
+            kind: "National ID".into(),
+            pattern: r"\b[A-Z]\d{9}\b".into(),
+        });
+        let err = kind.validate().unwrap_err().to_string();
+        assert!(err.contains("National ID"), "{err}");
 
         let mut env = Config::default();
         env.redaction.env_error = Some("expected value".into());

@@ -14,6 +14,8 @@ use std::sync::Arc;
 mod embedding_backfill;
 #[path = "support/profile_versions.rs"]
 mod profile_versions;
+#[path = "support/redaction_rules.rs"]
+mod redaction_rules;
 
 use chrono::{Duration, Utc};
 use memory_application::admin::DepartmentLifecycle;
@@ -653,5 +655,14 @@ async fn atoms_without_an_embedding_get_one_later() {
         without,
     )
     .await;
+    teardown(&db, &department).await;
+}
+
+#[tokio::test]
+async fn redaction_rules_are_kept_and_replaced_by_id() {
+    let Some((db, department)) = setup().await else {
+        return;
+    };
+    redaction_rules::exercise(&PostgresMetaStore::new(Arc::clone(&db)), &department).await;
     teardown(&db, &department).await;
 }

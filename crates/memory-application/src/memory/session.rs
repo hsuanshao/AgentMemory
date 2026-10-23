@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use crate::redaction::RedactionService;
 use memory_redact::{is_secret_key, Redactor};
 
 use memory_domain::error::{DomainError, DomainResult};
@@ -37,19 +38,19 @@ pub struct StoredTurn {
 }
 
 pub struct SessionService {
-    redactor: Arc<Redactor>,
+    redaction: Arc<RedactionService>,
     store: Arc<dyn SessionObjectStore>,
     ids: Arc<dyn IdGenerator>,
 }
 
 impl SessionService {
     pub fn new(
-        redactor: Arc<Redactor>,
+        redaction: Arc<RedactionService>,
         store: Arc<dyn SessionObjectStore>,
         ids: Arc<dyn IdGenerator>,
     ) -> Self {
         Self {
-            redactor,
+            redaction,
             store,
             ids,
         }
@@ -61,6 +62,7 @@ impl SessionService {
         headers: SessionTurnHeaders<'_>,
         body: Value,
     ) -> DomainResult<StoredTurn> {
+        let redactor = self.redaction.redactor(department).await?;
         let user = SegmentId::parse("x-memory-user-id", headers.user_id)?;
         let session = SegmentId::parse("x-memory-session-id", headers.session_id)?;
         let team = match headers.team_id.filter(|t| !t.is_empty()) {
@@ -78,7 +80,7 @@ impl SessionService {
             .map(|s| SegmentId::parse("subagent", s.as_str().unwrap_or_default()))
             .transpose()?;
         for value in record.values_mut() {
-            redact_strings(&self.redactor, value);
+            redact_strings(&redactor, value);
         }
         record.insert("user".into(), Value::String(user.to_string()));
         record.insert("session".into(), Value::String(session.to_string()));

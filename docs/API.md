@@ -153,9 +153,10 @@ These routes take an optional `x-memory-user-key`. Without one (the operator, `m
 `/v3/meta/agent-fixed-asset/{set,list,list-with-detail,summary-by-agents}`,
 `/v3/meta/acl/{grant,revoke,list,check}`,
 `/v3/meta/auth/verify`, `/v3/meta/department-quota/get`,
-`/v3/meta/config/user/{get,set}`.
+`/v3/meta/config/user/{get,set}`,
+`/v3/meta/redaction-rule/{list,create,update,disable,enable,test}` (system admins only; see [DISTILLATION §7](ops/DISTILLATION.md#7-secrets-and-redaction)).
 
-Meta list responses: `{items, total, limit, offset}`.
+Meta list responses: `{items, total, limit, offset}`; `redaction-rule/list` returns `{builtin, deployment_password_shape, deployment, department}` instead.
 
 ### Internal / operations (Bearer only)
 

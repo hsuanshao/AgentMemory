@@ -8,23 +8,26 @@ import type {
   AtomicUpdateResult,
   AuthVerifyResult,
   BatchDeleteResult,
-  CreatedUser,
   ConversationItem,
   ConversationQueryResult,
   CoreHealth,
   CoreMemory,
+  CreatedUser,
+  DeadLetter,
   GenerationLayer,
   GenerationLog,
   GenerationLogList,
   GenerationStatus,
   GenerationSummary,
-  DeadLetter,
   JobKind,
   MetaList,
   Page,
   PanelConfig,
   PipelineStatus,
   RecallResult,
+  RedactionRule,
+  RedactionRuleListing,
+  RedactionTestResult,
   ScenarioFile,
   ScenarioList,
   Scope,
@@ -149,6 +152,16 @@ export function createCoreApi(client: PanelClient) {
       keys: (userId: string, page: Page = {}) => call<MetaList<UserKeyInfo>>("meta/user-key/list", { user_id: userId, ...page }),
       createKey: (userId: string, name?: string) => call<UserKeyInfo>("meta/user-key/create", { user_id: userId, name }),
       revokeKey: (keyId: string) => call<unknown>("meta/user-key/revoke", { key_id: keyId }),
+
+      redactionRules: () => call<RedactionRuleListing>("meta/redaction-rule/list", {}),
+      createRedactionRule: (input: { kind: string; pattern: string; description?: string }) =>
+        call<RedactionRule>("meta/redaction-rule/create", input),
+      updateRedactionRule: (input: { rule_id: string; kind?: string; pattern?: string; description?: string }) =>
+        call<RedactionRule>("meta/redaction-rule/update", input),
+      setRedactionRuleEnabled: (ruleId: string, enabled: boolean) =>
+        call<RedactionRule>(`meta/redaction-rule/${enabled ? "enable" : "disable"}`, { rule_id: ruleId }),
+      testRedaction: (input: { text: string; kind?: string; pattern?: string }) =>
+        call<RedactionTestResult>("meta/redaction-rule/test", input),
     },
   };
 }

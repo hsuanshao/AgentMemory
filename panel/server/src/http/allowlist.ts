@@ -58,6 +58,12 @@ export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   "meta/agent/create",
   "meta/agent/update",
   "meta/agent/delete",
+  "meta/redaction-rule/list",
+  "meta/redaction-rule/create",
+  "meta/redaction-rule/update",
+  "meta/redaction-rule/disable",
+  "meta/redaction-rule/enable",
+  "meta/redaction-rule/test",
 ]);
 
 /** Paths callable without a verified user key (the login call itself). */
@@ -89,6 +95,12 @@ export const ADMIN_ONLY_V3_PATHS: ReadonlySet<string> = new Set([
   "meta/agent/create",
   "meta/agent/update",
   "meta/agent/delete",
+  "meta/redaction-rule/list",
+  "meta/redaction-rule/create",
+  "meta/redaction-rule/update",
+  "meta/redaction-rule/disable",
+  "meta/redaction-rule/enable",
+  "meta/redaction-rule/test",
 ]);
 
 const SAFE_SEGMENT = /^[a-z0-9-]+$/;

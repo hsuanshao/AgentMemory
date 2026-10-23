@@ -138,9 +138,10 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 `/v3/meta/agent-fixed-asset/{set,list,list-with-detail,summary-by-agents}`、
 `/v3/meta/acl/{grant,revoke,list,check}`、
 `/v3/meta/auth/verify`、`/v3/meta/department-quota/get`、
-`/v3/meta/config/user/{get,set}`。
+`/v3/meta/config/user/{get,set}`、
+`/v3/meta/redaction-rule/{list,create,update,disable,enable,test}`（僅限系統管理者；見 [DISTILLATION §7](ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。
 
-Meta 的列表回應格式：`{items, total, limit, offset}`。
+Meta 的列表回應格式：`{items, total, limit, offset}`；`redaction-rule/list` 例外，回傳 `{builtin, deployment_password_shape, deployment, department}`。
 
 ### 內部與維運（僅需 Bearer）
 

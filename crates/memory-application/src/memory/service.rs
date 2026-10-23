@@ -15,7 +15,7 @@ use memory_domain::retrieval::SearchMode;
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use tracing::warn;
 
-use memory_redact::Redactor;
+use crate::redaction::RedactionService;
 
 use super::search::AtomSearcher;
 use crate::common::{Page, Scored};
@@ -66,7 +66,7 @@ impl From<SceneVersion> for SceneEntry {
 }
 
 pub struct MemoryService {
-    redactor: Arc<Redactor>,
+    redaction: Arc<RedactionService>,
     conversations: Arc<dyn ConversationRepository>,
     atoms: Arc<dyn AtomRepository>,
     profiles: Arc<dyn ProfileVersionStore>,
@@ -80,7 +80,7 @@ pub struct MemoryService {
 impl MemoryService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        redactor: Arc<Redactor>,
+        redaction: Arc<RedactionService>,
         conversations: Arc<dyn ConversationRepository>,
         atoms: Arc<dyn AtomRepository>,
         profiles: Arc<dyn ProfileVersionStore>,
@@ -91,7 +91,7 @@ impl MemoryService {
         ids: Arc<dyn IdGenerator>,
     ) -> Self {
         Self {
-            redactor,
+            redaction,
             conversations,
             atoms,
             profiles,
@@ -112,6 +112,7 @@ impl MemoryService {
         session_id: &str,
         messages: Vec<NewMessage>,
     ) -> DomainResult<Vec<ConversationMessage>> {
+        let redactor = self.redaction.redactor(department).await?;
         if messages.is_empty() || messages.len() > MAX_MESSAGES_PER_ADD {
             return Err(DomainError::invalid("messages must contain 1-100 items"));
         }
@@ -120,7 +121,7 @@ impl MemoryService {
             .into_iter()
             .enumerate()
             .map(|(i, mut m)| {
-                m.content = self.redactor.redact(&without_nul(m.content));
+                m.content = redactor.redact(&without_nul(m.content));
                 ConversationMessage::validate_content(&m.content)?;
                 // Distinct recorded_at per message keeps L1 cursors exact.
                 let recorded_at = m
@@ -223,6 +224,7 @@ impl MemoryService {
         content: String,
         background: Option<String>,
     ) -> DomainResult<AtomicMemory> {
+        let redactor = self.redaction.redactor(department).await?;
         let mut atom = self
             .atoms
             .get(department, id)
@@ -237,8 +239,8 @@ impl MemoryService {
             ));
         }
         atom.revise(
-            self.redactor.redact(&content),
-            background.map(|b| self.redactor.redact(&b)),
+            redactor.redact(&content),
+            background.map(|b| redactor.redact(&b)),
             self.clock.now(),
         )?;
         let embedding = self.embed_one(&atom.content).await;
@@ -373,9 +375,10 @@ impl MemoryService {
         profile: &ProfileScope,
         mut versions: Vec<NewSceneVersion>,
     ) -> DomainResult<Vec<SceneVersion>> {
+        let redactor = self.redaction.redactor(department).await?;
         for v in &mut versions {
-            v.summary = self.redactor.redact(&v.summary);
-            v.body = self.redactor.redact(&v.body);
+            v.summary = redactor.redact(&v.summary);
+            v.body = redactor.redact(&v.body);
         }
         self.profiles
             .append_scenes(department, profile, versions)
@@ -514,6 +517,7 @@ impl MemoryService {
         op: PersonaOp,
         author: Option<&str>,
     ) -> DomainResult<ProfileFile> {
+        let redactor = self.redaction.redactor(department).await?;
         let current = self.profiles.persona(department, profile, None).await?;
         let persona = self
             .profiles
@@ -522,7 +526,7 @@ impl MemoryService {
                 profile,
                 NewPersonaVersion {
                     op,
-                    body: self.redactor.redact(&strip_scene_navigation(content)),
+                    body: redactor.redact(&strip_scene_navigation(content)),
                     attrs: current.map(|p| p.attrs).unwrap_or_default(),
                     author: author.map(str::to_owned),
                 },

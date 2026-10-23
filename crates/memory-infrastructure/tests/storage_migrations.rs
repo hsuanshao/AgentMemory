@@ -349,7 +349,7 @@ async fn postgres_from_0_4_1_gets_the_backfill_index() {
             .unwrap()
             .execute(
                 format!(
-                    "DROP INDEX {}.ix_atoms_missing_embedding; DELETE FROM agent_memory.schema_migrations WHERE version = 4",
+                    "DROP INDEX {}.ix_atoms_missing_embedding; DELETE FROM agent_memory.schema_migrations WHERE version >= 4",
                     quote_ident(&s)
                 )
                 .as_str(),

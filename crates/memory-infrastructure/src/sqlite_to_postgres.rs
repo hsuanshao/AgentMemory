@@ -402,6 +402,10 @@ const TABLES: &[Table] = &[
             ("doc", Json),
         ],
     ),
+    table(
+        "meta_redaction_rules",
+        &[("rule_id", Text), ("created_at", Text), ("doc", Json)],
+    ),
     Table {
         upsert: Some(
             "ON CONFLICT (scope, user_id, module, param_name) DO UPDATE SET param_value = EXCLUDED.param_value",

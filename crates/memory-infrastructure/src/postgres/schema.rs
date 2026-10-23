@@ -22,6 +22,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     // Created with the embedding column (`db::migrate_embedding`), since
     // the column exists only when embeddings are on.
     (4, "index of atoms without an embedding"),
+    (5, "administrators' redaction rules"),
 ];
 
 /// The latest schema version.
@@ -191,6 +192,9 @@ CREATE TABLE IF NOT EXISTS $S.meta_asset_acl (
     id $K PRIMARY KEY, asset_id $K NOT NULL, subject_type $K NOT NULL, subject_id $K NOT NULL,
     permission $K NOT NULL, doc JSONB NOT NULL,
     UNIQUE (asset_id, subject_type, subject_id, permission)
+);
+CREATE TABLE IF NOT EXISTS $S.meta_redaction_rules (
+    rule_id $K PRIMARY KEY, created_at $K NOT NULL, doc JSONB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS $S.meta_config_params (
     scope $K NOT NULL, user_id $K NOT NULL, module $K NOT NULL, param_name $K NOT NULL, param_value TEXT NOT NULL,

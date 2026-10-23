@@ -11,8 +11,8 @@ use memory_application::common::{BatchDeleteResult, FailedId, Page};
 use memory_application::ports::meta::{
     AclRepository, AgentFilter, AgentRepository, AssetFilter, AssetRepository, BindingRepository,
     ConfigParam, ConfigRepository, KnowledgeEntity, KnowledgeRepository, MemberRepository,
-    ParticipationFilter, TaskFilter, TaskRepository, TeamRepository, UserFilter, UserKeyRepository,
-    UserRepository,
+    ParticipationFilter, RedactionRule, RedactionRuleRepository, TaskFilter, TaskRepository,
+    TeamRepository, UserFilter, UserKeyRepository, UserRepository,
 };
 use memory_domain::error::DomainResult;
 use memory_domain::meta::{
@@ -1408,5 +1408,39 @@ impl KnowledgeRepository for PostgresMetaStore {
             page,
         )
         .await
+    }
+}
+
+#[async_trait]
+impl RedactionRuleRepository for PostgresMetaStore {
+    async fn list_redaction_rules(
+        &self,
+        department: &DepartmentId,
+    ) -> DomainResult<Vec<RedactionRule>> {
+        let s = self.db.schema(department).await?;
+        many(
+            &mut *self.db.conn().await?,
+            &format!("SELECT doc FROM {s}.meta_redaction_rules ORDER BY created_at, rule_id"),
+            &[],
+        )
+        .await
+    }
+
+    async fn put_redaction_rule(
+        &self,
+        department: &DepartmentId,
+        r: &RedactionRule,
+    ) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
+        execute(
+            &mut *self.db.conn().await?,
+            &format!(
+                "INSERT INTO {s}.meta_redaction_rules (rule_id, created_at, doc) VALUES (?,?,?) \
+                 ON CONFLICT (rule_id) DO UPDATE SET doc = EXCLUDED.doc"
+            ),
+            &[Arg::from(&r.rule_id), Arg::from(&r.created_at), to_doc(r)?],
+        )
+        .await
+        .map(|_| ())
     }
 }

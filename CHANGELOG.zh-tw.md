@@ -12,6 +12,7 @@
 - `redaction.passwordShape`（`AGENT_MEMORY_REDACTION_PASSWORD_SHAPE`）可關閉形狀規則；`redaction.patterns`（`AGENT_MEMORY_REDACTION_PATTERNS`，JSON 陣列）可加入身分證字號、電話等規則。規則無法編譯時，memory-core 會在啟動時停止（[DISTILLATION §7](docs/ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。升級前已存入的資料不會被改寫。
 
 ### 新增
+- **部門遮罩規則**（#57）：部門的系統管理者可以在內建和部署設定的規則之外加入自己的規則，在 Panel（Metadata → Redaction）或透過 `/v3/meta/redaction-rule/{list,create,update,disable,enable,test}`。修改後下一次寫入就生效（其他 replica 30 秒內）；規則只會停用、不會刪除，並記錄誰改了什麼。`test` 可以在存檔前先用範例文字預覽。範圍明顯過寬的 pattern（單獨一個字元就會匹配，或匹配日常文字 20% 以上）會被拒絕，因為它會把之後所有寫入都遮掉。規則不會動到已經存在、且 kind 已知的 `[REDACTED:…]` 標記，`amem` 也一樣；長得像標記的文字（`[REDACTED:hunter2xyz99]`）會照常被遮。`redaction.patterns` 的 kind 必須是 1-40 個 a-z、0-9 和 `-` 組成的字元，否則 memory-core 不會啟動。Schema migration 5 新增這個表；之後要退回較早的版本必須還原備份（[DISTILLATION §7](docs/ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。
 - 沒有向量就存進去的 atom（embedding 呼叫失敗或逾時）之後會補上：memory-core 每 10 分鐘重試一次（`memory.embedding.backfillIntervalSecs`），`memory-server reembed` 可以立刻執行。atom 本身不會被改寫，所以 L2 不會把它當成新的（[DISTILLATION §8](docs/ops/DISTILLATION.zh-tw.md#8-embedding-與負載)，#57）。
 - Schema migration 4 新增一個「沒有向量的 atom」的索引，作為補向量的佇列。memory-core 啟動時（或 `memory-server migrate`）會執行；之後要退回 0.4.1 必須還原備份，因為 0.4.1 會拒絕 schema 版本較新的資料。Postgres 會在升級後每個部門第一次被使用時建立這個索引；`atoms` 很大時，第一個請求要等它建完（[SCHEMA-MIGRATIONS](docs/ops/SCHEMA-MIGRATIONS.zh-tw.md)）。
 - 數值型的 `AGENT_MEMORY_*` 環境變數無法解析時，memory-core 現在會在啟動時停止並指出是哪一個，不再默默忽略；`check-config`（以及 `upgrade.sh`）會在替換任何東西之前就回報。

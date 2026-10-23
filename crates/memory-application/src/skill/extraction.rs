@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use memory_redact::Redactor;
+use crate::redaction::RedactionService;
 
 use async_trait::async_trait;
 use memory_domain::error::{DomainError, DomainResult};
@@ -118,7 +118,7 @@ enum ReviewAction {
 }
 
 pub struct SkillExtractionService {
-    redactor: Arc<Redactor>,
+    redaction: Arc<RedactionService>,
     buffers: Arc<dyn SkillBufferStore>,
     skills: Arc<SkillService>,
     pipeline: Arc<PipelineService>,
@@ -131,7 +131,7 @@ pub struct SkillExtractionService {
 impl SkillExtractionService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        redactor: Arc<Redactor>,
+        redaction: Arc<RedactionService>,
         buffers: Arc<dyn SkillBufferStore>,
         skills: Arc<SkillService>,
         pipeline: Arc<PipelineService>,
@@ -141,7 +141,7 @@ impl SkillExtractionService {
         settings: ExtractionSettings,
     ) -> Self {
         Self {
-            redactor,
+            redaction,
             buffers,
             skills,
             pipeline,
@@ -170,12 +170,13 @@ impl SkillExtractionService {
         key: BufferKey,
         messages: Vec<BufferedMessage>,
     ) -> DomainResult<AddResult> {
+        let redactor = self.redaction.redactor(department).await?;
         self.require_enabled()?;
         validate_key(&key)?;
         let messages: Vec<BufferedMessage> = without_nul_messages(messages)
             .into_iter()
             .map(|mut m| {
-                m.content = self.redactor.redact(&m.content);
+                m.content = redactor.redact(&m.content);
                 m
             })
             .collect();

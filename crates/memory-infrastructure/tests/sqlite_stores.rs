@@ -4,6 +4,8 @@ use std::sync::Arc;
 mod embedding_backfill;
 #[path = "support/profile_versions.rs"]
 mod profile_versions;
+#[path = "support/redaction_rules.rs"]
+mod redaction_rules;
 
 use chrono::{Duration, Utc};
 use memory_application::common::Page;
@@ -583,4 +585,10 @@ async fn a_service_that_refuses_every_input_stops_the_run_as_misconfigured() {
     embedder.refuse_all.store(false, Ordering::Relaxed);
     let fixed = backfill.department(&department, 200).await.unwrap();
     assert_eq!((fixed.embedded, fixed.complete), (100, true), "{fixed:?}");
+}
+
+#[tokio::test]
+async fn redaction_rules_are_kept_and_replaced_by_id() {
+    let (_dir, pool, department) = setup();
+    redaction_rules::exercise(&SqliteMetaStore::new(pool), &department).await;
 }
