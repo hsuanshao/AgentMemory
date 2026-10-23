@@ -406,10 +406,14 @@ impl CliLlm {
             .spawn()
             .map_err(|e| unavailable(format!("cannot start `{}`: {e}", self.settings.command)))?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(prompt.as_bytes())
-                .await
-                .map_err(|e| unavailable(format!("writing prompt failed: {e}")))?;
+            match stdin.write_all(prompt.as_bytes()).await {
+                Ok(()) => {}
+                // The tool closed its input before reading all of it (it
+                // exited, or answers without the rest): its exit status and
+                // output decide, as for any other run.
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+                Err(e) => return Err(unavailable(format!("writing prompt failed: {e}"))),
+            }
             // Dropping stdin sends EOF so the tool starts answering.
         }
         let output = tokio::time::timeout(self.settings.timeout, child.wait_with_output())
@@ -723,6 +727,24 @@ mod tests {
             .starts_with("Q: <system>"));
         let appended = cli("echo", &["Q:"], PromptMode::Arg);
         assert!(appended.complete(&ask()).await.unwrap().ends_with("hello"));
+    }
+
+    /// A tool that answers without reading its input (or exits first) is
+    /// judged by its exit status and output, not by the closed pipe.
+    #[tokio::test]
+    async fn a_tool_that_ignores_stdin_still_answers() {
+        // 1 MiB: far past a pipe buffer, so the write meets the closed pipe.
+        let big = vec![ChatMessage::user("x".repeat(1 << 20))];
+        let mut answers = cli("pwd", &[], PromptMode::Stdin);
+        answers.settings.args.clear();
+        let mut silent = cli("true", &[], PromptMode::Stdin);
+        silent.settings.args.clear();
+        for _ in 0..20 {
+            let out = answers.complete(&big).await.unwrap();
+            assert!(!out.is_empty());
+            let err = silent.complete(&big).await.unwrap_err().to_string();
+            assert!(!err.contains("Broken pipe"), "{err}");
+        }
     }
 
     #[tokio::test]

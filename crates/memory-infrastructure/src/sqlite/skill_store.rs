@@ -452,4 +452,24 @@ impl SkillBufferStore for SqliteSkillStore {
             })
             .await
     }
+
+    async fn list_tasks(
+        &self,
+        department: &DepartmentId,
+        status: &str,
+    ) -> DomainResult<Vec<SkillTask>> {
+        let status = status.to_owned();
+        self.pool
+            .get(department)?
+            .call(move |c| {
+                let mut stmt = c.prepare(
+                    "SELECT doc FROM skill_tasks WHERE json_extract(doc, '$.status') = ?",
+                )?;
+                let docs = stmt
+                    .query_map([status], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                docs.iter().map(|d| from_doc(d)).collect()
+            })
+            .await
+    }
 }

@@ -456,6 +456,11 @@ pub struct SkillExtractionConfig {
     pub enabled: bool,
     pub archive_bytes: usize,
     pub tool_call_threshold: u32,
+    /// Extracted changes wait for approval (`skill/proposal/*`, the Panel's
+    /// Skills page); `false` applies them at once.
+    pub require_approval: bool,
+    /// Undecided proposals expire after this many days (0: never).
+    pub proposal_ttl_days: u64,
 }
 
 impl Default for SkillExtractionConfig {
@@ -464,6 +469,8 @@ impl Default for SkillExtractionConfig {
             enabled: true,
             archive_bytes: 40 * 1024,
             tool_call_threshold: 10,
+            require_approval: true,
+            proposal_ttl_days: 30,
         }
     }
 }
@@ -728,6 +735,14 @@ impl Config {
         }
         if let Some(enabled) = env("AGENT_MEMORY_SKILL_ENABLED") {
             self.skill.enabled = matches!(enabled.as_str(), "1" | "true" | "on" | "yes");
+        }
+        if let Some(days) = env_number("AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS", &mut self.env_errors)
+        {
+            self.skill.extraction.proposal_ttl_days = days;
+        }
+        if let Some(required) = env("AGENT_MEMORY_SKILL_REQUIRE_APPROVAL") {
+            self.skill.extraction.require_approval =
+                !matches!(required.as_str(), "0" | "false" | "off" | "no");
         }
         if self.server.api_key.as_deref().is_some_and(str::is_empty) {
             self.server.api_key = None;

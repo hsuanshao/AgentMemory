@@ -61,6 +61,10 @@ curl -sS -X POST "$CORE/v3/pipeline/status" "${H_ADMIN[@]}" -d '{}'   # "code":0
 
 This change stores nothing new, so going back to the previous version needs no restore on its account.
 
+### Extracted skills wait for approval
+
+Skill extraction no longer saves skills by itself. What it creates or changes waits as a proposal on the Panel's **Skills** page (and `skill/proposal/*`) until the conversation's user (on an agent they may use), an admin of the team, or a system admin approves it. Nothing is lost: after the upgrade, new extractions simply show up there instead of in the skill list. Someone has to look at them, or no new skills appear. Proposals left undecided expire after 30 days (`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`, 0 for never). A deployment that wants the old behaviour sets `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false` (`skill.extraction.requireApproval: false`). The model also gets the conversation as JSON data and may change only the agent's skills it was shown, with or without approval ([ARCHITECTURE](ARCHITECTURE.md#4-memory-model-and-pipeline)).
+
 ### Other changes
 
 **The distillation CLI no longer inherits memory-core's environment.** It gets `PATH`, `HOME`, locale, certificate and proxy variables and its own settings (`ANTHROPIC_*`/`CLAUDE_*` for claude, `OPENAI_*`/`CODEX_*` for codex, `GEMINI_*`/`GOOGLE_*` for agy). claude, codex and agy logged in as the install describes keep working. A CLI that read some other variable from the container's environment needs it listed in `AGENT_MEMORY_LLM_CLI_PASS_ENV` ([DISTILLATION §6](ops/DISTILLATION.md#what-the-cli-inherits)). **Check this before upgrading** if the CLI goes through a cloud provider (claude on Bedrock: `AWS_*`; claude on Vertex AI: `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS`; codex on Azure: `AZURE_OPENAI_*`) or if `llm.cli.command` is a wrapper script: otherwise distillation fails after the upgrade.

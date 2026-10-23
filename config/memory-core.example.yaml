@@ -77,6 +77,8 @@ skill:
     enabled: true
     archiveBytes: 40960
     toolCallThreshold: 10
+    requireApproval: true     # extracted skill changes wait for approval (false: applied at once)
+    proposalTtlDays: 30       # undecided proposals expire after this many days (0: never)
   versionTtlDays: 0
   maxVersions: 100
 

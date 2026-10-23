@@ -2,6 +2,7 @@
 
 use axum::extract::State;
 use axum::response::Response;
+use memory_application::meta::Caller;
 use memory_application::ports::skill::{BufferKey, BufferedMessage};
 use memory_application::skill::service::{
     ListQuery, ReadOptions, ResourceInput, SkillIdentity, StringPatch,
@@ -408,4 +409,67 @@ pub async fn extract(
         &ctx.request_id,
         json!({"ok": true, "task_id": archived.task_id, "archived_at_ms": archived.archived_at_ms, "archive_key": archived.archive_key}),
     ))
+}
+
+// ── Proposals from skill extraction ─────────────────────────────────────
+
+/// The caller; which proposals they may review is the service's rule.
+async fn reviewer(s: &SharedState, ctx: &Ctx) -> Result<Caller, ApiError> {
+    let department = ctx.department()?;
+    let key = ctx.user_key()?;
+    s.services
+        .meta
+        .authenticate(&department, &key)
+        .await
+        .map_err(|e| ctx.err(e))
+}
+
+pub async fn proposal_list(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    let department = ctx.department()?;
+    let team = required(&ctx, &body, "team_id")?;
+    let caller = reviewer(&s, &ctx).await?;
+    let items = s
+        .services
+        .skill_extraction
+        .proposals(&department, &caller, team, str_of(&body, "agent_id"))
+        .await
+        .map_err(|e| ctx.err(e))?;
+    Ok(ok(&ctx.request_id, json!({ "items": items })))
+}
+
+async fn decide(s: SharedState, ctx: Ctx, body: Value, approve: bool) -> ApiResult {
+    let department = ctx.department()?;
+    let task_id = required(&ctx, &body, "task_id")?;
+    let index = body
+        .get("index")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ApiError::bad_request(&ctx.request_id, "index is required"))?;
+    let caller = reviewer(&s, &ctx).await?;
+    let decided = s
+        .services
+        .skill_extraction
+        .decide(&department, &caller, task_id, index as usize, approve)
+        .await
+        .map_err(|e| ctx.err(e))?;
+    Ok(ok(&ctx.request_id, decided))
+}
+
+pub async fn proposal_approve(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    decide(s, ctx, body, true).await
+}
+
+pub async fn proposal_reject(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    decide(s, ctx, body, false).await
 }

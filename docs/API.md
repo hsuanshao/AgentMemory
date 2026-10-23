@@ -135,8 +135,15 @@ These routes need `x-memory-user-key`. Scopes, generation logs and dead letters 
 
 `/v3/skill/{create,update,patch,delete,get,get-by-name,list,search,versions,listing,extract}`,
 `/v3/skill/files/{write,remove,read}`,
-`/v3/skill/conversation/{add,force-archive}`.
+`/v3/skill/conversation/{add,force-archive}`,
+`/v3/skill/proposal/{list,approve,reject}`.
 `/v3/skill/export` is not implemented (returns 501).
+
+Skill extraction proposes; it saves nothing until someone approves ([ARCHITECTURE](ARCHITECTURE.md#4-memory-model-and-pipeline)):
+
+* `skill/proposal/list` `{team_id, agent_id?}` → `{items: [{task_id, team_id, agent_id, user_id, session_id, archived_at_ms, reason, proposals: [{index, change, base_version?, state}]}]}`, newest first. `change` is `{action: "create", name, content}`, `{action: "update", skill_id, content}` or `{action: "patch", skill_id, old_string, new_string}`. Lists the pending proposals the caller may review, by the memory rules (they are drawn from someone's conversation): their own conversations' on an agent they may use (a private agent is its owner's), any of a team they admin, all for system admins. Team leaders oversee operational state but are not reviewers. Nothing is listed or decided for an archived agent. Proposals are stored redacted; undecided ones expire after `skill.extraction.proposalTtlDays` (30 days by default) and are no longer listed (`state: "expired"`; deciding one gets 404 `skill_proposal_expired`).
+* `skill/proposal/approve` `{team_id, agent_id, task_id, index}` → the proposal with `state: "applied"` and `result {action, skill_id, version}`. The change is made as the conversation's agent and user. The rule is checked against the agent as it is now (archived, or made private since). 409 `skill_changed` when the skill moved past `base_version`; 403 for anyone else; 404 once decided. Decisions on one task are made one at a time.
+* `skill/proposal/reject` `{team_id, agent_id, task_id, index}` → the proposal with `state: "rejected"`.
 
 ### Knowledge metadata, chat memory, prompts, generation logs
 

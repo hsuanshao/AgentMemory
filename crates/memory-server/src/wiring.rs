@@ -292,10 +292,14 @@ pub async fn build(config: &Config) -> Result<App> {
         Arc::clone(&llm),
         Arc::clone(&clock),
         Arc::clone(&ids),
+        Arc::clone(&meta),
+        Arc::clone(&coordination.state_locks),
         ExtractionSettings {
             enabled: config.skill.enabled && config.skill.extraction.enabled,
             archive_bytes: config.skill.extraction.archive_bytes,
             tool_call_threshold: config.skill.extraction.tool_call_threshold,
+            require_approval: config.skill.extraction.require_approval,
+            proposal_ttl_days: config.skill.extraction.proposal_ttl_days,
             ..Default::default()
         },
     ));

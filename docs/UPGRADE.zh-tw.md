@@ -61,6 +61,10 @@ curl -sS -X POST "$CORE/v3/pipeline/status" "${H_ADMIN[@]}" -d '{}'   # "code":0
 
 這項改動沒有寫入任何新資料，所以就這一點而言，退回前一版不需要還原備份。
 
+### 萃取出的 skill 要先核准
+
+skill 萃取不會再自己存下 skill。它建立或修改的內容會先成為提案，出現在 Panel 的 **Skills** 頁（以及 `skill/proposal/*`），等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效。不會遺失任何東西：升級後，新的萃取結果只是改成出現在那裡，而不是直接進入 skill 清單。但需要有人去看，否則不會有新的 skill。未決定的提案會在 30 天後過期（`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`，0 表示永不過期）。想維持舊行為的部署，請設定 `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`（`skill.extraction.requireApproval: false`）。不論是否需要核准，模型拿到的對話都是 JSON 資料，也只能修改提供給它看的、該 agent 的 skill（[ARCHITECTURE](ARCHITECTURE.zh-tw.md#4-記憶模型與蒸餾管線)）。
+
 ### 其他改動
 
 **蒸餾用的 CLI 不再繼承 memory-core 的環境變數。** 它只拿到 `PATH`、`HOME`、語系、憑證與 proxy 變數，以及自己的設定（claude 是 `ANTHROPIC_*`／`CLAUDE_*`，codex 是 `OPENAI_*`／`CODEX_*`，agy 是 `GEMINI_*`／`GOOGLE_*`）。依安裝說明登入的 claude、codex 和 agy 不受影響。若 CLI 會讀容器環境裡的其他變數，請把它列在 `AGENT_MEMORY_LLM_CLI_PASS_ENV`（[DISTILLATION §6](ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。**升級前請先確認**：CLI 若透過雲端供應商（claude 走 Bedrock：`AWS_*`；claude 走 Vertex AI：`CLOUD_ML_REGION`、`GOOGLE_APPLICATION_CREDENTIALS`；codex 走 Azure：`AZURE_OPENAI_*`），或 `llm.cli.command` 是 wrapper script，沒列出這些變數，升級後蒸餾就會失敗。

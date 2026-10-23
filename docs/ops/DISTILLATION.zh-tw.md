@@ -128,7 +128,8 @@ Panel 上的 **Re-run** 按鈕效果相同，每次 10 筆。重跑的 job 會�
 
 - 已知的 agent CLI，在讀到 prompt 之前先把它自帶的工具關掉；
 - 每個 CLI 都會在 prompt 裡被告知沒有工具；
-- 模型如果還是想用工具，會以 `LLM_TOOL_REQUEST` 失敗。這種失敗不會重試：L1/L2 直接 drop 那批輸入，它的 dead letter 會等到模型更換後才重跑（[第 5 節](#5-dead-letter-與重跑)）。
+- 模型如果還是想用工具，會以 `LLM_TOOL_REQUEST` 失敗。這種失敗不會重試：L1/L2 直接 drop 那批輸入，它的 dead letter 會等到模型更換後才重跑（[第 5 節](#5-dead-letter-與重跑)）；
+- skill 萃取拿到的對話是 JSON 資料，只能修改提供給它看的 skill，而且只提案：它的修改要等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效（Panel → Skills，或 `skill/proposal/*`）。`skill.extraction.requireApproval: false`（`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`）會直接套用（[ARCHITECTURE](../ARCHITECTURE.zh-tw.md)）。
 
 ### Agent CLI
 
