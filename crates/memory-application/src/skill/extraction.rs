@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use memory_redact::Redactor;
+
 use async_trait::async_trait;
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::without_nul;
@@ -69,6 +71,8 @@ procedural know-how worth saving as a Skill (a SKILL.md playbook other agents ca
 
 Good skills: multi-step procedures that worked, troubleshooting paths, checklists, conventions
 learned the hard way. Not skills: one-off facts, chit-chat, user preferences (those are memories).
+A skill never contains a password, key, token or other credential: write a placeholder such as
+<API_KEY> instead, and keep [REDACTED:...] markers as they are.
 
 Prefer improving an existing skill (patch/update) over creating a near-duplicate. The existing
 skills are the ones listed in the input; there are no others to look for.
@@ -114,6 +118,7 @@ enum ReviewAction {
 }
 
 pub struct SkillExtractionService {
+    redactor: Arc<Redactor>,
     buffers: Arc<dyn SkillBufferStore>,
     skills: Arc<SkillService>,
     pipeline: Arc<PipelineService>,
@@ -124,7 +129,9 @@ pub struct SkillExtractionService {
 }
 
 impl SkillExtractionService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        redactor: Arc<Redactor>,
         buffers: Arc<dyn SkillBufferStore>,
         skills: Arc<SkillService>,
         pipeline: Arc<PipelineService>,
@@ -134,6 +141,7 @@ impl SkillExtractionService {
         settings: ExtractionSettings,
     ) -> Self {
         Self {
+            redactor,
             buffers,
             skills,
             pipeline,
@@ -164,7 +172,13 @@ impl SkillExtractionService {
     ) -> DomainResult<AddResult> {
         self.require_enabled()?;
         validate_key(&key)?;
-        let messages = without_nul_messages(messages);
+        let messages: Vec<BufferedMessage> = without_nul_messages(messages)
+            .into_iter()
+            .map(|mut m| {
+                m.content = self.redactor.redact(&m.content);
+                m
+            })
+            .collect();
         validate_messages(&messages)?;
         let raw_bytes = byte_size(&messages);
         let compress = raw_bytes >= self.settings.archive_bytes;

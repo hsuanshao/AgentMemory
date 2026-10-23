@@ -15,6 +15,11 @@ const L1_REPLY: &str = r###"[{"scene_name":"I (the AI) am planning a release wit
   {"content":"The user always runs integration tests before a release","type":"persona","priority":80,"source_message_ids":[]},
   {"content":"low value chatter","type":"persona","priority":10,"source_message_ids":[]}]}]"###;
 const L2_REPLY: &str = r###"{"operations":[{"action":"create","file":"Release Planning","summary":"How the user ships releases","content":"## Core narrative\nRuns integration tests, then releases on Monday."}],"persona_update_request":null}"###;
+/// L1's answer to a turn marked `redaction-check`: the model spells out a
+/// secret that was never in its (redacted) input.
+const L1_SECRET_REPLY: &str = r###"[{"scene_name":"I (the AI) am checking redaction with the user","memories":[
+  {"content":"The staging database password is Kx9!mQ2vLp42","type":"episodic","priority":90,"source_message_ids":[]}]}]"###;
+
 /// L2's answer when a scene named `Legacy-Release.md` already exists.
 const L2_MERGE_REPLY: &str = r###"{"operations":[{"action":"merge","file":"Release Planning","merge_from":["Legacy-Release.md"],"summary":"How the user ships releases","content":"## Core narrative\nRuns integration tests, then releases on Monday."}],"persona_update_request":null}"###;
 /// L2's answer while the user changes scenes under it (see `RACE`): a
@@ -42,7 +47,12 @@ const SKILL_REPLY: &str = r###"{"actions":[{"action":"create","name":"release-ch
 async fn fake_llm(Json(req): Json<Value>) -> Json<Value> {
     let system = req["messages"][0]["content"].as_str().unwrap_or_default();
     let reply = if system.starts_with("You are a scene-segmentation") {
-        L1_REPLY
+        let input = req["messages"][1]["content"].as_str().unwrap_or_default();
+        if input.contains("redaction-check") {
+            L1_SECRET_REPLY
+        } else {
+            L1_REPLY
+        }
     } else if system.starts_with("You reconcile") {
         "[]"
     } else if system.starts_with("You are a Memory Consolidation") {
@@ -494,6 +504,99 @@ async fn scene_writes_during_l2_are_kept() {
         (json!(2), json!("manual")),
         "{seed}"
     );
+}
+
+/// Secrets are redacted on every server write path, whatever the client
+/// sent and whatever the model wrote (#57).
+#[tokio::test(flavor = "multi_thread")]
+async fn secrets_are_redacted_on_every_server_write_path() {
+    let (_data, client) = start().await;
+    let secret = "Hunter2xyz99";
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": format!("redaction-check: 資料庫密碼是 {secret}")},
+                {"role": "assistant", "content": "好的"}
+            ]})),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    let l0 = client
+        .call(
+            "/v3/conversation/query",
+            client.scoped(json!({"limit": 10})),
+        )
+        .await;
+    assert!(!l0.to_string().contains(secret), "{l0}");
+    assert!(l0.to_string().contains("[REDACTED:secret-phrase]"), "{l0}");
+
+    // L1: the model wrote a password out; it is redacted before storage.
+    client.wait_for(|s| s["l1"]["total"] == 1).await;
+    let atoms = client
+        .call("/v3/atomic/query", client.scoped(json!({})))
+        .await;
+    let atom = &atoms["data"]["items"][0];
+    let content = atom["content"].as_str().unwrap_or_default();
+    assert!(!content.contains("Kx9!mQ2vLp42"), "{atoms}");
+    assert!(content.contains("[REDACTED:"), "{atoms}");
+
+    // API writes of atoms, scenes, the persona and skills.
+    let updated = client
+        .call(
+            "/v3/atomic/update",
+            client.scoped(json!({"id": atom["id"], "content": format!("mật khẩu là {secret}")})),
+        )
+        .await;
+    assert_eq!(updated["code"], 0, "{updated}");
+    for (path, body) in [
+        (
+            "/v3/scenario/write",
+            client.scoped(json!({"path": "secrets.md", "content": format!("pw {secret}"), "summary": format!("パスワード：{secret}")})),
+        ),
+        (
+            "/v3/core/write",
+            client.scoped(json!({"content": format!("# Me\n비밀번호는 {secret}")})),
+        ),
+    ] {
+        let written = client.call(path, body).await;
+        assert_eq!(written["code"], 0, "{path}: {written}");
+    }
+    let skill = client
+        .call_as(
+            "/v3/skill/create",
+            &client.admin_key,
+            json!({"team_id": client.team_id, "agent_id": client.agent_id, "name": "db-login",
+                   "content": format!("---\nname: db-login\ndescription: log in\n---\nlogin with password: {secret}")}),
+        )
+        .await;
+    assert_eq!(skill["code"], 0, "{skill}");
+    let skill_id = skill["data"]["skill_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    for (path, body) in [
+        ("/v3/atomic/query", client.scoped(json!({}))),
+        (
+            "/v3/scenario/read",
+            client.scoped(json!({"path": "secrets.md"})),
+        ),
+        ("/v3/scenario/ls", client.scoped(json!({}))),
+        ("/v3/core/read", client.scoped(json!({}))),
+    ] {
+        let read = client.call(path, body).await;
+        assert_eq!(read["code"], 0, "{path}: {read}");
+        assert!(!read.to_string().contains(secret), "{path}: {read}");
+    }
+    let read = client
+        .call_as(
+            "/v3/skill/get",
+            &client.admin_key,
+            json!({"skill_id": skill_id, "team_id": client.team_id, "agent_id": client.agent_id}),
+        )
+        .await;
+    assert!(!read.to_string().contains(secret), "{read}");
+    assert!(read.to_string().contains("[REDACTED:"), "{read}");
 }
 
 async fn assert_conversation_is_distilled(client: &Client) {

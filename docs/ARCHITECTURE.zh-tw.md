@@ -266,7 +266,7 @@ sequenceDiagram
 | 設定 | `~/.config/agent-memory/client.json`（0600），由 `amem login` 寫入；可用 `AMEM_*` 環境變數覆寫 | `config.rs` |
 | Transcript | 把 Claude Code JSONL、Antigravity steps、Codex hook payload、OpenAI 格式的訊息轉成同一種模型：user/assistant 文字加上 tool_call/tool_result，並移除 `<system-reminder>` 區塊 | `transcript.rs` |
 | 游標 | 每個 host 和 session 各一份，存在 `~/.local/share/agent-memory/state`，每次 Stop 只送新的內容 | `hooks.rs` |
-| 遮蔽 | 用正規表示式比對 API key、token、私鑰、`password=` 這類字串，替換成 `[REDACTED:<種類>]`。遮蔽在截斷之前執行，避免截斷後留下半個秘密 | `redact.rs` |
+| 遮蔽 | 比對 API key、token、私鑰、`password=` 這類字串、以自然語言提到的密碼（英文與亞洲主要語言），以及長得像密碼的字串，替換成 `[REDACTED:<種類>]`。遮蔽在截斷之前執行，避免截斷後留下半個秘密。memory-core 在每條寫入路徑上執行同一個 crate | `memory-redact`（`crates/memory-client/redact`，MIT） |
 | 佇列 | 每個請求一個 JSON 檔，放在 `…/agent-memory/queue`，從最舊的開始重送；`.flush.lock`（超過 120 秒視為失效）避免重複送出 | `queue.rs` |
 | MCP | stdio server，提供 `memory_recall` 工具，讓 agent 能主動搜尋記憶 | `mcp.rs` |
 

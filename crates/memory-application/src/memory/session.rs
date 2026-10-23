@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use memory_redact::Redactor;
+
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::scope::{DepartmentId, SegmentId};
 use serde_json::{Map, Value};
@@ -35,13 +37,22 @@ pub struct StoredTurn {
 }
 
 pub struct SessionService {
+    redactor: Arc<Redactor>,
     store: Arc<dyn SessionObjectStore>,
     ids: Arc<dyn IdGenerator>,
 }
 
 impl SessionService {
-    pub fn new(store: Arc<dyn SessionObjectStore>, ids: Arc<dyn IdGenerator>) -> Self {
-        Self { store, ids }
+    pub fn new(
+        redactor: Arc<Redactor>,
+        store: Arc<dyn SessionObjectStore>,
+        ids: Arc<dyn IdGenerator>,
+    ) -> Self {
+        Self {
+            redactor,
+            store,
+            ids,
+        }
     }
 
     pub async fn add_turn(
@@ -66,6 +77,9 @@ impl SessionService {
             .get("subagent")
             .map(|s| SegmentId::parse("subagent", s.as_str().unwrap_or_default()))
             .transpose()?;
+        for value in record.values_mut() {
+            redact_strings(&self.redactor, value);
+        }
         record.insert("user".into(), Value::String(user.to_string()));
         record.insert("session".into(), Value::String(session.to_string()));
 
@@ -157,6 +171,16 @@ fn is_fixed_timestamp(s: &str) -> bool {
         && b[23] == b'Z'
 }
 
+/// Redacts every string in a raw turn, however deeply nested.
+fn redact_strings(redactor: &Redactor, value: &mut Value) {
+    match value {
+        Value::String(s) => *s = redactor.redact(s),
+        Value::Array(items) => items.iter_mut().for_each(|v| redact_strings(redactor, v)),
+        Value::Object(map) => map.values_mut().for_each(|v| redact_strings(redactor, v)),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +218,20 @@ mod tests {
             .unwrap_err()
             .detail
             .contains("unknown field"));
+    }
+
+    #[test]
+    fn every_string_of_a_raw_turn_is_redacted() {
+        let mut turn = body();
+        turn["messages"][0]["content"] = json!("資料庫密碼是 Hunter2xyz99");
+        turn["output"]["content"] = json!({"nested": ["pw: Tr0ub4dor&3x", 7]});
+        redact_strings(Redactor::builtin(), &mut turn);
+        let text = turn.to_string();
+        assert!(
+            !text.contains("Hunter2xyz99") && !text.contains("Tr0ub4dor"),
+            "{text}"
+        );
+        assert_eq!(turn["output"]["content"]["nested"][1], 7);
+        assert_eq!(turn["user_query"], "q");
     }
 }

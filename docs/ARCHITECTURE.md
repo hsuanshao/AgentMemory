@@ -259,7 +259,7 @@ sequenceDiagram
 | Settings | `~/.config/agent-memory/client.json` (0600), written by `amem login`; `AMEM_*` env vars override | `config.rs` |
 | Transcripts | Claude Code JSONL, Antigravity steps, Codex hook payloads and OpenAI-style messages are mapped to one model: user/assistant text plus tool_call/tool_result. `<system-reminder>` blocks are stripped | `transcript.rs` |
 | Cursors | Per host and session under `~/.local/share/agent-memory/state`, so each Stop sends only new lines | `hooks.rs` |
-| Redaction | Regex rules for API keys, tokens, private keys and `password=`-style pairs → `[REDACTED:<kind>]`. Runs before truncation, so a cut can't expose half a secret | `redact.rs` |
+| Redaction | Rules for API keys, tokens, private keys, `password=`-style pairs, passwords named in natural language (English and the major languages of Asia) and password-shaped strings → `[REDACTED:<kind>]`. Runs before truncation, so a cut can't expose half a secret. memory-core runs the same crate on every write path | `memory-redact` (`crates/memory-client/redact`, MIT) |
 | Queue | One JSON file per request in `…/agent-memory/queue`, replayed oldest first; `.flush.lock` (stale after 120 s) prevents double sends | `queue.rs` |
 | MCP | stdio server exposing `memory_recall`, so the agent can search on purpose | `mcp.rs` |
 

@@ -4,6 +4,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use memory_redact::Redactor;
+
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage};
 use memory_domain::retrieval::SearchMode;
@@ -75,6 +77,7 @@ pub struct L1Outcome {
 }
 
 pub struct L1Extractor {
+    redactor: Arc<Redactor>,
     llm: Arc<dyn LlmClient>,
     atoms: Arc<dyn AtomRepository>,
     embedder: Arc<dyn EmbeddingProvider>,
@@ -88,6 +91,7 @@ pub struct L1Extractor {
 impl L1Extractor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        redactor: Arc<Redactor>,
         llm: Arc<dyn LlmClient>,
         atoms: Arc<dyn AtomRepository>,
         embedder: Arc<dyn EmbeddingProvider>,
@@ -98,6 +102,7 @@ impl L1Extractor {
         max_memories: usize,
     ) -> Self {
         Self {
+            redactor,
             llm,
             atoms,
             embedder,
@@ -402,7 +407,13 @@ impl L1Extractor {
         Ok(Some(merged))
     }
 
+    /// Stores an atom, secrets redacted: the input was redacted when it was
+    /// captured, but the model may still spell one out.
     async fn store(&self, department: &DepartmentId, atom: &AtomicMemory) -> DomainResult<()> {
+        let mut redacted = atom.clone();
+        redacted.content = self.redactor.redact(&atom.content);
+        redacted.background = atom.background.as_deref().map(|b| self.redactor.redact(b));
+        let atom = &redacted;
         let embedding = match self.embedder.dimensions() {
             Some(_) => match self
                 .embedder

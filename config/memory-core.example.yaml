@@ -57,6 +57,13 @@ memory:
     # model: "text-embedding-3-small"
     # dimensions: 1536
 
+# Secrets are redacted before anything is stored or distilled (#57); the
+# built-in rules always apply. See docs/ops/DISTILLATION.md §7.
+redaction:
+  passwordShape: true         # also redact password-shaped strings
+  patterns: []                # e.g. - kind: tw-national-id
+                              #        pattern: '\b[A-Z][12]\d{8}\b'
+
 skill:
   enabled: true
   routing:

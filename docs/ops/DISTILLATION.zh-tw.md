@@ -12,6 +12,7 @@ memory-core 會在背景蒸餾對話：L1 擷取記憶，L2 整理成 scene，L3
 - [4. 更換模型](#4-更換模型)
 - [5. Dead letter 與重跑](#5-dead-letter-與重跑)
 - [6. 工具與蒸餾](#6-工具與蒸餾)
+- [7. 機密與遮罩](#7-機密與遮罩)
 
 ## 1. 會記錄哪些資訊
 
@@ -170,3 +171,48 @@ memory-core 送出的 request 從來不帶 `tools`。所以如果回應只有工
 - 工具呼叫格式的文字，例如 `<tool_call>…</tool_call>`。
 
 回應裡如果同時有答案，就拿掉工具呼叫的部分後照常使用，模型順手多寫了一個工具呼叫不會因此被 drop。空的回應如果沒有工具呼叫，仍然視為暫時性失敗而重試。
+
+## 7. 機密與遮罩
+
+蒸餾會把讀到的內容變成長期記憶，所以機密在儲存前就要拿掉。每個命中都會換成 `[REDACTED:<kind>]`。
+
+**在哪裡遮罩。** `amem` client 在排入佇列或送出前先遮罩一次。memory-core 在每條寫入路徑上再遮罩一次，所以直接呼叫 HTTP API 的 client 也涵蓋在內：
+
+- 對話（`/v3/conversation/add`）和原始 session 紀錄（`/v3/session/add`）；
+- skill 萃取緩衝（`/v3/skill/conversation/add`）和 skill 內容；
+- 透過 API 寫入的 atom，以及 L1 模型寫出的 atom（模型可能寫出輸入裡沒有的機密）；
+- 場景和 persona，不論來自 L2／L3 或 API。
+
+L1 和 skill 的 prompt 也要求模型不得記錄任何憑證的值。
+
+**規則**（`crates/memory-client/redact`，`amem` 和 memory-core 共用）：
+
+| Kind | 抓什麼 |
+| --- | --- |
+| `private-key`、`jwt`、`openai-key`、`github-token` 等 | 已知的 token 和金鑰格式 |
+| `secret-assignment` | 英文鍵名的 `password=…`、`api_key: …` |
+| `secret-phrase` | 用自然語言提到密碼，後面接著值。關鍵字含常見縮寫：英文（`password`、`pw`、`pwd`、`pass`、`psw` 等）、中文（`密碼`、`密码`、`口令`、`金鑰` 等）、日文（`パスワード`、`パス` 等）、韓文（`비밀번호`、`비번` 等）、越南文（`mật khẩu`、`mk`）、泰文、印尼／馬來文、印地文、阿拉伯文、西班牙文、葡萄牙文、法文、德文、土耳其文和俄文。接在 `:`、`=`、`：` 之後的值一律遮掉；接在「是」這類字（`是`、`là`、`は`、`는`、`es` 等）或空白之後的，只遮看起來像機密的值（含數字、符號或大小寫混合） |
+| `password-shape` | 不需要關鍵字：8 個以上的 ASCII 字元，同時包含字母、數字，以及夾在中間的 `!@#$%^&+=?~\|` 其中之一。網址、路徑、`x=1` 這類設定值，以及含已知模型名稱（`qwen`、`llama`、`claude` 等）的字串不會遮掉。在一個部署的歷史資料上實測：8 字元以上的 token 有 0.26% 命中，幾乎都是程式碼；L1 沒有命中 |
+
+**設定。**
+
+```yaml
+redaction:
+  passwordShape: true          # AGENT_MEMORY_REDACTION_PASSWORD_SHAPE
+  patterns:                    # AGENT_MEMORY_REDACTION_PATTERNS（JSON 陣列）
+    - kind: tw-national-id
+      pattern: '\b[A-Z][12]\d{8}\b'
+    - kind: phone
+      pattern: '(?P<keep>\btel:\s*)\+?\d[\d -]{7,}\d'
+```
+
+- `keep` 群組會保留該部分（這裡是 `tel:` 標籤）。
+- 規則無法編譯，或 `AGENT_MEMORY_REDACTION_PATTERNS` 不是 JSON 陣列時，memory-core 會拒絕啟動；`memory-server check-config` 也會回報。
+- `.env` 裡的 `$` 會被 Docker Compose 展開，要寫 `$$`，或改寫在設定檔裡。
+- 身分證字號、電話這類個資預設不遮。哪些格式重要因國家和部署而異，請在這裡自行加入。
+
+**限制。**
+
+- 規則是啟發式的，只是安全網，不是保證。
+- 升級前已經存進去的資料不會被改寫。
+- skill 的二進位資源檔不會掃描。

@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use memory_redact::Redactor;
+
 use base64::Engine;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
 use memory_domain::scope::DepartmentId;
@@ -270,6 +272,7 @@ fn decode_resources(inputs: Vec<ResourceInput>) -> DomainResult<Vec<Resource>> {
 }
 
 pub struct SkillService {
+    redactor: Arc<Redactor>,
     repo: Arc<dyn SkillRepository>,
     resources: Arc<dyn SkillResourceStore>,
     meta: Arc<MetaService>,
@@ -280,6 +283,7 @@ pub struct SkillService {
 
 impl SkillService {
     pub fn new(
+        redactor: Arc<Redactor>,
         repo: Arc<dyn SkillRepository>,
         resources: Arc<dyn SkillResourceStore>,
         meta: Arc<MetaService>,
@@ -288,6 +292,7 @@ impl SkillService {
         settings: SkillSettings,
     ) -> Self {
         Self {
+            redactor,
             repo,
             resources,
             meta,
@@ -325,6 +330,7 @@ impl SkillService {
         metadata: Option<Value>,
     ) -> DomainResult<SkillSummary> {
         let (team, agent, user) = who.require_writer()?;
+        let content = &self.redactor.redact(content);
         let fm = parse_frontmatter(content)?;
         if fm.name != name {
             return Err(skill_error(
@@ -447,7 +453,10 @@ impl SkillService {
         writes: Vec<Resource>,
         removes: Vec<String>,
     ) -> DomainResult<SkillSummary> {
-        let content = content.unwrap_or_else(|| head.content.clone());
+        let content = match content {
+            Some(c) => self.redactor.redact(&c),
+            None => head.content.clone(),
+        };
         let fm = parse_frontmatter(&content)?;
         if fm.name != head.name {
             return Err(skill_error(

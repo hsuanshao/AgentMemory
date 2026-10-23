@@ -133,6 +133,6 @@ The first build takes several minutes: the core image installs the bundled LLM C
 
 ## 6. Rules for test code
 
-- **No secret-shaped literals.** Secret scanners (GitGuardian, GitHub push protection) flag anything that looks like a real token, even in tests. Build such values at runtime from a prefix and low-entropy filler, as `crates/memory-client/src/redact.rs` does with `fake("sk-mem-", 'x', 32)`. Never paste a key printed by a test server into a test.
+- **No secret-shaped literals.** Secret scanners (GitGuardian, GitHub push protection) flag anything that looks like a real token, even in tests. Build such values at runtime from a prefix and low-entropy filler, as `crates/memory-client/redact/src/lib.rs` does with `fake("sk-mem-", 'x', 32)`. Never paste a key printed by a test server into a test.
 - **Tests that need a service skip, never fail, when it is not configured**, and say so with `eprintln!("skipping: …")`. CI then decides which services to provide.
 - **Read back through the other side.** For storage code, write with one adapter and assert with the other (or through the HTTP API), rather than only counting rows.
