@@ -291,7 +291,7 @@ ACL 的 `deny` 條目會被儲存，但目前不會被套用。
 - 部門由 `init-admin`（見下）建立。對不存在的部門，其他請求一律拒絕，也不會存下任何東西：資料面路由的回應和 user key 錯誤時相同，`meta/auth/verify` 回 `valid: false`，其他路由回 404 `unknown_department`。回應內容看不出部門是否存在，但回應時間看得出來（部門名稱不視為機密；見 [ARCHITECTURE](ARCHITECTURE.zh-tw.md#兩種信任區)）。用 SQLite 時是 `<data>/departments/<id>/memory.db` 這個資料庫檔；用 Postgres 時是一個獨立的 schema。檔案（skill 資源、原始 session 回合）放在 `<data>/departments/<id>/` 底下。
 - 使用者是每個部門各自獨立的，所以每個新的部門都需要自己的管理者：用該部門的 `x-memory-department-id` 呼叫 `POST /v3/internal/meta/user/init-admin`。
 - 一套 Panel 只服務一個部門（`CORE_DEPARTMENT_ID`）。要管理另一個部門，請再部署一套 Panel。
-- `POST /v3/department/destroy` 會刪除一個部門及其所有內容，需要伺服器 API key。
+- `POST /v3/department/destroy` 會刪除一個部門及其所有內容，包括它的 dead letter。需要伺服器 API key；要刪除的部門寫在 body，不需要 header。佇列裡還在等待的該部門 job，會在 worker 取出時丟棄；如果在那之前又用同一個部門 ID 重新初始化，這種 job 會在新的部門上執行。
 
 ## 14. 限制與目前的不足
 

@@ -23,10 +23,13 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
+        let pool = Arc::new(DepartmentPool::new(dir.path().to_path_buf(), 4));
+        let department = SegmentId::parse("department", "ins-vec").unwrap();
+        pool.create(&department).unwrap();
         Self {
-            pool: Arc::new(DepartmentPool::new(dir.path().to_path_buf(), 4)),
+            pool,
             _dir: dir,
-            department: SegmentId::parse("department", "ins-vec").unwrap(),
+            department,
         }
     }
 

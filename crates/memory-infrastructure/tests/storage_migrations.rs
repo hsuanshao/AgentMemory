@@ -80,7 +80,7 @@ async fn postgres_data_from_0_2_is_migrated() {
     let s = quote_ident(&schema_name(&dept));
     {
         let db = PgDb::connect(&db_url, 2, None).await.unwrap();
-        db.schema(&dept).await.unwrap();
+        db.create_department(&dept).await.unwrap();
         let mut c = db.conn().await.unwrap();
         c.execute(
             format!(
@@ -343,7 +343,7 @@ async fn postgres_from_0_4_1_gets_the_backfill_index() {
     let s = schema_name(&dept);
     {
         let db = PgDb::connect(&db_url, 2, Some(2)).await.unwrap();
-        db.schema(&dept).await.unwrap();
+        db.create_department(&dept).await.unwrap();
         db.conn()
             .await
             .unwrap()

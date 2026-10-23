@@ -35,4 +35,8 @@ impl DepartmentDirectory for PgDb {
     async fn exists(&self, department: &DepartmentId) -> DomainResult<bool> {
         self.is_registered(department).await
     }
+
+    async fn create(&self, department: &DepartmentId) -> DomainResult<()> {
+        self.create_department(department).await.map(drop)
+    }
 }

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use memory_application::admin::DepartmentDirectory;
 use memory_application::memory::backfill::EmbeddingBackfill;
 use memory_application::pipeline::service::{JobFailure, PipelineService};
 use memory_application::ports::coordination::KeyLock;
@@ -389,11 +390,13 @@ impl QueueBackend for LocalQueue {
 /// Spawns the dispatcher. Jobs sharing a serial key never run concurrently
 /// (across nodes when `locks` is distributed). `locks` must not be the
 /// department the pipeline uses for its state documents: a job holds its
-/// serial key while the pipeline takes state locks inside it.
+/// serial key while the pipeline takes state locks inside it. A job whose
+/// department no longer exists (destroyed after it was queued) is dropped.
 pub fn spawn_worker(
     queue: Arc<WorkerQueue>,
     locks: Arc<dyn KeyLock>,
     pipeline: Arc<PipelineService>,
+    departments: Arc<dyn DepartmentDirectory>,
     settings: WorkerSettings,
 ) -> JoinHandle<()> {
     let permits = Arc::new(Semaphore::new(settings.concurrency.max(1)));
@@ -411,6 +414,21 @@ pub fn spawn_worker(
                     continue;
                 }
             };
+            // Asked per job: it also clears what this node still remembers
+            // of a department another node destroyed.
+            match departments.exists(envelope.job.department()).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    drop_for_unknown_department(&envelope);
+                    ack(&queue, &receipt).await;
+                    continue;
+                }
+                Err(err) => {
+                    warn!(error = %err, "department check failed; requeueing");
+                    requeue_and_ack(&queue, envelope, &receipt, settings.busy_requeue_delay).await;
+                    continue;
+                }
+            }
             let guard = match locks.try_lock(&envelope.job.serial_key()).await {
                 Ok(Some(guard)) => guard,
                 Ok(None) => {
@@ -493,6 +511,14 @@ fn keep_lease(backend: Arc<dyn QueueBackend>, receipt: String) -> Option<JoinHan
     }))
 }
 
+fn drop_for_unknown_department(envelope: &Envelope) {
+    info!(
+        kind = envelope.job.kind(),
+        department = %envelope.job.department(),
+        "job dropped: its department no longer exists"
+    );
+}
+
 /// Records the outcome; `true` once it is durable, so the delivery may be
 /// acked.
 async fn handle_result(
@@ -507,6 +533,11 @@ async fn handle_result(
         metrics.completed(Utc::now().to_rfc3339());
         return true;
     };
+    // Destroyed while the job ran: nothing to retry or keep.
+    if err.code == "unknown_department" {
+        drop_for_unknown_department(&envelope);
+        return true;
+    }
     // A failure that would repeat is not retried (L1/L2 dropped its input).
     let retry =
         envelope.attempt < settings.max_retries && !failure_is_deterministic(&err.to_string());

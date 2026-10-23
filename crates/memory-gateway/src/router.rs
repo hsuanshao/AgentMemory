@@ -62,6 +62,10 @@ async fn known_department(
     path: &str,
     unknown: fn(&Ctx) -> ApiError,
 ) -> Result<(), ApiError> {
+    // Names its department in the body and needs no header.
+    if path == "/v3/department/destroy" {
+        return Ok(());
+    }
     let department = ctx.department()?;
     // Asked even where it does not refuse: the answer also clears a stale
     // view of a department another replica destroyed.

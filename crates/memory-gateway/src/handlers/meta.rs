@@ -528,6 +528,12 @@ pub async fn internal_init_admin(
 ) -> ApiResult {
     let department = ctx.department()?;
     let username = required(&ctx, &body, "username")?;
+    // The one place a department is created.
+    s.services
+        .departments
+        .create(&department)
+        .await
+        .map_err(|e| ctx.err(e))?;
     let result = s
         .services
         .meta

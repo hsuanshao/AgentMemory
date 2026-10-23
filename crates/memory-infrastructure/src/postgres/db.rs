@@ -198,8 +198,19 @@ impl PgDb {
         self.ready.read().ok()?.get(department).cloned()
     }
 
-    /// The department's schema, created and migrated on first use.
+    /// The department's schema, migrated on first use after start-up;
+    /// `unknown_department` when it is not registered (only
+    /// [`PgDb::create_department`] registers one).
     pub async fn schema(&self, department: &DepartmentId) -> DomainResult<Schema> {
+        self.open(department, false).await
+    }
+
+    /// Registers the department (if new) and brings its schema up to date.
+    pub async fn create_department(&self, department: &DepartmentId) -> DomainResult<Schema> {
+        self.open(department, true).await
+    }
+
+    async fn open(&self, department: &DepartmentId, create: bool) -> DomainResult<Schema> {
         if let Some(s) = self.cached(department) {
             return Ok(s);
         }
@@ -212,12 +223,23 @@ impl PgDb {
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         xact_lock(&mut tx, &format!("agent_memory:migrate:{name}")).await?;
         let registry = quote_ident(REGISTRY_SCHEMA);
-        execute(
+        if create {
+            execute(
+                &mut tx,
+                &format!("INSERT INTO {registry}.departments (department_id, schema_name) VALUES (?, ?) ON CONFLICT (department_id) DO NOTHING"),
+                &args![department.as_str(), name.as_str()],
+            )
+            .await?;
+        } else if fetch_optional(
             &mut tx,
-            &format!("INSERT INTO {registry}.departments (department_id, schema_name) VALUES (?, ?) ON CONFLICT (department_id) DO NOTHING"),
-            &args![department.as_str(), name.as_str()],
+            &format!("SELECT 1 AS found FROM {registry}.departments WHERE department_id = ?"),
+            &args![department.as_str()],
         )
-        .await?;
+        .await?
+        .is_none()
+        {
+            return Err(DomainError::unknown_department(department));
+        }
         execute_script(&mut tx, &schema::department_ddl(&quoted)).await?;
         if let Some(dims) = self.dims {
             migrate_embedding(&mut tx, &quoted, dims).await?;

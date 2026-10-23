@@ -30,11 +30,9 @@ use serde_json::json;
 fn setup() -> (tempfile::TempDir, Arc<DepartmentPool>, DepartmentId) {
     let dir = tempfile::tempdir().unwrap();
     let pool = Arc::new(DepartmentPool::new(dir.path().to_path_buf(), 4));
-    (
-        dir,
-        pool,
-        SegmentId::parse("department", "ins-test").unwrap(),
-    )
+    let department = SegmentId::parse("department", "ins-test").unwrap();
+    pool.create(&department).unwrap();
+    (dir, pool, department)
 }
 
 fn scope(user: &str) -> MemoryScope {
@@ -591,4 +589,27 @@ async fn a_service_that_refuses_every_input_stops_the_run_as_misconfigured() {
 async fn redaction_rules_are_kept_and_replaced_by_id() {
     let (_dir, pool, department) = setup();
     redaction_rules::exercise(&SqliteMetaStore::new(pool), &department).await;
+}
+
+#[tokio::test]
+async fn only_create_makes_a_department_database() {
+    let (dir, pool, created) = setup();
+    let unknown = SegmentId::parse("department", "ins-unknown").unwrap();
+    let store = SqliteMemoryStore::new(Arc::clone(&pool), None);
+    let filter = ConversationFilter::default();
+    let err = ConversationRepository::count(&store, &unknown, None, &filter)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "unknown_department");
+    assert!(!pool.exists(&unknown));
+    assert!(!dir.path().join("departments/ins-unknown").exists());
+
+    assert!(pool.exists(&created));
+    pool.create(&unknown).unwrap();
+    assert_eq!(
+        ConversationRepository::count(&store, &unknown, None, &filter)
+            .await
+            .unwrap(),
+        0
+    );
 }

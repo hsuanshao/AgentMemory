@@ -180,6 +180,7 @@ async fn sqlite_data_survives_the_move_to_postgres() {
     let id = format!("ins-mig-{}", uuid::Uuid::new_v4().simple());
     let department: DepartmentId = SegmentId::parse("department", &id).unwrap();
     let pool = Arc::new(DepartmentPool::new(data.path().to_owned(), 4));
+    pool.create(&department).unwrap();
     seed(&pool, &department).await;
     drop(pool);
 

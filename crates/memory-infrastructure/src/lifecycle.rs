@@ -12,6 +12,7 @@ use memory_domain::scope::DepartmentId;
 use serde_json::{json, Map, Value};
 
 use crate::sqlite::db::DepartmentPool;
+use crate::worker::QueueBackend;
 
 /// Runs every step and merges their reports into one JSON object.
 pub struct CompositeLifecycle {
@@ -65,6 +66,29 @@ impl DepartmentLifecycle for LocalDirCleanup {
     }
 }
 
+/// Removes the department's dead letters, so the sweeper never redrives
+/// them. Queued jobs are left to the worker, which drops them.
+pub struct DeadLetterCleanup {
+    queue: Arc<dyn QueueBackend>,
+}
+
+impl DeadLetterCleanup {
+    pub fn new(queue: Arc<dyn QueueBackend>) -> Self {
+        Self { queue }
+    }
+}
+
+#[async_trait]
+impl DepartmentLifecycle for DeadLetterCleanup {
+    async fn destroy(&self, department: &DepartmentId) -> DomainResult<Value> {
+        let removed = self
+            .queue
+            .take_dead_letters(&|l| l.job.department() == department, usize::MAX)
+            .await?;
+        Ok(json!({"removed": removed.len()}))
+    }
+}
+
 /// Forgets pipeline timers and cursors of the department.
 pub struct StateCleanup {
     state: Arc<dyn PipelineStateRepository>,
@@ -88,5 +112,9 @@ impl DepartmentLifecycle for StateCleanup {
 impl DepartmentDirectory for DepartmentPool {
     async fn exists(&self, department: &DepartmentId) -> DomainResult<bool> {
         Ok(DepartmentPool::exists(self, department))
+    }
+
+    async fn create(&self, department: &DepartmentId) -> DomainResult<()> {
+        DepartmentPool::create(self, department).map(drop)
     }
 }

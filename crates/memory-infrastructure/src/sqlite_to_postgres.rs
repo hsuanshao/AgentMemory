@@ -532,7 +532,8 @@ async fn migrate_department(
         return Ok(report);
     }
 
-    let s = pg.schema(department).await?;
+    // A department copied from SQLite is created on the target here.
+    let s = pg.create_department(department).await?;
     let mut tx = pg.begin().await?;
     for t in TABLES {
         let (copied, dropped) = copy_table(source, &mut tx, &s.to_string(), t, pg.dims()).await?;

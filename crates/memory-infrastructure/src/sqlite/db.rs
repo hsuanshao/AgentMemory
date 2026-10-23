@@ -110,7 +110,18 @@ impl DepartmentPool {
         self.data_dir.join("departments").join(department.as_str())
     }
 
+    /// The department's database; `unknown_department` when it has none
+    /// (only [`DepartmentPool::create`] makes one).
     pub fn get(&self, department: &DepartmentId) -> DomainResult<Arc<Db>> {
+        self.open(department, false)
+    }
+
+    /// Opens the department's database, creating it if needed.
+    pub fn create(&self, department: &DepartmentId) -> DomainResult<Arc<Db>> {
+        self.open(department, true)
+    }
+
+    fn open(&self, department: &DepartmentId, create: bool) -> DomainResult<Arc<Db>> {
         let mut entries = self
             .entries
             .lock()
@@ -118,6 +129,10 @@ impl DepartmentPool {
         if let Some(entry) = entries.get_mut(department) {
             entry.last_used = Instant::now();
             return Ok(Arc::clone(&entry.db));
+        }
+        let path = self.department_dir(department).join("memory.db");
+        if !create && !path.is_file() {
+            return Err(DomainError::unknown_department(department));
         }
         if entries.len() >= self.capacity {
             if let Some(oldest) = entries
@@ -128,10 +143,7 @@ impl DepartmentPool {
                 entries.remove(&oldest);
             }
         }
-        let db = Arc::new(Db::open(
-            &self.department_dir(department).join("memory.db"),
-            schema::migrate_department,
-        )?);
+        let db = Arc::new(Db::open(&path, schema::migrate_department)?);
         entries.insert(
             department.clone(),
             Entry {
@@ -159,11 +171,13 @@ impl DepartmentPool {
         }
     }
 
-    /// Departments that currently have a database on disk.
+    /// Departments that currently have a database on disk (a directory
+    /// holding only files is not one).
     pub fn known_departments(&self) -> Vec<String> {
         std::fs::read_dir(self.data_dir.join("departments"))
             .map(|dir| {
                 dir.filter_map(Result::ok)
+                    .filter(|e| e.path().join("memory.db").is_file())
                     .filter_map(|e| e.file_name().into_string().ok())
                     .collect()
             })

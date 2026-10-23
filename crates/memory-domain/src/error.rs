@@ -74,6 +74,15 @@ impl DomainError {
         Self::new(ErrorKind::Unavailable, "unavailable", detail)
     }
 
+    /// A department nobody created (`init-admin`), or one destroyed since.
+    pub fn unknown_department(department: impl std::fmt::Display) -> Self {
+        Self::new(
+            ErrorKind::NotFound,
+            "unknown_department",
+            format!("{department}: run init-admin for it first"),
+        )
+    }
+
     pub fn internal(detail: impl Into<String>) -> Self {
         Self::new(ErrorKind::Internal, "internal", detail)
     }

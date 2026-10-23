@@ -1898,6 +1898,106 @@ async fn dead_letters(client: &Client) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_destroyed_department_stays_gone() {
+    let base_url = spawn_failing_llm().await;
+    let (data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.worker.max_retries = 0;
+    })
+    .await;
+    assert_destroyed_department_stays_gone(&client).await;
+    assert!(!data
+        .path()
+        .join("departments")
+        .join(&client.department)
+        .join("memory.db")
+        .exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_destroyed_department_stays_gone_on_postgres() {
+    let Ok(url) = std::env::var("AGENT_MEMORY_TEST_POSTGRES_URL") else {
+        eprintln!("skipping: set AGENT_MEMORY_TEST_POSTGRES_URL to run against Postgres");
+        return;
+    };
+    let base_url = spawn_failing_llm().await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.worker.max_retries = 0;
+        config.storage.backend = "postgres".into();
+        config.storage.postgres.url = url;
+    })
+    .await;
+    assert_destroyed_department_stays_gone(&client).await;
+}
+
+/// `department/destroy` removes the department's dead letters, and a job
+/// for it that is still queued is dropped without re-creating anything.
+async fn assert_destroyed_department_stays_gone(client: &Client) {
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "We release v2 next Monday."}
+            ]})),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    let mut letters = Vec::new();
+    for _ in 0..100 {
+        letters = dead_letters(client).await;
+        if !letters.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(letters.len(), 1, "the L1 job is dead-lettered");
+    let job: memory_application::ports::pipeline::PipelineJob =
+        serde_json::from_value(letters[0]["job"].clone()).unwrap();
+
+    // No department header: the department is named in the body.
+    let destroyed: Value = client
+        .http
+        .post(format!("{}/v3/department/destroy", client.base))
+        .bearer_auth("test-key")
+        .json(&json!({"department_id": client.department}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        destroyed["data"]["cleaned"]["dead_letters"]["removed"], 1,
+        "{destroyed}"
+    );
+    let services = &client.state.services;
+    let id = memory_domain::scope::SegmentId::parse("department", &client.department).unwrap();
+    assert!(!services.departments.exists(&id).await.unwrap());
+
+    // A job queued before the destroy reaches the worker afterwards.
+    services.pipeline.enqueue_job(job).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(!services.departments.exists(&id).await.unwrap());
+    let everyone = memory_application::ports::pipeline::DeadLetterFilter::default();
+    let left = services
+        .pipeline
+        .dead_letters(
+            &everyone,
+            100,
+            &memory_domain::meta::visibility::ScopeVisibility::Department,
+        )
+        .await
+        .unwrap();
+    assert!(
+        left.iter().all(|l| l.job.department() != &id),
+        "the dropped job was not dead-lettered"
+    );
+}
+
 /// An LLM endpoint that is always overloaded.
 async fn spawn_failing_llm() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
