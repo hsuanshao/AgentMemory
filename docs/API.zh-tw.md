@@ -104,7 +104,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 `/v3/core/{read,write,count}`、`/v3/session/add`。
 
 * `conversation/add` `{session_id, messages: [{role: user|assistant, content, timestamp?}]}`：寫入 L0 並驅動蒸餾管線。
-* `session/add`：儲存原始的 session 回合物件（需要 `x-memory-user-id` 與 `x-memory-session-id`，由 middleware 依授權後的範圍設定）。
+* `session/add`：把原始的 session 回合物件存到 `sessions/<source>/<team>/<agent>/<user>/<session>/` 底下，並在物件裡記錄 `agent`、`user`、`session`。client 送 `x-memory-session-id`；team、agent 與使用者取自授權後的範圍（`team_id`／`agent_id` 和其他路由一樣用來指定範圍），所以私人 agent 的回合只屬於它的擁有者（COLLABORATION §9）。Body：`source`（`online` 或 `offline`）、`started_at`、`ended_at`（`YYYY-MM-DDTHH:MM:SS.sssZ`）、`user_query`、`model`、`messages`（不可為空）、`output`（物件），以及選填的 `subagent`；其他欄位（包括 `agent`、`user`、`session`）一律回 422。每筆回合最大 `max_session_body_bytes`；總量目前沒有配額或保留期限。
 * L0/L1 以 team + agent + user 劃分範圍；L2（`scenario/*`）與 L3（`core/*`）只以 team + agent 劃分。
 * 場景和 persona 只追加版本。`scenario/write`、`core/write` 會新增一個以呼叫者為作者的版本；內容與最新版本完全相同時不會新增，直接回傳最新版本。`scenario/rm` 會讓場景退役：它不再出現在 `ls`、`count` 和不帶 `version` 的 `read`，但帶 `version` 的 `read` 仍能取得它的任何版本；被合併掉的場景也一樣。
 * 每個場景都有固定的 `scene_id`（出現在 `ls`、`read`、`write` 的回應中）。用 `path` 的 `read` 找的是「現在」叫這個名稱的場景；名稱被另一個場景用掉之後，要用 `scenario/read {scene_id, version?}` 讀舊場景，這個方式也會回傳已退役的場景。`read` 另外回傳該版本的 `op`（`create`、`update`、`merge`、`retire`、`manual`、`import`）、`parents`（合併時併入的版本）和 `author`。

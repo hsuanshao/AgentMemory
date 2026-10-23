@@ -42,7 +42,8 @@ fn action_for(path: &str) -> MemoryAction {
     }
 }
 
-const FIELDS: [&str; 4] = ["team_id", "agent_id", "user_id", "task_id"];
+/// The scope fields this layer resolves and writes into the body.
+pub const SCOPE_FIELDS: [&str; 4] = ["team_id", "agent_id", "user_id", "task_id"];
 
 fn header_name(field: &str) -> String {
     format!("x-memory-{}", field.replace('_', "-"))
@@ -124,7 +125,7 @@ async fn authorize(s: &SharedState, ctx: &Ctx, req: Request) -> Result<Request, 
         Some(scope.user_id.as_str()),
         scope.task_id.as_ref().map(|t| t.as_str()),
     ];
-    for (field, value) in FIELDS.iter().zip(resolved) {
+    for (field, value) in SCOPE_FIELDS.iter().zip(resolved) {
         let name = HeaderName::try_from(header_name(field)).expect("static isolation header name");
         match value {
             Some(v) => {

@@ -26,6 +26,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 ### Changed
 - `amem` sends the persona and scene navigation to a Claude Code session only when they changed since the session last received them, and again after `SessionStart` (start, resume, `/clear`, fork, compaction); the matching memories still go out on every prompt. On a deployment of about 20 agents this part was two thirds of all injected context and repeated unchanged on 3 prompts out of 4. They are also repeated every 20 prompts by default, for a compaction or `/rewind` without a `SessionStart`; `AMEM_SYSTEM_CONTEXT_EVERY` (or `system_context_every` in `client.json`) sets another `N`, `0` for only on change, `1` for the previous behaviour. The Claude Code plugin registers a `SessionStart` hook for this; a hand-written `settings.json` needs `amem hook claude-code session-start` added. The hooks that write a session's state take a `flock` on a `.lock` file next to it, so they do not overwrite each other; a hook waits at most a second for it and then writes anyway. Codex and Antigravity are unchanged (#39).
 
+### Fixed
+- `/v3/session/add` stores the turn again: every authorized request got 422 `unknown field: team_id`, because the authorization layer writes the resolved scope into the body. The scope fields are now taken out before the turn is checked, and the turn is stored under its agent too (`sessions/<source>/<team>/<agent>/<user>/<session>/`, with `agent` in the record); an `agent`, `user` or `session` field sent by the client is still refused ([API](docs/API.md)).
+
 ## [0.4.1] - 2026-10-23
 
 ### Added
