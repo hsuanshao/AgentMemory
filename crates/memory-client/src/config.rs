@@ -21,6 +21,11 @@ pub struct Config {
     /// nor captured. Empty by default.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub skip_prompt_prefixes: String,
+    /// How often a Claude Code session receives the persona and scene
+    /// navigation again when they have not changed: `0` or empty (default)
+    /// only when they change, `1` on every prompt, `N` every N prompts.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub system_context_every: String,
 }
 
 fn default_department_id() -> String {
@@ -36,7 +41,7 @@ const FIELDS: [&str; 5] = [
 ];
 
 /// Settings that may stay empty, overridable like `FIELDS`.
-const OPTIONAL_FIELDS: [&str; 1] = ["skip_prompt_prefixes"];
+const OPTIONAL_FIELDS: [&str; 2] = ["skip_prompt_prefixes", "system_context_every"];
 
 impl Config {
     /// File (if any) plus environment overrides.
@@ -70,6 +75,7 @@ impl Config {
             "user_key" => &mut self.user_key,
             "team_id" => &mut self.team_id,
             "skip_prompt_prefixes" => &mut self.skip_prompt_prefixes,
+            "system_context_every" => &mut self.system_context_every,
             _ => &mut self.agent_id,
         }
     }
@@ -81,6 +87,12 @@ impl Config {
             .split(',')
             .map(str::trim)
             .any(|prefix| !prefix.is_empty() && prompt.starts_with(prefix))
+    }
+
+    /// `system_context_every` as a number; anything unreadable means 0
+    /// (only when it changes).
+    pub fn system_context_every(&self) -> u64 {
+        self.system_context_every.trim().parse().unwrap_or(0)
     }
 
     /// Names of required fields that are still empty.
@@ -211,6 +223,7 @@ mod tests {
             team_id: "team-file".into(),
             agent_id: "agt-file".into(),
             skip_prompt_prefixes: String::new(),
+            system_context_every: String::new(),
         };
         let c = Config::merge(Some(file), |k| match k {
             "AMEM_TEAM_ID" => Some("team-env".into()),
@@ -229,9 +242,13 @@ mod tests {
     #[test]
     fn system_context_every_parses_or_defaults_to_on_change() {
         assert_eq!(Config::default().system_context_every(), 0);
-        let c = Config::merge(None, |k| (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| " 3 ".into()));
+        let c = Config::merge(None, |k| {
+            (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| " 3 ".into())
+        });
         assert_eq!(c.system_context_every(), 3);
-        let c = Config::merge(None, |k| (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| "often".into()));
+        let c = Config::merge(None, |k| {
+            (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| "often".into())
+        });
         assert_eq!(c.system_context_every(), 0);
         assert!(!c.missing().contains(&"system_context_every"));
     }

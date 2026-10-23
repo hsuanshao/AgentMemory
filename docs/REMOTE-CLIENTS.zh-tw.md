@@ -139,6 +139,8 @@ amem recall "release plan"  # 印出 agent 會收到的內容
 
 有些 prompt 不是人打的，例如 orchestrator 輸入給 agent 的訊息。把 `AMEM_SKIP_PROMPT_PREFIXES`（或 `client.json` 的 `skip_prompt_prefixes`）設成以逗號分隔的前綴清單，例如 `[AGEND-`。去掉開頭空白後以其中一個前綴開頭的 prompt 不會拿來 recall，整輪也不會被 capture。在 agent 還在工作時送出的訊息，會當成目前這一輪的一部分被 capture。這類訊息若以略過前綴開頭，只會略過那一則，不影響它所在的那一輪。只比對 prompt 的開頭，所以人打的 prompt 只是中間出現前綴時照常 capture。預設為空，也就是不略過任何 prompt。
 
+Recall 會回兩段：和 prompt 相關的記憶，以及 persona 和 scene 導覽；後者在同一個 session 的多數 prompt 都一樣。在 Claude Code 裡，記憶每個 prompt 都會注入；persona 和 scene 導覽只在內容和這個 session 上次收到的不同時才注入，Claude Code 啟動、resume、`/clear`、fork 或壓縮 context（`SessionStart`）之後也會再注入一次。把 `AMEM_SYSTEM_CONTEXT_EVERY`（或 `client.json` 的 `system_context_every`）設成 `1` 會像以前一樣每個 prompt 都注入，設成 `N` 則每 N 個 prompt 也會重複一次。判斷依據按 session 存在 `~/.local/share/agent-memory/state/claude-code/`。
+
 ## 5. Claude Code
 
 Plugin 位於 `clients/claude-code`，透過本 repo 的 marketplace（`.claude-plugin/marketplace.json`）發佈。
@@ -156,7 +158,8 @@ Plugin 的行為：
 
 | Hook | 行為 |
 | --- | --- |
-| `UserPromptSubmit` | 依你的 prompt 進行 recall，把記憶加入 context（最多約 9,500 字元）。 |
+| `SessionStart` | 記下這個 session 的 context 是新的（啟動、resume、`/clear`、fork、壓縮），下一個 prompt 會再附上 persona 和 scene 導覽。 |
+| `UserPromptSubmit` | 依你的 prompt 進行 recall，把記憶加入 context（最多約 9,500 字元）。persona 和 scene 導覽只在和這個 session 上次收到的不同時才加入（`AMEM_SYSTEM_CONTEXT_EVERY`）。 |
 | `Stop` | 送出這一輪：你的 prompt、回覆，以及所有 tool call 與結果。只送出上次 Stop 之後新增的內容。 |
 | MCP server `agent-memory` | 提供 `memory_recall` 工具，讓 Claude 可以主動搜尋記憶。 |
 

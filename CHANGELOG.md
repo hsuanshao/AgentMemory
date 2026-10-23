@@ -6,6 +6,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Changed
+- `amem` sends the persona and scene navigation to a Claude Code session only when they changed since the session last received them, and again after `SessionStart` (start, resume, `/clear`, fork, compaction); the matching memories still go out on every prompt. On a deployment of about 20 agents this part was two thirds of all injected context and repeated unchanged on 3 prompts out of 4. `AMEM_SYSTEM_CONTEXT_EVERY=1` (or `system_context_every` in `client.json`) restores the previous behaviour; `N` also repeats them every N prompts. The Claude Code plugin registers a `SessionStart` hook for this; a hand-written `settings.json` needs `amem hook claude-code session-start` added. Codex and Antigravity are unchanged (#39).
+
 ## [0.4.1] - 2026-10-23
 
 ### Added

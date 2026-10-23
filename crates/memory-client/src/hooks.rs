@@ -125,17 +125,22 @@ fn deliver(host: &str, session: &str, msgs: Vec<Msg>) {
     }
 }
 
-fn recall_or_log(host: &str, query: &str) -> Option<String> {
+/// The recall response for `query`, or nothing when the prompt is skipped,
+/// too short, or the server failed (logged).
+fn recall_data(host: &str, query: &str) -> Option<(Api, Value)> {
     if query.trim().chars().count() < 2 {
         return None;
     }
     let api = match api(RECALL_TIMEOUT) {
         Ok(api) if api.config().skips_prompt(query) => return None,
-        other => other,
+        Ok(api) => api,
+        Err(e) => {
+            log(&format!("{host} recall: {e}"));
+            return None;
+        }
     };
-    let result = api.and_then(|a| a.recall(query, None).map_err(|e| e.to_string()));
-    match result {
-        Ok(data) => Some(clip(&recall_context(&data), MAX_CONTEXT_CHARS)).filter(|c| !c.is_empty()),
+    match api.recall(query, None) {
+        Ok(data) => Some((api, data)),
         Err(e) => {
             log(&format!("{host} recall: {e}"));
             None
@@ -143,17 +148,111 @@ fn recall_or_log(host: &str, query: &str) -> Option<String> {
     }
 }
 
+fn recall_or_log(host: &str, query: &str) -> Option<String> {
+    let (_, data) = recall_data(host, query)?;
+    Some(clip(&recall_context(&data), MAX_CONTEXT_CHARS)).filter(|c| !c.is_empty())
+}
+
+// ── Fixed part of recall (persona, scene navigation) ────────────────────
+//
+// `append_system_context` is the same on most prompts of a session, and the
+// host keeps earlier context in the conversation, so it is sent again only
+// when it changed (#39). The decision lives in the session cursor next to
+// the Stop keys.
+
+const SYSTEM_CONTEXT_HASH: &str = "system_context_hash";
+const SYSTEM_CONTEXT_AGE: &str = "system_context_age";
+
+/// FNV-1a: stable across builds, unlike `DefaultHasher`, so a cursor written
+/// by an older `amem` still matches.
+fn fnv1a(text: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// Whether `system` (the persona and scene navigation) goes to the host on
+/// this prompt: when it differs from what the session last received, or
+/// every `every` prompts when that is above 0. `every == 1` sends it on
+/// every prompt. Empty content is never sent but is remembered, so a persona
+/// that disappears and comes back is sent again.
+pub(crate) fn system_context_due(state: &mut Value, system: &str, every: u64) -> bool {
+    let hash = fnv1a(system);
+    let changed = state[SYSTEM_CONTEXT_HASH].as_str() != Some(hash.as_str());
+    let age = state[SYSTEM_CONTEXT_AGE].as_u64().unwrap_or(0) + 1;
+    let due = !system.is_empty() && (changed || (every > 0 && age >= every));
+    state[SYSTEM_CONTEXT_HASH] = json!(hash);
+    state[SYSTEM_CONTEXT_AGE] = json!(if due || changed { 0 } else { age });
+    due
+}
+
+/// The next prompt sends the fixed part again, whatever it is. Used when the
+/// host starts a session or compacts its context.
+pub(crate) fn forget_system_context(state: &mut Value) {
+    if let Some(map) = state.as_object_mut() {
+        map.remove(SYSTEM_CONTEXT_HASH);
+        map.remove(SYSTEM_CONTEXT_AGE);
+    }
+}
+
+fn hook_context(event: &str, context: &str) -> Value {
+    json!({"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}})
+}
+
 // ── Claude Code ─────────────────────────────────────────────────────────
 
+/// Recalls for the prompt. The memories go out on every prompt; the persona
+/// and scene navigation only when they changed since this session last got
+/// them (or every `system_context_every` prompts). Without a session id
+/// there is nothing to compare against, so everything is sent.
 pub fn claude_code_user_prompt_submit() {
     let input = stdin_json();
     let prompt = input["prompt"].as_str().unwrap_or_default();
-    if let Some(context) = recall_or_log("claude-code", prompt) {
-        println!(
-            "{}",
-            json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}})
-        );
+    let Some((api, data)) = recall_data("claude-code", prompt) else {
+        return;
+    };
+    let memories = data["prepend_context"].as_str().unwrap_or_default().trim();
+    let system = data["append_system_context"]
+        .as_str()
+        .unwrap_or_default()
+        .trim();
+    let every = api.config().system_context_every();
+    let send_system = match input["session_id"].as_str().filter(|s| !s.is_empty()) {
+        Some(session) if every != 1 => {
+            let mut cursor = Cursor::open("claude-code", session);
+            let due = system_context_due(&mut cursor.state, system, every);
+            cursor.save();
+            due
+        }
+        _ => true,
+    };
+    let context = [memories, system]
+        .into_iter()
+        .enumerate()
+        .filter(|(i, s)| !s.is_empty() && (*i == 0 || send_system))
+        .map(|(_, s)| s)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let context = clip(&context, MAX_CONTEXT_CHARS);
+    if !context.is_empty() {
+        println!("{}", hook_context("UserPromptSubmit", &context));
     }
+}
+
+/// A new, resumed, cleared, forked or compacted session no longer has the
+/// persona and scene navigation in its context: the next prompt sends them
+/// again. Prints nothing.
+pub fn claude_code_session_start() {
+    let input = stdin_json();
+    let Some(session) = input["session_id"].as_str().filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let mut cursor = Cursor::open("claude-code", session);
+    forget_system_context(&mut cursor.state);
+    cursor.save();
 }
 
 /// Sends the transcript lines added since the last Stop. The transcript can
@@ -335,11 +434,11 @@ mod tests {
     #[test]
     fn system_context_goes_once_until_it_changes() {
         let mut state = json!({});
-        assert!(system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
-        assert!(!system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
-        assert!(!system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
-        assert!(system_context_due(&mut state, "<user-persona>b</user-persona>", 0));
-        assert!(system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
+        assert!(system_context_due(&mut state, "a", 0));
+        assert!(!system_context_due(&mut state, "a", 0));
+        assert!(!system_context_due(&mut state, "a", 0));
+        assert!(system_context_due(&mut state, "b", 0));
+        assert!(system_context_due(&mut state, "a", 0));
     }
 
     #[test]

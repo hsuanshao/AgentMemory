@@ -17,7 +17,7 @@ USAGE:
   amem recall [--json] QUERY...    Recall memories for QUERY
   amem capture --format openai --session ID < messages.json
   amem flush                       Send queued captures
-  amem hook claude-code user-prompt-submit|stop
+  amem hook claude-code session-start|user-prompt-submit|stop
   amem hook antigravity pre-invocation|stop
   amem hook codex user-prompt-submit|post-tool-use|stop
   amem mcp                         Run the stdio MCP server
@@ -25,8 +25,10 @@ USAGE:
 `--user-key -` reads the key from stdin, keeping it out of shell history.
 Settings can be overridden with AMEM_SERVER_URL, AMEM_USER_KEY, AMEM_TEAM_ID,
 AMEM_AGENT_ID, AMEM_DEPARTMENT_ID; AMEM_SKIP_PROMPT_PREFIXES (comma-separated)
-skips recall and capture for prompts starting with one of them; AMEM_CONFIG
-and AMEM_DATA_DIR move the files.";
+skips recall and capture for prompts starting with one of them;
+AMEM_SYSTEM_CONTEXT_EVERY=N sends the persona and scene navigation to a
+Claude Code session every N prompts even when unchanged (0 = only when they
+change, 1 = every prompt); AMEM_CONFIG and AMEM_DATA_DIR move the files.";
 
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter()
@@ -70,6 +72,7 @@ fn login(args: &[String]) -> Result<(), String> {
         team_id: pick("--team-id", &existing.team_id),
         agent_id: pick("--agent-id", &existing.agent_id),
         skip_prompt_prefixes: existing.skip_prompt_prefixes.clone(),
+        system_context_every: existing.system_context_every.clone(),
     };
     if let Some(missing) = cfg.missing().first() {
         return Err(format!("missing --{}", missing.replace('_', "-")));
@@ -101,6 +104,9 @@ fn status() -> Result<(), String> {
     println!("agent_id:      {}", cfg.agent_id);
     if !cfg.skip_prompt_prefixes.is_empty() {
         println!("skip_prompt_prefixes: {}", cfg.skip_prompt_prefixes);
+    }
+    if !cfg.system_context_every.is_empty() {
+        println!("system_context_every: {}", cfg.system_context_every);
     }
     let queue = Queue::new(&data_dir());
     println!(
@@ -186,6 +192,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 rest.first().map(String::as_str),
                 rest.get(1).map(String::as_str),
             ) {
+                (Some("claude-code"), Some("session-start")) => hooks::claude_code_session_start(),
                 (Some("claude-code"), Some("user-prompt-submit")) => {
                     hooks::claude_code_user_prompt_submit()
                 }
