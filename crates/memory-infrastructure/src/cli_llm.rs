@@ -37,7 +37,10 @@ pub struct CliLlmSettings {
     pub prompt_mode: PromptMode,
     /// Project base path the tool runs in (its working directory).
     pub working_dir: Option<PathBuf>,
+    /// Set for the tool on top of what it inherits.
     pub env: Vec<(String, String)>,
+    /// More variables the tool may inherit: names, or `PREFIX_*`.
+    pub pass_env: Vec<String>,
     pub timeout: Duration,
     /// CLI agents are heavy; bound how many run at once.
     pub max_concurrency: usize,
@@ -47,6 +50,104 @@ pub struct CliLlm {
     settings: CliLlmSettings,
     permits: Semaphore,
     label: String,
+    /// The tool's whole environment, fixed at start-up.
+    env: Vec<(String, String)>,
+}
+
+/// What any program needs to run: paths, user, locale, time zone,
+/// temporary and config directories, certificates and proxies.
+const BASE_ENV: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LANGUAGE",
+    "TZ",
+    "TMPDIR",
+    "TERM",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    "XDG_RUNTIME_DIR",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+];
+
+/// memory-core's own settings and secrets; never passed on, even when a
+/// pattern would match them.
+const OWN_PREFIX: &str = "AGENT_MEMORY_";
+
+/// The settings and credentials of a known CLI, by executable name.
+fn cli_prefixes(command: &str) -> &'static [&'static str] {
+    match command_name(command).as_str() {
+        "claude" => &["ANTHROPIC_", "CLAUDE_"],
+        "codex" => &["OPENAI_", "CODEX_"],
+        "agy" | "antigravity" | "gemini" => &["GEMINI_", "GOOGLE_"],
+        _ => &[],
+    }
+}
+
+/// Why a `pass_env` entry is refused, if it is: it would hand the tool
+/// memory-core's own variables, or everything.
+pub fn refused_pass_env(entry: &str) -> Option<&'static str> {
+    let entry = entry.trim();
+    match entry.strip_suffix('*') {
+        _ if entry.is_empty() => Some("an empty name"),
+        Some(prefix) if OWN_PREFIX.starts_with(prefix) => {
+            Some("it matches memory-core's own AGENT_MEMORY_* variables")
+        }
+        _ if entry.starts_with(OWN_PREFIX) => {
+            Some("memory-core's own AGENT_MEMORY_* variables stay with memory-core")
+        }
+        _ => None,
+    }
+}
+
+/// The tool's environment: from `inherited`, the basics, the CLI's own
+/// settings and `pass_env`; then `explicit` on top. Nothing else of
+/// memory-core's environment (its API key, database and Redis URLs, LLM and
+/// embedding keys) reaches a tool that reads untrusted conversation text.
+pub fn child_env(
+    command: &str,
+    pass_env: &[String],
+    explicit: &[(String, String)],
+    inherited: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
+    let own = cli_prefixes(command);
+    let passed = |name: &str| {
+        pass_env
+            .iter()
+            .map(|p| p.trim())
+            .any(|p| match p.strip_suffix('*') {
+                Some(prefix) => name.starts_with(prefix),
+                None => name == p,
+            })
+    };
+    let keep = |name: &str| {
+        !name.starts_with(OWN_PREFIX)
+            && (BASE_ENV.contains(&name)
+                || name.starts_with("LC_")
+                || own.iter().any(|p| name.starts_with(p))
+                || passed(name))
+    };
+    let mut env: std::collections::BTreeMap<String, String> = inherited
+        .into_iter()
+        .filter(|(name, _)| keep(name))
+        .collect();
+    env.extend(explicit.iter().cloned());
+    env.into_iter().collect()
 }
 
 /// What `codex` turns off: connectors, plugins, shell and code execution,
@@ -225,6 +326,20 @@ fn command_name(command: &str) -> String {
 
 impl CliLlm {
     pub fn new(settings: CliLlmSettings) -> Self {
+        Self::with_environment(settings, std::env::vars())
+    }
+
+    /// `inherited` stands for memory-core's environment.
+    pub fn with_environment(
+        settings: CliLlmSettings,
+        inherited: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        let env = child_env(
+            &settings.command,
+            &settings.pass_env,
+            &settings.env,
+            inherited,
+        );
         let name = command_name(&settings.command);
         let label = match model_arg(&settings.args) {
             Some(model) => format!("cli:{name}:{model}"),
@@ -234,6 +349,7 @@ impl CliLlm {
             permits: Semaphore::new(settings.max_concurrency.max(1)),
             label,
             settings,
+            env,
         }
     }
 
@@ -273,12 +389,8 @@ impl CliLlm {
         let mut command = Command::new(&self.settings.command);
         command
             .args(self.arguments(&prompt))
-            .envs(
-                self.settings
-                    .env
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str())),
-            )
+            .env_clear()
+            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(if self.settings.prompt_mode == PromptMode::Stdin {
                 Stdio::piped()
             } else {
@@ -489,6 +601,7 @@ mod tests {
             prompt_mode: mode,
             working_dir: None,
             env: Vec::new(),
+            pass_env: Vec::new(),
             timeout: Duration::from_secs(5),
             max_concurrency: 2,
         })
@@ -624,6 +737,132 @@ mod tests {
             std::fs::canonicalize(out).unwrap(),
             std::fs::canonicalize(dir.path()).unwrap()
         );
+    }
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    /// What memory-core's process might hold.
+    fn server_env() -> Vec<(String, String)> {
+        vars(&[
+            ("PATH", "/usr/bin:/bin"),
+            ("HOME", "/home/memory"),
+            ("LC_ALL", "C.UTF-8"),
+            ("AGENT_MEMORY_API_KEY", "server-key"),
+            (
+                "AGENT_MEMORY_POSTGRES_URL",
+                "postgres://memory:pw@db/memory",
+            ),
+            ("AGENT_MEMORY_LLM_API_KEY", "llm-key"),
+            ("POSTGRES_PASSWORD", "pw"),
+            ("REDIS_PASSWORD", "pw"),
+            ("ANTHROPIC_API_KEY", "claude-key"),
+            ("CLAUDE_CONFIG_DIR", "/home/memory/.claude"),
+            ("OPENAI_API_KEY", "openai-key"),
+            ("GEMINI_API_KEY", "gemini-key"),
+            ("CUSTOM_TOKEN", "custom"),
+        ])
+    }
+
+    fn names(env: &[(String, String)]) -> Vec<&str> {
+        env.iter().map(|(k, _)| k.as_str()).collect()
+    }
+
+    #[test]
+    fn a_tool_inherits_the_basics_and_its_own_settings_only() {
+        let env = child_env("/usr/local/bin/claude", &[], &[], server_env());
+        assert_eq!(
+            names(&env),
+            [
+                "ANTHROPIC_API_KEY",
+                "CLAUDE_CONFIG_DIR",
+                "HOME",
+                "LC_ALL",
+                "PATH"
+            ]
+        );
+        assert_eq!(
+            names(&child_env("codex", &[], &[], server_env())),
+            ["HOME", "LC_ALL", "OPENAI_API_KEY", "PATH"]
+        );
+        assert_eq!(
+            names(&child_env("agy", &[], &[], server_env())),
+            ["GEMINI_API_KEY", "HOME", "LC_ALL", "PATH"]
+        );
+        // An unknown tool gets the basics, plus what pass_env names.
+        let env = child_env(
+            "my-llm",
+            &["CUSTOM_*".into(), "OPENAI_API_KEY".into()],
+            &vars(&[("MODEL", "small"), ("HOME", "/tmp/tool")]),
+            server_env(),
+        );
+        assert_eq!(
+            env,
+            vars(&[
+                ("CUSTOM_TOKEN", "custom"),
+                ("HOME", "/tmp/tool"),
+                ("LC_ALL", "C.UTF-8"),
+                ("MODEL", "small"),
+                ("OPENAI_API_KEY", "openai-key"),
+                ("PATH", "/usr/bin:/bin"),
+            ])
+        );
+        // memory-core's own variables never pass, whatever pass_env says.
+        let env = child_env(
+            "my-llm",
+            &["AGENT_MEMORY_API_KEY".into(), "*".into()],
+            &[],
+            server_env(),
+        );
+        assert!(names(&env).iter().all(|n| !n.starts_with("AGENT_MEMORY_")));
+    }
+
+    #[test]
+    fn pass_env_may_not_reach_memory_cores_own_variables() {
+        for refused in [
+            "",
+            "*",
+            "A*",
+            "AGENT_*",
+            "AGENT_MEMORY_*",
+            "AGENT_MEMORY_API_KEY",
+        ] {
+            assert!(refused_pass_env(refused).is_some(), "{refused:?}");
+        }
+        for allowed in ["CUSTOM_TOKEN", "CUSTOM_*", "AGENTS_HOME", "B*"] {
+            assert_eq!(refused_pass_env(allowed), None, "{allowed:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_running_tool_sees_only_the_allowed_environment() {
+        // Reads the prompt first, so writing it never hits a closed pipe.
+        let settings = CliLlmSettings {
+            command: "sh".into(),
+            args: vec!["-c".into(), "cat >/dev/null; exec env".into()],
+            prompt_mode: PromptMode::Stdin,
+            working_dir: None,
+            env: vars(&[("MODEL", "small")]),
+            pass_env: Vec::new(),
+            timeout: Duration::from_secs(5),
+            max_concurrency: 1,
+        };
+        let out = CliLlm::with_environment(settings, server_env())
+            .complete(&ask())
+            .await
+            .unwrap();
+        let mut seen: Vec<&str> = out
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(k, _)| k))
+            // What the shell itself sets.
+            .filter(|k| !matches!(*k, "PWD" | "SHLVL" | "_"))
+            .collect();
+        seen.sort_unstable();
+        assert_eq!(seen, ["HOME", "LC_ALL", "MODEL", "PATH"]);
     }
 
     #[test]

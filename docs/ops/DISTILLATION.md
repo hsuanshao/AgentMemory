@@ -154,6 +154,28 @@ The answer should be `0`. For `codex`, a refused attempt shows up in its output 
 
 **`hardening: off`** passes the arguments as given and logs a warning. Use it only to get past a CLI version whose flag names changed, until memory-core is updated. Refused arguments stay refused.
 
+### What the CLI inherits
+
+The CLI reads untrusted conversation text, so it does not get memory-core's environment. It inherits only:
+
+- what any program needs: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TMPDIR`, `TERM`, `XDG_*_HOME`, `XDG_RUNTIME_DIR`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS` and the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, either case);
+- the settings of the CLI in use: `ANTHROPIC_*` and `CLAUDE_*` for `claude`, `OPENAI_*` and `CODEX_*` for `codex`, `GEMINI_*` and `GOOGLE_*` for `agy` and `gemini`;
+- what `llm.cli.passEnv` (`AGENT_MEMORY_LLM_CLI_PASS_ENV`, comma- or space-separated) names: exact names, or `PREFIX_*`.
+
+`llm.cli.env` sets variables on top. `AGENT_MEMORY_*` (the API key, database and Redis URLs, the LLM and embedding keys) never reaches the CLI; a `passEnv` entry that would match it stops memory-core at startup. Another CLI that needs a key, say `MY_LLM_TOKEN`, gets it with `AGENT_MEMORY_LLM_CLI_PASS_ENV=MY_LLM_TOKEN`. With Docker Compose the variable must also reach the memory-core container: `docker-compose.yml` lists what it passes, so add it in a `docker-compose.override.yml`.
+
+**A CLI that goes through a cloud provider** needs that provider's variables, which are not among its own prefixes. Without them distillation fails after the upgrade. Common cases:
+
+| CLI | Provider | `AGENT_MEMORY_LLM_CLI_PASS_ENV` |
+| --- | --- | --- |
+| claude | Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK`, passed as `CLAUDE_*`) | `AWS_*` (credentials, `AWS_PROFILE`, `AWS_REGION`) |
+| claude | Google Vertex AI (`CLAUDE_CODE_USE_VERTEX`) | `CLOUD_ML_REGION`, plus `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_*` if needed (`GOOGLE_*` is passed only to `agy` and `gemini`) |
+| codex | Azure OpenAI | `AZURE_OPENAI_*` (or the names your codex provider settings use) |
+
+**A wrapper script** as `llm.cli.command` (say `/opt/bin/claude-wrapper`) is not recognized as `claude`, so it gets only the basics; list what the real CLI needs in `passEnv`. Hardening (section 6, Agent CLIs) also goes by the executable name, so the wrapper must turn off the CLI's tools itself.
+
+**memory-core's own secrets are kept back by name.** Only `AGENT_MEMORY_*` is never passed. `memory-core.yaml` expands `${VAR}`, so a setting such as `embedding.apiKey: ${OPENAI_API_KEY}` reads a variable that codex also inherits (`OPENAI_*`). Name the variables that hold memory-core's own secrets `AGENT_MEMORY_*`, as `.env.example` does, or at least not with a prefix the CLI inherits. `llm.cli.env` cannot set `AGENT_MEMORY_*` either: memory-core refuses to start.
+
 ### Arguments that are refused
 
 memory-core checks `AGENT_MEMORY_LLM_CLI_ARGS` at startup and on `memory-server check-config`, and refuses:

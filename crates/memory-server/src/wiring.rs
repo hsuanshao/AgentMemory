@@ -66,6 +66,7 @@ fn llm(config: &Config) -> Arc<dyn LlmClient> {
             },
             working_dir: cli.working_dir.as_deref().map(expand_home),
             env: cli.env.clone().into_iter().collect(),
+            pass_env: cli.pass_env.clone(),
             timeout,
             max_concurrency: cli.max_concurrency,
         }));
