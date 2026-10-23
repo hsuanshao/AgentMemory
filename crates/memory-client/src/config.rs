@@ -227,6 +227,16 @@ mod tests {
     }
 
     #[test]
+    fn system_context_every_parses_or_defaults_to_on_change() {
+        assert_eq!(Config::default().system_context_every(), 0);
+        let c = Config::merge(None, |k| (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| " 3 ".into()));
+        assert_eq!(c.system_context_every(), 3);
+        let c = Config::merge(None, |k| (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| "often".into()));
+        assert_eq!(c.system_context_every(), 0);
+        assert!(!c.missing().contains(&"system_context_every"));
+    }
+
+    #[test]
     fn skip_prompt_prefixes_match_the_start_only() {
         let c = Config::merge(None, |k| {
             (k == "AMEM_SKIP_PROMPT_PREFIXES").then(|| "[AGEND-, <task-notification>,".into())

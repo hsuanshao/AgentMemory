@@ -327,3 +327,61 @@ pub fn codex_stop() {
     }
     let _ = std::fs::remove_dir(&dir);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_context_goes_once_until_it_changes() {
+        let mut state = json!({});
+        assert!(system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
+        assert!(!system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
+        assert!(!system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
+        assert!(system_context_due(&mut state, "<user-persona>b</user-persona>", 0));
+        assert!(system_context_due(&mut state, "<user-persona>a</user-persona>", 0));
+    }
+
+    #[test]
+    fn every_one_keeps_the_old_behaviour() {
+        let mut state = json!({});
+        assert!(system_context_due(&mut state, "p", 1));
+        assert!(system_context_due(&mut state, "p", 1));
+    }
+
+    #[test]
+    fn every_n_resends_unchanged_context_on_the_nth_prompt() {
+        let mut state = json!({});
+        assert!(system_context_due(&mut state, "p", 3));
+        assert!(!system_context_due(&mut state, "p", 3));
+        assert!(!system_context_due(&mut state, "p", 3));
+        assert!(system_context_due(&mut state, "p", 3));
+        assert!(!system_context_due(&mut state, "p", 3));
+    }
+
+    #[test]
+    fn forgetting_resends_unchanged_context() {
+        let mut state = json!({});
+        assert!(system_context_due(&mut state, "p", 0));
+        forget_system_context(&mut state);
+        assert!(system_context_due(&mut state, "p", 0));
+        assert!(!system_context_due(&mut state, "p", 0));
+    }
+
+    #[test]
+    fn empty_context_is_never_due_but_is_remembered() {
+        let mut state = json!({});
+        assert!(system_context_due(&mut state, "p", 0));
+        assert!(!system_context_due(&mut state, "", 0));
+        assert!(system_context_due(&mut state, "p", 0));
+    }
+
+    #[test]
+    fn stop_cursor_keys_survive() {
+        let mut state = json!({"line": 42, "tail": "t"});
+        system_context_due(&mut state, "p", 0);
+        forget_system_context(&mut state);
+        assert_eq!(state["line"], 42);
+        assert_eq!(state["tail"], "t");
+    }
+}
