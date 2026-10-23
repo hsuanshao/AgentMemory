@@ -15,6 +15,7 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 - Atoms stored without an embedding (the embedding call failed or timed out) get one later: memory-core retries every 10 minutes (`memory.embedding.backfillIntervalSecs`), and `memory-server reembed` does it now. The atom is not rewritten, so L2 does not see it as new ([DISTILLATION §8](docs/ops/DISTILLATION.md#8-embeddings-and-load), #57).
 - Schema migration 4 adds an index of the atoms without an embedding, the backfill's queue. It runs when memory-core starts (or with `memory-server migrate`); going back to 0.4.1 afterwards means restoring the backup, since 0.4.1 refuses data at a newer schema version.
 - A numeric `AGENT_MEMORY_*` variable that does not parse now stops memory-core at startup, naming it, instead of being ignored; `check-config` (and so `upgrade.sh`) reports it before anything is replaced.
+- `memory-server` operator commands (`reembed`, `generations`, `dead-letters`, `migrate`, `check-config`, …) log to stderr, so their stdout (`--json`) can be parsed; the server still logs to stdout.
 - The embedding timeout, the embedding requests in flight (`memory.embedding.maxConcurrency`, default 4, new), the worker concurrency and the CLI model concurrency can be set by environment: `AGENT_MEMORY_EMBEDDING_TIMEOUT_MS`, `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY`, `AGENT_MEMORY_WORKER_CONCURRENCY`, `AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY` (#57).
 
 ### Changed
