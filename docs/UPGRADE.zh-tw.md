@@ -26,7 +26,7 @@
 >
 > `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <部門>" -H "content-type: application/json" -d '{"username":"admin"}'`
 
-**蒸餾用的 CLI 不再繼承 memory-core 的環境變數。** 它只拿到 `PATH`、`HOME`、語系、憑證與 proxy 變數，以及自己的設定（claude 是 `ANTHROPIC_*`／`CLAUDE_*`，codex 是 `OPENAI_*`／`CODEX_*`，agy 是 `GEMINI_*`／`GOOGLE_*`）。依安裝說明登入的 claude、codex 和 agy 不受影響。若 CLI 會讀容器環境裡的其他變數，請把它列在 `AGENT_MEMORY_LLM_CLI_PASS_ENV`（[DISTILLATION §6](ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。
+**蒸餾用的 CLI 不再繼承 memory-core 的環境變數。** 它只拿到 `PATH`、`HOME`、語系、憑證與 proxy 變數，以及自己的設定（claude 是 `ANTHROPIC_*`／`CLAUDE_*`，codex 是 `OPENAI_*`／`CODEX_*`，agy 是 `GEMINI_*`／`GOOGLE_*`）。依安裝說明登入的 claude、codex 和 agy 不受影響。若 CLI 會讀容器環境裡的其他變數，請把它列在 `AGENT_MEMORY_LLM_CLI_PASS_ENV`（[DISTILLATION §6](ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。**升級前請先確認**：CLI 若透過雲端供應商（claude 走 Bedrock：`AWS_*`；claude 走 Vertex AI：`CLOUD_ML_REGION`、`GOOGLE_APPLICATION_CREDENTIALS`；codex 走 Azure：`AZURE_OPENAI_*`），或 `llm.cli.command` 是 wrapper script，沒列出這些變數，升級後蒸餾就會失敗。
 
 ## 升級到 0.4.1
 

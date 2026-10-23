@@ -164,6 +164,18 @@ CLI 會讀到不可信的對話內容，所以它拿不到 memory-core 的環境
 
 `llm.cli.env` 會在上面再設定變數。`AGENT_MEMORY_*`（API key、資料庫與 Redis 的 URL、LLM 與 embedding 的 key）永遠不會傳給 CLI；`passEnv` 的項目若會比對到它們，memory-core 啟動時就會停止。其他 CLI 若需要某個 key，例如 `MY_LLM_TOKEN`，用 `AGENT_MEMORY_LLM_CLI_PASS_ENV=MY_LLM_TOKEN` 傳給它。使用 Docker Compose 時，這個變數也必須先進到 memory-core 容器：`docker-compose.yml` 只傳它列出的變數，所以請在 `docker-compose.override.yml` 裡加上它。
 
+**透過雲端供應商使用的 CLI** 需要該供應商的變數，這些不在 CLI 自己的前綴裡。少了它們，升級後蒸餾就會失敗。常見情況：
+
+| CLI | 供應商 | `AGENT_MEMORY_LLM_CLI_PASS_ENV` |
+| --- | --- | --- |
+| claude | Amazon Bedrock（`CLAUDE_CODE_USE_BEDROCK`，屬於 `CLAUDE_*` 會傳下去） | `AWS_*`（憑證、`AWS_PROFILE`、`AWS_REGION`） |
+| claude | Google Vertex AI（`CLAUDE_CODE_USE_VERTEX`） | `CLOUD_ML_REGION`，需要時再加 `GOOGLE_APPLICATION_CREDENTIALS` 或 `GOOGLE_*`（`GOOGLE_*` 只會傳給 `agy` 和 `gemini`） |
+| codex | Azure OpenAI | `AZURE_OPENAI_*`（或 codex provider 設定裡使用的變數名稱） |
+
+**用 wrapper script 當 `llm.cli.command`**（例如 `/opt/bin/claude-wrapper`）時，它不會被認成 `claude`，只會拿到基本變數；請把真正的 CLI 需要的變數列在 `passEnv`。hardening（第 6 節的 Agent CLI）也是依執行檔名稱判斷，所以 wrapper 必須自己關掉 CLI 的工具。
+
+**memory-core 自己的機密是依名稱擋下的。** 只有 `AGENT_MEMORY_*` 一定不會傳下去。`memory-core.yaml` 會展開 `${VAR}`，所以像 `embedding.apiKey: ${OPENAI_API_KEY}` 這樣的設定，讀的是 codex 也會繼承的變數（`OPENAI_*`）。存放 memory-core 機密的變數請用 `AGENT_MEMORY_*` 命名（`.env.example` 就是這樣），至少不要用 CLI 會繼承的前綴。`llm.cli.env` 也不能設定 `AGENT_MEMORY_*`，否則 memory-core 不會啟動。
+
 ### 會被拒絕的參數
 
 memory-core 啟動時、以及執行 `memory-server check-config` 時，會檢查 `AGENT_MEMORY_LLM_CLI_ARGS`，並拒絕：

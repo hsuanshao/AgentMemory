@@ -840,9 +840,10 @@ mod tests {
 
     #[tokio::test]
     async fn the_running_tool_sees_only_the_allowed_environment() {
+        // Reads the prompt first, so writing it never hits a closed pipe.
         let settings = CliLlmSettings {
-            command: "env".into(),
-            args: Vec::new(),
+            command: "sh".into(),
+            args: vec!["-c".into(), "cat >/dev/null; exec env".into()],
             prompt_mode: PromptMode::Stdin,
             working_dir: None,
             env: vars(&[("MODEL", "small")]),
@@ -857,6 +858,8 @@ mod tests {
         let mut seen: Vec<&str> = out
             .lines()
             .filter_map(|l| l.split_once('=').map(|(k, _)| k))
+            // What the shell itself sets.
+            .filter(|k| !matches!(*k, "PWD" | "SHLVL" | "_"))
             .collect();
         seen.sort_unstable();
         assert_eq!(seen, ["HOME", "LC_ALL", "MODEL", "PATH"]);

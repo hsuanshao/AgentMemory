@@ -816,6 +816,12 @@ impl Config {
                          memory-core's own settings"
                     );
                 }
+                if let Some(name) = cli.env.keys().find(|k| k.starts_with("AGENT_MEMORY_")) {
+                    bail!(
+                        "llm.cli.env must not set `{name}`: memory-core's own AGENT_MEMORY_* \
+                         variables stay with memory-core, as with llm.cli.passEnv"
+                    );
+                }
                 if let Some(dir) = &cli.working_dir {
                     let path = expand_home(dir);
                     if !path.is_dir() {
@@ -1037,6 +1043,15 @@ mod tests {
             let err = c.validate().unwrap_err().to_string();
             assert!(err.contains("llm.cli.passEnv"), "{entry}: {err}");
         }
+        c.llm.cli.pass_env.clear();
+        c.llm.cli.env.insert("MODEL".into(), "small".into());
+        assert!(c.validate().is_ok());
+        c.llm
+            .cli
+            .env
+            .insert("AGENT_MEMORY_API_KEY".into(), "x".into());
+        let err = c.validate().unwrap_err().to_string();
+        assert!(err.contains("llm.cli.env"), "{err}");
     }
 
     #[test]
