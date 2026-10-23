@@ -7,8 +7,8 @@
 //! The conversation is untrusted (tool results carry web pages and files),
 //! so the model only proposes: it sees the transcript as JSON data, may
 //! change only the skills it was shown, and, unless approval is turned off,
-//! its changes wait as proposals until the conversation's user, a team
-//! admin or leader, or a system admin approves them.
+//! its changes wait as proposals until the conversation's user (on an agent
+//! they may use), a team admin, or a system admin approves them.
 
 use std::sync::Arc;
 
@@ -17,15 +17,16 @@ use crate::redaction::RedactionService;
 use async_trait::async_trait;
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::without_nul;
-use memory_domain::meta::visibility::ScopeVisibility;
 use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use super::service::{ListQuery, ReadOptions, SkillIdentity, SkillService, StringPatch};
+use crate::meta::{Caller, MetaService};
 use crate::pipeline::llm_json::parse_llm_json;
 use crate::pipeline::service::{PipelineService, SkillJobRunner};
+use crate::ports::coordination::KeyLock;
 use crate::ports::pipeline::PipelineJob;
 use crate::ports::skill::{
     BufferCounters, BufferKey, BufferedMessage, SkillBufferStore, SkillTask,
@@ -192,6 +193,10 @@ pub struct SkillExtractionService {
     llm: Arc<dyn LlmClient>,
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
+    /// Who may review a proposal, as of now.
+    meta: Arc<MetaService>,
+    /// One decision at a time per task (read, change one proposal, write).
+    locks: Arc<dyn KeyLock>,
     settings: ExtractionSettings,
 }
 
@@ -205,6 +210,8 @@ impl SkillExtractionService {
         llm: Arc<dyn LlmClient>,
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
+        meta: Arc<MetaService>,
+        locks: Arc<dyn KeyLock>,
         settings: ExtractionSettings,
     ) -> Self {
         Self {
@@ -215,6 +222,8 @@ impl SkillExtractionService {
             llm,
             clock,
             ids,
+            meta,
+            locks,
             settings,
         }
     }
@@ -536,21 +545,21 @@ impl SkillExtractionService {
     }
 
     /// Tasks of `team_id` (and `agent_id`, if given) with pending proposals
-    /// the caller may decide: their own, or any in a team they oversee.
+    /// the caller may review (`MetaService::authorize_proposal_review`).
     pub async fn proposals(
         &self,
         department: &DepartmentId,
-        visibility: &ScopeVisibility,
+        caller: &Caller,
         team_id: &str,
         agent_id: Option<&str>,
     ) -> DomainResult<Vec<ProposalTask>> {
         let mut out = Vec::new();
         for task in self.buffers.list_tasks(department, PROPOSED).await? {
             let key = &task.key;
-            if key.team_id != team_id
-                || agent_id.is_some_and(|a| a != key.agent_id)
-                || !visibility.sees(&key.team_id, Some(&key.user_id))
-            {
+            if key.team_id != team_id || agent_id.is_some_and(|a| a != key.agent_id) {
+                continue;
+            }
+            if self.may_review(department, caller, key).await.is_err() {
                 continue;
             }
             let proposals = proposals_of(&task)?;
@@ -576,23 +585,23 @@ impl SkillExtractionService {
     pub async fn decide(
         &self,
         department: &DepartmentId,
-        visibility: &ScopeVisibility,
-        decider: &str,
+        caller: &Caller,
         task_id: &str,
         index: usize,
         approve: bool,
     ) -> DomainResult<SkillProposal> {
+        let _guard = self
+            .locks
+            .lock(&format!("skill-proposal:{department}:{task_id}"))
+            .await?;
+        let decider = caller.user_id.as_str();
         let mut task = self
             .buffers
             .get_task(department, task_id)
             .await?
             .filter(|t| t.status == PROPOSED)
             .ok_or_else(|| DomainError::not_found("skill_proposal", task_id))?;
-        if !visibility.sees(&task.key.team_id, Some(&task.key.user_id)) {
-            return Err(DomainError::permission_denied(
-                "only the conversation's user, the team's admins and leaders, or a system admin decide its proposals",
-            ));
-        }
+        self.may_review(department, caller, &task.key).await?;
         let mut proposals = proposals_of(&task)?;
         let proposal = proposals
             .iter_mut()
@@ -631,6 +640,23 @@ impl SkillExtractionService {
         self.buffers.put_task(department, &task).await?;
         info!(task = %task_id, index, approve, by = %decider, "skill proposal decided");
         Ok(decided)
+    }
+
+    async fn may_review(
+        &self,
+        department: &DepartmentId,
+        caller: &Caller,
+        key: &BufferKey,
+    ) -> DomainResult<()> {
+        self.meta
+            .authorize_proposal_review(
+                department,
+                caller,
+                &key.team_id,
+                &key.agent_id,
+                &key.user_id,
+            )
+            .await
     }
 
     /// `base`: the version a proposal was made against; the change is

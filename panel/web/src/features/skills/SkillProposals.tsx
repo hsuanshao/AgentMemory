@@ -11,7 +11,7 @@ import { formatTime } from "../../lib/format";
 /**
  * Changes skill extraction proposed for the scope's agent. Extraction reads
  * untrusted conversation text (web pages, tool output), so nothing is saved
- * until the conversation's user, a team admin or leader, or a system admin
+ * until the conversation's user (on an agent they may use), an admin of the team, or a system admin
  * approves it here. Core decides who may.
  */
 export function SkillProposals({ scope, onDecided }: { scope: Scope; onDecided: () => void }) {

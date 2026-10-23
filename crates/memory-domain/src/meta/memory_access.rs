@@ -97,6 +97,49 @@ pub fn authorize_memory_scope(
     })
 }
 
+/// Who may read and decide what skill extraction proposed from a
+/// conversation (`author_user_id`'s, through `facts.agent`). The proposals
+/// are drawn from that conversation, so this follows the memory rules, not
+/// the operational view: a system admin; an admin of the team; or the
+/// conversation's own user, on an agent they may use (a private agent is
+/// its owner's). Team leaders oversee operational state but do not read
+/// members' memory, so they are not reviewers. Nobody reviews for an
+/// archived agent.
+pub fn authorize_proposal_review(
+    facts: &ScopeFacts<'_>,
+    team_id: &str,
+    author_user_id: &str,
+) -> DomainResult<()> {
+    let agent = facts
+        .agent
+        .filter(|a| a.team_id == team_id)
+        .ok_or_else(|| DomainError::permission_denied("agent does not belong to the team"))?;
+    if agent.status != AgentStatus::Active {
+        return Err(DomainError::permission_denied("agent is archived"));
+    }
+    if facts.is_system_admin {
+        return Ok(());
+    }
+    let member = facts
+        .membership
+        .filter(|m| m.is_active() && m.team_id == team_id && m.user_id == facts.caller_user_id)
+        .ok_or_else(|| DomainError::permission_denied("not an active member of the team"))?;
+    if member.is_admin() {
+        return Ok(());
+    }
+    if author_user_id != facts.caller_user_id {
+        return Err(DomainError::permission_denied(
+            "skill proposals: the conversation's user, team admins or system admins only",
+        ));
+    }
+    if agent.visibility == Visibility::Private && agent.owner_user_id != facts.caller_user_id {
+        return Err(DomainError::permission_denied(
+            "private agent: owner and team admins only",
+        ));
+    }
+    Ok(())
+}
+
 fn non_empty(v: &Option<String>) -> Option<&str> {
     v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
@@ -296,5 +339,71 @@ mod tests {
         f.is_system_admin = true;
         let scope = authorize_memory_scope(&req(Some("bob")), &f, MemoryAction::Write).unwrap();
         assert_eq!(scope.user_id.as_str(), "bob");
+    }
+
+    #[test]
+    fn skill_proposals_are_reviewed_like_memory_not_like_operational_state() {
+        let ok = |r: DomainResult<()>| r.is_ok();
+        let refused =
+            |r: DomainResult<()>| matches!(r, Err(e) if e.kind == ErrorKind::PermissionDenied);
+        let team_agent = agent("team-1");
+        let private = Agent {
+            visibility: Visibility::Private,
+            ..agent("team-1")
+        };
+        let (m, l, a) = (
+            member(TeamRole::Member),
+            member(TeamRole::Leader),
+            member(TeamRole::Admin),
+        );
+        // The conversation's own user, on a team agent.
+        assert!(ok(authorize_proposal_review(
+            &facts(Some(&m), Some(&team_agent)),
+            "team-1",
+            "alice"
+        )));
+        // Another member, and a leader, are not reviewers.
+        assert!(refused(authorize_proposal_review(
+            &facts(Some(&m), Some(&team_agent)),
+            "team-1",
+            "bob"
+        )));
+        assert!(refused(authorize_proposal_review(
+            &facts(Some(&l), Some(&team_agent)),
+            "team-1",
+            "bob"
+        )));
+        assert!(refused(authorize_proposal_review(
+            &facts(Some(&l), Some(&private)),
+            "team-1",
+            "owner"
+        )));
+        // A private agent: its owner and team admins.
+        assert!(refused(authorize_proposal_review(
+            &facts(Some(&m), Some(&private)),
+            "team-1",
+            "alice"
+        )));
+        assert!(ok(authorize_proposal_review(
+            &facts(Some(&a), Some(&private)),
+            "team-1",
+            "owner"
+        )));
+        // Archived: nobody, not even a system admin.
+        let archived = Agent {
+            status: AgentStatus::Inactive,
+            ..agent("team-1")
+        };
+        let mut sys = facts(None, Some(&archived));
+        sys.is_system_admin = true;
+        assert!(refused(authorize_proposal_review(&sys, "team-1", "alice")));
+        sys.agent = Some(&private);
+        assert!(ok(authorize_proposal_review(&sys, "team-1", "owner")));
+        // An agent of another team.
+        assert!(refused(authorize_proposal_review(
+            &facts(Some(&a), Some(&agent("team-2"))),
+            "team-1",
+            "alice"
+        )));
     }
 }

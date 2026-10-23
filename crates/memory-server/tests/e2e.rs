@@ -1172,6 +1172,173 @@ async fn wait_for_proposal(client: &Client) -> Value {
     panic!("no skill proposal appeared");
 }
 
+/// Answers skill reviews with two new skills; everything else as `fake_llm`.
+async fn spawn_two_skill_llm() -> String {
+    const TWO: &str = r###"{"actions":[{"action":"create","name":"deploy-steps","content":"---\nname: deploy-steps\ndescription: How to deploy\n---\n1. Build\n2. Ship"},{"action":"create","name":"rollback-steps","content":"---\nname: rollback-steps\ndescription: How to roll back\n---\n1. Restore"}],"summary":"two skills"}"###;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/v1/chat/completions",
+                post(|Json(req): Json<Value>| async move {
+                    let system = req["messages"][0]["content"].as_str().unwrap_or_default();
+                    if system.starts_with("You review a finished agent conversation") {
+                        return Json(json!({"choices": [{"message": {"role": "assistant", "content": TWO}}]}));
+                    }
+                    fake_llm(Json(req)).await
+                }),
+            ),
+        )
+        .await
+        .unwrap()
+    });
+    format!("http://{addr}/v1")
+}
+
+/// A tool-heavy turn on `body`'s agent, as `key`.
+async fn archive_tool_turns(client: &Client, key: &str, body: Value) {
+    let tool_calls: Vec<Value> = (0..10)
+        .flat_map(|i| {
+            [
+                json!({"role": "tool_call", "content": format!("run step {i}"), "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+                json!({"role": "tool_result", "content": "ok", "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+            ]
+        })
+        .collect();
+    let mut body = body;
+    body["session_id"] = json!(format!("s-{key:.8}"));
+    body["messages"] = json!(tool_calls);
+    let added = client
+        .call_as("/v3/skill/conversation/add", key, body)
+        .await;
+    assert_eq!(added["data"]["status"], "archived", "{added}");
+}
+
+/// Reviewing proposals follows the memory rules: a leader neither sees
+/// nor decides a member's proposals, a private agent's are its owner's
+/// and the team admins', and nobody decides for an archived agent.
+/// Decisions on one task never overwrite each other.
+#[tokio::test(flavor = "multi_thread")]
+async fn skill_proposals_follow_the_memory_rules() {
+    let base_url = spawn_two_skill_llm().await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+    })
+    .await;
+    let (_, lead_key) = client.create_member_as("lead", "leader").await;
+
+    // A member's proposals on the team agent: the leader is no reviewer.
+    archive_tool_turns(
+        &client,
+        &client.member_key,
+        client.scoped_for(json!({}), None),
+    )
+    .await;
+    let task = wait_for_proposal(&client).await;
+    let on_team = |extra: Value| {
+        let mut b = client.scoped_for(extra, None);
+        b["task_id"] = task["task_id"].clone();
+        b
+    };
+    let led = client
+        .call_as(
+            "/v3/skill/proposal/list",
+            &lead_key,
+            client.scoped_for(json!({}), None),
+        )
+        .await;
+    assert_eq!(led["data"]["items"], json!([]), "{led}");
+    let r = client
+        .call_as(
+            "/v3/skill/proposal/approve",
+            &lead_key,
+            on_team(json!({"index": 0})),
+        )
+        .await;
+    assert_eq!(r["code"], 403, "leader approves: {r}");
+
+    // Two decisions at once on one task: both land, neither is undone.
+    let (a, b) = tokio::join!(
+        client.call("/v3/skill/proposal/approve", on_team(json!({"index": 0}))),
+        client.call("/v3/skill/proposal/approve", on_team(json!({"index": 1}))),
+    );
+    assert_eq!(a["data"]["state"], "applied", "{a}");
+    assert_eq!(b["data"]["state"], "applied", "{b}");
+    let left = client
+        .call(
+            "/v3/skill/proposal/list",
+            client.scoped_for(json!({}), None),
+        )
+        .await;
+    assert_eq!(left["data"]["items"], json!([]), "{left}");
+    client.wait_for(|s| s["skills"] == 2).await;
+
+    // A private agent of the member: its owner reviews, the leader does not.
+    let private = client
+        .call_as(
+            "/v3/meta/agent/create",
+            &client.admin_key,
+            json!({"team_id": client.team_id, "owner_user_id": client.user_id, "name": "mine", "visibility": "private"}),
+        )
+        .await;
+    let private_id = private["data"]["agent_id"].as_str().unwrap().to_owned();
+    let on_private = |extra: Value| {
+        let mut b = extra;
+        b["team_id"] = json!(client.team_id);
+        b["agent_id"] = json!(private_id);
+        b
+    };
+    archive_tool_turns(&client, &client.member_key, on_private(json!({}))).await;
+    let mut ptask = Value::Null;
+    for _ in 0..100 {
+        let r = client
+            .call("/v3/skill/proposal/list", on_private(json!({})))
+            .await;
+        if let Some(t) = r["data"]["items"].get(0) {
+            ptask = t.clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        !ptask.is_null(),
+        "the owner sees the private agent's proposal"
+    );
+    // The leader, through their own scope, with the private task's id.
+    let r = client
+        .call_as(
+            "/v3/skill/proposal/approve",
+            &lead_key,
+            client.scoped_for(json!({"task_id": ptask["task_id"], "index": 0}), None),
+        )
+        .await;
+    assert_eq!(
+        r["code"], 403,
+        "leader approves a private agent's proposal: {r}"
+    );
+
+    // Archived after the proposal: not even a system admin decides it.
+    let archived = client
+        .call_as(
+            "/v3/meta/agent/archive",
+            &client.admin_key,
+            json!({"agent_id": private_id}),
+        )
+        .await;
+    assert_eq!(archived["code"], 0, "{archived}");
+    let r = client
+        .call_as(
+            "/v3/skill/proposal/approve",
+            &client.admin_key,
+            client.scoped_for(json!({"task_id": ptask["task_id"], "index": 0}), None),
+        )
+        .await;
+    assert_eq!(r["code"], 403, "approve for an archived agent: {r}");
+}
+
 /// With approval turned off, extracted changes are applied at once.
 #[tokio::test(flavor = "multi_thread")]
 async fn skill_changes_apply_at_once_without_approval() {

@@ -129,7 +129,7 @@ Distillation reads conversation text, which is untrusted: anyone in a conversati
 - a known agent CLI has its own tools turned off before it reads a prompt;
 - every CLI is told in the prompt that it has no tools;
 - a model that still tries to use a tool fails with `LLM_TOOL_REQUEST`. That failure is not retried: L1/L2 drop the input, and its dead letter waits until the model changes ([section 5](#5-dead-letters-and-redrive));
-- skill extraction gets the conversation as JSON data, may change only the skills it was shown, and only proposes: its changes wait for the conversation's user, a team admin or leader, or a system admin to approve them (Panel → Skills, or `skill/proposal/*`). `skill.extraction.requireApproval: false` (`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`) applies them at once ([ARCHITECTURE](../ARCHITECTURE.md#4-memory-model-and-pipeline)).
+- skill extraction gets the conversation as JSON data, may change only the skills it was shown, and only proposes: its changes wait for the conversation's user (on an agent they may use), an admin of the team, or a system admin to approve them (Panel → Skills, or `skill/proposal/*`). `skill.extraction.requireApproval: false` (`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`) applies them at once ([ARCHITECTURE](../ARCHITECTURE.md#4-memory-model-and-pipeline)).
 
 ### Agent CLIs
 

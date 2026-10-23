@@ -249,7 +249,7 @@ flowchart LR
 - **L1** 以使用者的 session 為單位執行（`MemoryScope`）：讀取該使用者新的對話，寫入該使用者的事實。
 - **L2** 以 profile 為單位執行（`ProfileScope`）。它用 `after_seq(profile, …)` 讀取新事實，也就是該 team 和 agent 底下**所有使用者**的事實，再合併進這個 agent 的場景。**L3** 再根據這些場景重建 persona。
 - **召回**結合兩種範圍。它搜尋**呼叫者自己**的 L1 事實（`AtomSelector::Scope`），再附上**這個 agent** 的 persona 和場景導覽（`ProfileScope`）。第 2 節的共用規則就是由此而來。
-- **Skills** 以 team 為單位儲存，並記錄擁有它的 agent 和使用者。team 成員都能讀取和搜尋（`team_scope` 會搜尋整個 team；預設列表只顯示呼叫中的 agent 的 skill）。只有擁有它的 agent 能修改（`SKILL_NOT_OWNER`）。skill 萃取替某個 agent 提出的修改，要等對話的使用者本人、該 team 的 admin 或 leader，或系統管理員核准後才生效（Panel → Skills）。
+- **Skills** 以 team 為單位儲存，並記錄擁有它的 agent 和使用者。team 成員都能讀取和搜尋（`team_scope` 會搜尋整個 team；預設列表只顯示呼叫中的 agent 的 skill）。只有擁有它的 agent 能修改（`SKILL_NOT_OWNER`）。skill 萃取替某個 agent 提出的修改，要等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效（Panel → Skills）。
 
 ## 11. Metadata 平面的規則
 

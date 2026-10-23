@@ -63,7 +63,7 @@ curl -sS -X POST "$CORE/v3/pipeline/status" "${H_ADMIN[@]}" -d '{}'   # "code":0
 
 ### 萃取出的 skill 要先核准
 
-skill 萃取不會再自己存下 skill。它建立或修改的內容會先成為提案，出現在 Panel 的 **Skills** 頁（以及 `skill/proposal/*`），等對話的使用者本人、該 team 的 admin 或 leader，或系統管理員核准後才生效。不會遺失任何東西：升級後，新的萃取結果只是改成出現在那裡，而不是直接進入 skill 清單。但需要有人去看，否則不會有新的 skill。想維持舊行為的部署，請設定 `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`（`skill.extraction.requireApproval: false`）。不論是否需要核准，模型拿到的對話都是 JSON 資料，也只能修改提供給它看的、該 agent 的 skill（[ARCHITECTURE](ARCHITECTURE.zh-tw.md#4-記憶模型與蒸餾管線)）。
+skill 萃取不會再自己存下 skill。它建立或修改的內容會先成為提案，出現在 Panel 的 **Skills** 頁（以及 `skill/proposal/*`），等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效。不會遺失任何東西：升級後，新的萃取結果只是改成出現在那裡，而不是直接進入 skill 清單。但需要有人去看，否則不會有新的 skill。想維持舊行為的部署，請設定 `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`（`skill.extraction.requireApproval: false`）。不論是否需要核准，模型拿到的對話都是 JSON 資料，也只能修改提供給它看的、該 agent 的 skill（[ARCHITECTURE](ARCHITECTURE.zh-tw.md#4-記憶模型與蒸餾管線)）。
 
 ### 其他改動
 
