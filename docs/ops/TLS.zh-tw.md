@@ -37,7 +37,7 @@ Panel 也在同一個位址。只有管理者需要它；如果這個位址對�
 把根憑證複製出來一次即可；重新啟動也不會變（它存在 `caddy-data` volume）：
 
 ```bash
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+docker compose exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > caddy-root.crt
 ```
 
 - **`amem`**：把 `caddy-root.crt` 複製到每台 client 機器，登入時指定它：`amem login --server-url https://10.0.0.5 --ca-cert /path/to/caddy-root.crt …`（或設 `AMEM_CA_CERT`）。`amem` 信任內建的 CA 加上這一個；不使用系統的信任庫。

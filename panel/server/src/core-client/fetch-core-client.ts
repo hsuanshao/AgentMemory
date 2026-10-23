@@ -45,7 +45,8 @@ export class FetchCoreClient implements CoreClient {
       throw this.mapFetchError(err);
     }
     try {
-      return { status: response.status, body: await parseBody(response) };
+      const retryAfter = response.headers.get("retry-after") ?? undefined;
+      return { status: response.status, body: await parseBody(response), ...(retryAfter ? { retryAfter } : {}) };
     } catch (err) {
       throw this.mapFetchError(err);
     }

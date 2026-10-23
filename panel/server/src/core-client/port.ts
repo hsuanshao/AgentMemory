@@ -18,6 +18,8 @@ export interface CoreResponse {
   readonly status: number;
   /** Parsed JSON body (envelope for /v3, bare object for /health). */
   readonly body: unknown;
+  /** Core's `Retry-After`, e.g. on a 429 lockout. */
+  readonly retryAfter?: string;
 }
 
 export interface CoreClient {

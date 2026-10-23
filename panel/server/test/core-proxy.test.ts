@@ -206,3 +206,29 @@ describe("client address and verdict cache", () => {
     expect(csp).toContain("frame-ancestors 'none'");
   });
 });
+
+describe("Core refusing the key check", () => {
+  it("relays a lockout (429, Retry-After) instead of calling the key invalid, and does not cache it", async () => {
+    let locked = true;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).endsWith("/v3/meta/auth/verify")) {
+        if (locked) {
+          return new Response(JSON.stringify({ code: 429, message: "too_many_failures", request_id: "r" }), {
+            status: 429,
+            headers: { "content-type": "application/json", "retry-after": "900" },
+          });
+        }
+        return jsonResponse(ok({ valid: true, user: { user_id: "usr_1", user_type: "system_admin" } }));
+      }
+      return jsonResponse(ok({}));
+    });
+    const app = buildApp(fetchFn);
+    const res = await app.request("/api/core/stats/overview", post("", {}));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("900");
+    expect(await res.json()).toMatchObject({ code: 429, message: "too_many_failures" });
+    locked = false;
+    const after = await app.request("/api/core/stats/overview", post("", {}));
+    expect(after.status).toBe(200);
+  });
+});

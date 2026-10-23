@@ -2,6 +2,7 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { UserKeyVerifier } from "../../auth/user-key-verifier.js";
+import { CoreRefusedError } from "../../core-client/errors.js";
 import type { CoreClient, CoreResponse } from "../../core-client/port.js";
 import type { AppEnv } from "../app-env.js";
 import { ADMIN_ONLY_V3_PATHS, PUBLIC_V3_PATHS, resolveV3Path } from "../allowlist.js";
@@ -34,7 +35,13 @@ export function coreProxyRoutes(deps: CoreProxyDeps): Hono<AppEnv> {
 
     const userKey = c.req.header("x-memory-user-key")?.trim() || undefined;
     const call = { requestId, forwardedFor: forwardedFor(c) };
-    const denied = await checkUserKey(deps.verifier, path, userKey, call);
+    let denied: Awaited<ReturnType<typeof checkUserKey>>;
+    try {
+      denied = await checkUserKey(deps.verifier, path, userKey, call);
+    } catch (err) {
+      if (err instanceof CoreRefusedError) return relay(c, err.response);
+      throw err;
+    }
     if (denied) return c.json(errorEnvelope(denied.status, denied.message, requestId), denied.status);
 
     const response = await deps.core.callV3(path, body, { ...call, userKey });
@@ -91,6 +98,7 @@ async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
 
 function relay(c: Context<AppEnv>, response: CoreResponse): Response {
   const status = toContentfulStatus(response.status);
+  if (response.retryAfter) c.header("retry-after", response.retryAfter);
   return c.json(response.body ?? errorEnvelope(status, "EMPTY_CORE_RESPONSE", c.get("requestId")), status);
 }
 

@@ -388,8 +388,10 @@ print_summary() {
   echo
   bold "Agent Memory is running"
   if [[ ${BIND_ADDR:-} == 127.0.0.1 && -n ${TLS_SITE:-} ]]; then
-    info "Monitor Panel : https://$TLS_SITE"
-    info "memory-core   : https://$TLS_SITE  (clients: amem login --server-url https://$TLS_SITE)"
+    local https_url="https://$TLS_SITE"
+    [[ ${TLS_HTTPS_PORT:-443} != 443 ]] && https_url+=":$TLS_HTTPS_PORT"
+    info "Monitor Panel : $https_url"
+    info "memory-core   : $https_url  (clients: amem login --server-url $https_url)"
   else
     info "Monitor Panel : http://localhost:$PANEL_PORT"
     info "memory-core   : http://localhost:$CORE_PORT  (Bearer token in $ENV_FILE)"

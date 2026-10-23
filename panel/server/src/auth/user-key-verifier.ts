@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { CoreRefusedError } from "../core-client/errors.js";
 import type { CoreClient } from "../core-client/port.js";
 
 export interface VerifiedUser {
@@ -43,6 +44,7 @@ export class UserKeyVerifier {
     if (cached && cached.expiresAt > this.now()) return cached.user;
 
     const response = await this.core.callV3("meta/auth/verify", { user_key: userKey }, call);
+    if (response.status !== 200) throw new CoreRefusedError(response);
     const user = extractUser(response.body);
     this.remember(digest, user);
     return user;

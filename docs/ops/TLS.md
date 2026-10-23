@@ -37,7 +37,7 @@ The Panel is served at the same address. Only admins need it; on an address the 
 Copy the root certificate out once; it stays the same across restarts (it lives in the `caddy-data` volume):
 
 ```bash
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+docker compose exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > caddy-root.crt
 ```
 
 - **`amem`**: copy `caddy-root.crt` to each client machine and log in with it: `amem login --server-url https://10.0.0.5 --ca-cert /path/to/caddy-root.crt …` (or `AMEM_CA_CERT`). `amem` trusts its built-in CAs plus this one; the system's trust store is not used.
