@@ -612,6 +612,7 @@ pub async fn session_add(
         required("x-memory-session-id")?,
     );
     let team = ctx.header("x-memory-team-id");
+    let agent = required("x-memory-agent-id")?;
     let stored = s
         .services
         .session
@@ -621,6 +622,7 @@ pub async fn session_add(
                 user_id: &user,
                 session_id: &session,
                 team_id: team.as_deref(),
+                agent_id: &agent,
             },
             body,
         )

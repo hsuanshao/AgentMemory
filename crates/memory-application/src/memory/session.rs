@@ -1,6 +1,6 @@
 //! `/v3/session/add`: store one raw conversation turn as an object, without
 //! protocol conversion, under
-//! `sessions/<source>/<team>/<user>/<session>[/subagents/<id>]/<started>-<rand>.json`.
+//! `sessions/<source>/<team>/<agent>/<user>/<session>[/subagents/<id>]/<started>-<rand>.json`.
 
 use std::sync::Arc;
 
@@ -30,6 +30,7 @@ pub struct SessionTurnHeaders<'a> {
     pub user_id: &'a str,
     pub session_id: &'a str,
     pub team_id: Option<&'a str>,
+    pub agent_id: &'a str,
 }
 
 pub struct StoredTurn {
@@ -65,6 +66,7 @@ impl SessionService {
         let redactor = self.redaction.redactor(department).await?;
         let user = SegmentId::parse("x-memory-user-id", headers.user_id)?;
         let session = SegmentId::parse("x-memory-session-id", headers.session_id)?;
+        let agent = SegmentId::parse("x-memory-agent-id", headers.agent_id)?;
         let team = match headers.team_id.filter(|t| !t.is_empty()) {
             Some(t) => SegmentId::parse("x-memory-team-id", t)?,
             None => SegmentId::parse("team", UNASSIGNED_TEAM)?,
@@ -82,11 +84,12 @@ impl SessionService {
         for value in record.values_mut() {
             redact_strings(&redactor, value);
         }
+        record.insert("agent".into(), Value::String(agent.to_string()));
         record.insert("user".into(), Value::String(user.to_string()));
         record.insert("session".into(), Value::String(session.to_string()));
 
         let file = format!("{started_at}-{}.json", self.ids.hex(8));
-        let base = format!("sessions/{source}/{team}/{user}/{session}");
+        let base = format!("sessions/{source}/{team}/{agent}/{user}/{session}");
         let object_key = match subagent {
             Some(sub) => format!("{base}/subagents/{sub}/{file}"),
             None => format!("{base}/{file}"),
@@ -110,7 +113,7 @@ fn validate_record(body: Value) -> DomainResult<Map<String, Value>> {
         return Err(unprocessable("body must be a JSON object".into()));
     };
     for key in map.keys() {
-        if key == "user" || key == "session" {
+        if matches!(key.as_str(), "agent" | "user" | "session") {
             return Err(unprocessable(format!("field not allowed: {key}")));
         }
         if !REQUIRED.contains(&key.as_str()) && !OPTIONAL.contains(&key.as_str()) {

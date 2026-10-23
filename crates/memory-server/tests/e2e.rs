@@ -661,6 +661,30 @@ async fn a_private_agent_is_its_owners() {
         assert_ne!(r["code"], 0, "other member {path}: {r}");
     }
 
+    // Raw session turns: the owner may store one, another member may not.
+    let turn = on(json!({
+        "source": "online",
+        "started_at": "2026-06-11T02:18:20.359Z",
+        "ended_at": "2026-06-11T02:18:47.945Z",
+        "user_query": "q",
+        "model": "m",
+        "messages": [{"role": "user", "content": "q"}],
+        "output": {"role": "assistant", "content": "a"}
+    }));
+    for (key, expected) in [(&owner_key, 200), (&other_key, 403)] {
+        let res = client
+            .http
+            .post(format!("{}/v3/session/add", client.base))
+            .header("x-memory-department-id", &client.department)
+            .header("x-memory-user-key", key.as_str())
+            .header("x-memory-session-id", "s")
+            .json(&turn)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), expected, "session/add");
+    }
+
     // Nor its skills, reached from the member's own agent: by owner, by a
     // team-wide list or search, or by id.
     let mine = client
@@ -1182,8 +1206,8 @@ async fn a_raw_session_turn_is_stored() {
     let key = added["data"]["object_key"].as_str().unwrap().to_owned();
     assert!(
         key.starts_with(&format!(
-            "sessions/online/{}/{}/s-raw/",
-            client.team_id, client.user_id
+            "sessions/online/{}/{}/{}/s-raw/",
+            client.team_id, client.agent_id, client.user_id
         )),
         "{key}"
     );
@@ -1197,6 +1221,7 @@ async fn a_raw_session_turn_is_stored() {
         .unwrap(),
     )
     .unwrap();
+    assert_eq!(stored["agent"], client.agent_id.as_str());
     assert_eq!(stored["user"], client.user_id.as_str());
     assert_eq!(stored["session"], "s-raw");
     for field in ["team_id", "agent_id", "user_id", "task_id"] {
@@ -1204,9 +1229,11 @@ async fn a_raw_session_turn_is_stored() {
     }
 
     // A client still cannot name the stored identity itself.
-    let mut forged = client.scoped_for(turn, None);
-    forged["user"] = json!("someone-else");
-    assert_eq!(send(forged).await.unwrap().status(), 422);
+    for field in ["agent", "user", "session"] {
+        let mut forged = client.scoped_for(turn.clone(), None);
+        forged[field] = json!("someone-else");
+        assert_eq!(send(forged).await.unwrap().status(), 422, "{field}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
