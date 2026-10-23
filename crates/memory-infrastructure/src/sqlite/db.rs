@@ -142,6 +142,16 @@ impl DepartmentPool {
         Ok(db)
     }
 
+    /// Whether the department has a database (open or on disk); never
+    /// creates one.
+    pub fn exists(&self, department: &DepartmentId) -> bool {
+        let open = self
+            .entries
+            .lock()
+            .is_ok_and(|entries| entries.contains_key(department));
+        open || self.department_dir(department).join("memory.db").is_file()
+    }
+
     /// Closes the department database (in-flight users keep their handle).
     pub fn evict(&self, department: &DepartmentId) {
         if let Ok(mut entries) = self.entries.lock() {

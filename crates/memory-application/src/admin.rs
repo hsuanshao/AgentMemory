@@ -338,6 +338,14 @@ pub struct StatsOverview {
     pub generation_logs: usize,
 }
 
+/// Which departments have storage. Storage is created on first use, so
+/// requests for a department nobody set up are refused before they reach it;
+/// only `init-admin` starts a new one.
+#[async_trait]
+pub trait DepartmentDirectory: Send + Sync {
+    async fn exists(&self, department: &DepartmentId) -> DomainResult<bool>;
+}
+
 /// Wipes every trace of a department (database + files).
 #[async_trait]
 pub trait DepartmentLifecycle: Send + Sync {

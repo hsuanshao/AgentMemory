@@ -27,9 +27,9 @@ HTTP 狀態碼等於 envelope 中的 `code`，`message` 說明原因。
 | 狀態碼 | 情況 |
 | --- | --- |
 | 400 | JSON 或輸入不合法；資料平面缺少 `team_id` / `agent_id` |
-| 401 | 缺少或錯誤的 Bearer key；user key 不存在、已撤銷或已過期 |
+| 401 | 缺少或錯誤的 Bearer key；user key 不存在、已撤銷或已過期（資料面上部門不存在時也是） |
 | 403 | 不是該 team 的有效成員；agent 屬於別的 team；非系統管理者卻指定其他 `user_id`；不允許的 metadata 操作 |
-| 404 | 路由或資料不存在 |
+| 404 | 路由或資料不存在；Bearer 路由上部門不存在時回 `unknown_department`（先對它執行 `init-admin`） |
 | 409 | 衝突，例如 `already_initialized`、`target_has_profile` |
 | 413 | Body 超過 `max_body_bytes`（`session/add` 為 `max_session_body_bytes`） |
 | 429 | 超過配額 |
@@ -145,7 +145,7 @@ Meta 的列表回應格式：`{items, total, limit, offset}`；`redaction-rule/l
 
 ### 內部與維運（僅需 Bearer）
 
-* `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`：第一次啟動時的初始化，建立一位系統管理者，以及 `default-team` 與 `default-agent-<username>`。只要已有任何使用者，就回 409 `already_initialized`。
+* `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`：第一次啟動時的初始化，建立一位系統管理者，以及 `default-team` 與 `default-agent-<username>`。只要已有任何使用者，就回 409 `already_initialized`。這是唯一會建立部門的路由：對不存在的部門，其他路由一律拒絕（資料面回與 user key 錯誤相同的 401，`meta/auth/verify` 回 `valid: false`，其餘回 404 `unknown_department`）。
 * `/v3/internal/meta/user/list-by-department`。
 * `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` → `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`：升級輔助工具，把寫在舊 `default` 桶的資料（`default/default/default` 的 L0/L1，以及 `default/default` 的 L2/L3 和 skills）連同管線游標搬到真正的範圍。0.1.1 之前若 client 有指定 agent 或使用者，資料會寫在 `default/<agent>/<user>`；這時用 `from_team_id`／`from_agent_id`／`from_user_id` 指定來源桶（未填的部分都是 `default`）。條件：agent 必須屬於該 team、使用者必須是有效成員，而且 agent 還不能有 L2/L3（否則回 409 `target_has_profile`）。這項檢查只在仍有舊資料時進行，所以搬移成功後重跑不會有任何動作。`dry_run: true` 會 rollback，只回報筆數。
 * `/v3/internal/upgrade` `{admin_username?, team_name?, agent_name?, issue_key?, dry_run?}` → `{dry_run, user_id, username, team_id, team_name, team_created, agent_id, agent_name, agent_created, moved, session_states, profile_states, user_key?}`：`upgrade.sh` 呼叫的就是這個。它會：

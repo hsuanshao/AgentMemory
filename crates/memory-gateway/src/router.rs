@@ -1,6 +1,6 @@
 //! Route table and cross-cutting HTTP concerns (auth, CORS, body limits).
 
-use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::extract::{DefaultBodyLimit, OriginalUri, Request, State};
 use axum::http::{header, HeaderValue, Method};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -12,8 +12,9 @@ use tower_http::trace::TraceLayer;
 use crate::authz;
 use crate::context::{Ctx, DEPARTMENT_ID, USER_KEY};
 use crate::envelope::ApiError;
-use crate::handlers::{memory, meta, ops, skill};
+use crate::handlers::{department_exists, memory, meta, ops, skill};
 use crate::state::SharedState;
+use memory_application::meta::invalid_user_key;
 
 /// Length-independent comparison so token checks do not leak timing.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -50,6 +51,72 @@ async fn require_bearer(
         }
     }
     next.run(req).await
+}
+
+/// Storage is created on first use, so a request for a department nobody set
+/// up stops here instead of creating one. `init-admin` starts a department;
+/// `auth/verify` answers "not valid" itself.
+async fn known_department(
+    s: &SharedState,
+    ctx: &Ctx,
+    path: &str,
+    unknown: fn(&Ctx) -> ApiError,
+) -> Result<(), ApiError> {
+    let department = ctx.department()?;
+    // Asked even where it does not refuse: the answer also clears a stale
+    // view of a department another replica destroyed.
+    let exists = department_exists(s, ctx, &department).await?;
+    let exempt = matches!(
+        path,
+        "/v3/internal/meta/user/init-admin" | "/v3/meta/auth/verify"
+    );
+    if exists || exempt {
+        Ok(())
+    } else {
+        Err(unknown(ctx))
+    }
+}
+
+fn original_path(req: &Request) -> String {
+    req.extensions()
+        .get::<OriginalUri>()
+        .map_or_else(|| req.uri().path().to_owned(), |u| u.path().to_owned())
+}
+
+/// User-key routes: an unknown department looks like a wrong key.
+async fn require_department_for_user(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    req: Request,
+    next: Next,
+) -> Response {
+    match known_department(&s, &ctx, &original_path(&req), |ctx| {
+        ctx.err(invalid_user_key())
+    })
+    .await
+    {
+        Ok(()) => next.run(req).await,
+        Err(e) => e.into_response(),
+    }
+}
+
+/// Bearer routes (checked after the Bearer key): a plain 404.
+async fn require_department(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    req: Request,
+    next: Next,
+) -> Response {
+    let unknown = |ctx: &Ctx| {
+        ApiError::not_found(
+            &ctx.request_id,
+            "unknown_department: run init-admin for it first",
+        )
+    };
+    match known_department(&s, &ctx, &original_path(&req), unknown).await {
+        Ok(()) => next.run(req).await,
+        Err(e) => e.into_response(),
+    }
 }
 
 fn cors(origins: &[String]) -> Option<CorsLayer> {
@@ -176,18 +243,27 @@ fn ops_routes() -> Router<SharedState> {
 /// clients never hold the server API key. Everything else (ops, metadata,
 /// internal bootstrap) still requires the Bearer key.
 pub fn build_router(state: SharedState) -> Router {
+    // Layers run outermost (last added) first.
     let user_auth = || middleware::from_fn_with_state(state.clone(), authz::require_user);
+    let user_department =
+        || middleware::from_fn_with_state(state.clone(), require_department_for_user);
     let session = Router::new()
         .route("/session/add", post(memory::session_add))
         .layer(DefaultBodyLimit::max(state.settings.max_session_body_bytes))
-        .layer(user_auth());
+        .layer(user_auth())
+        .layer(user_department());
     let user_scoped = Router::new()
         .merge(data_plane())
         .nest("/skill", skill_routes())
         .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
-        .layer(user_auth());
+        .layer(user_auth())
+        .layer(user_department());
     let bearer_scoped = ops_routes()
         .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_department,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_bearer,

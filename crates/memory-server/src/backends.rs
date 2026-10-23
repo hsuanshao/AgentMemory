@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use memory_application::admin::DepartmentLifecycle;
+use memory_application::admin::{DepartmentDirectory, DepartmentLifecycle};
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::memory::{
     AtomRepository, ConversationRepository, ProfileVersionStore, ScopeMigrationStore,
@@ -56,6 +56,8 @@ pub struct Storage {
     pub generation_logs: Arc<dyn GenerationLogRepository>,
     /// Removes the department's stored data (and its local files).
     pub cleanup: Arc<dyn DepartmentLifecycle>,
+    /// Which departments have storage.
+    pub departments: Arc<dyn DepartmentDirectory>,
     pub name: &'static str,
     pub fts_available: bool,
     /// How vector search is executed, for `/health`.
@@ -105,7 +107,11 @@ fn sqlite_storage(config: &Config, data_dir: &Path, vector_dims: Option<usize>) 
         generation_logs: Arc::new(SqliteGenerationLogStore::new(Arc::clone(&pool))),
         fts_available: pool.fts_available(),
         vector_index,
-        cleanup: Arc::new(LocalDirCleanup::new(data_dir.to_path_buf(), Some(pool))),
+        cleanup: Arc::new(LocalDirCleanup::new(
+            data_dir.to_path_buf(),
+            Some(Arc::clone(&pool)),
+        )),
+        departments: pool,
         name: "sqlite",
     }
 }
@@ -149,6 +155,7 @@ async fn postgres_storage(
         fts_available: true,
         vector_index: db.vector_index().into(),
         cleanup: Arc::new(cleanup),
+        departments: db,
         name: "postgres",
     })
 }

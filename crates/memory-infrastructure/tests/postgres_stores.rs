@@ -18,7 +18,7 @@ mod profile_versions;
 mod redaction_rules;
 
 use chrono::{Duration, Utc};
-use memory_application::admin::DepartmentLifecycle;
+use memory_application::admin::{DepartmentDirectory, DepartmentLifecycle};
 use memory_application::common::Page;
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
@@ -512,6 +512,41 @@ async fn keyword_search_matches_underscored_and_cjk_tokens_verbatim() {
         "operators and quotes are escaped"
     );
     teardown(&db, &department).await;
+}
+
+/// Two replicas on one database: one destroys a department the other has
+/// cached; the other must see it gone, and build it again on next use.
+#[tokio::test]
+async fn a_department_destroyed_elsewhere_is_unknown_here() {
+    let Some((a, department)) = setup().await else {
+        return;
+    };
+    let url = std::env::var(URL_ENV).unwrap();
+    let b = Arc::new(PgDb::connect(&url, 4, Some(2)).await.unwrap());
+    let store_b = PostgresMemoryStore::new(Arc::clone(&b));
+    let filter = ConversationFilter::default();
+
+    a.schema(&department).await.unwrap();
+    b.schema(&department).await.unwrap();
+    assert!(DepartmentDirectory::exists(b.as_ref(), &department)
+        .await
+        .unwrap());
+
+    teardown(&a, &department).await;
+    assert!(!DepartmentDirectory::exists(b.as_ref(), &department)
+        .await
+        .unwrap());
+    // Built again on next use (init-admin), not served from the stale cache.
+    assert_eq!(
+        ConversationRepository::count(&store_b, &department, None, &filter)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(DepartmentDirectory::exists(a.as_ref(), &department)
+        .await
+        .unwrap());
+    teardown(&a, &department).await;
 }
 
 #[tokio::test]

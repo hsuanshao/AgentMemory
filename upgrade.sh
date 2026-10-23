@@ -273,7 +273,7 @@ migrate_legacy() {
   bold "Memories written before 0.1.1"
   local plan
   plan=$(core_upgrade "$(upgrade_body true false)")
-  if [[ $plan == *'no active system admin'* ]]; then
+  if [[ $plan == *'no active system admin'* || $plan == *'unknown_department'* ]]; then
     info "This install has no administrator yet; creating one."
     create_admin
     plan=$(core_upgrade "$(upgrade_body true false)")

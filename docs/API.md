@@ -42,9 +42,9 @@ The HTTP status equals `code` in the envelope; `message` explains.
 | Status | When |
 | --- | --- |
 | 400 | Invalid JSON or input; `team_id` / `agent_id` missing on the data plane |
-| 401 | Missing or wrong Bearer key; unknown, revoked or expired user key |
+| 401 | Missing or wrong Bearer key; unknown, revoked or expired user key (also on the data plane for a department that does not exist) |
 | 403 | Not an active member of the team; agent of another team; naming another `user_id` without being a system admin; metadata action not allowed |
-| 404 | Unknown route or entity |
+| 404 | Unknown route or entity; `unknown_department` on a Bearer route for a department that does not exist (run `init-admin` for it) |
 | 409 | Conflict, e.g. `already_initialized`, `target_has_profile` |
 | 413 | Body over `max_body_bytes` (`max_session_body_bytes` for `session/add`) |
 | 429 | Quota exceeded |
@@ -162,7 +162,9 @@ Meta list responses: `{items, total, limit, offset}`; `redaction-rule/list` retu
 
 `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`
 — first-run bootstrap: a system admin plus `default-team` and `default-agent-<username>`
-(409 `already_initialized` once any user exists),
+(409 `already_initialized` once any user exists); the only route that creates a department:
+for one that does not exist, every other route is refused (a wrong-key 401 on the data plane,
+`valid: false` from `meta/auth/verify`, 404 `unknown_department` elsewhere),
 `/v3/internal/meta/user/list-by-department`,
 `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` →
 `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`

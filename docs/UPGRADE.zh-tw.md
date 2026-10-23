@@ -4,6 +4,7 @@
 
 ## 目錄
 
+- [0.4.1 之後（尚未發布）](#041-之後尚未發布)
 - [升級到 0.4.1](#升級到-041)
 - [升級到 0.4.0](#升級到-040)
 - [升級到 0.3.0](#升級到-030)
@@ -17,6 +18,13 @@
   - [D. 確認結果](#d-確認結果)
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
+
+## 0.4.1 之後（尚未發布）
+
+> [!IMPORTANT]
+> **部門必須先用 `init-admin` 建立，之後才能使用。** 以前對新的部門名稱發請求就會建立它；現在會被拒絕（資料面回與 user key 錯誤相同的 401，Panel 登入回 `valid: false`，其他路由回 404 `unknown_department`）。已經存在的部門不受影響。如果 Panel、腳本或 client 送出的部門 ID 從沒初始化過，升級後請先對它執行 `init-admin`（[COLLABORATION §13](COLLABORATION.zh-tw.md#13-部門與儲存)）：
+>
+> `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <部門>" -H "content-type: application/json" -d '{"username":"admin"}'`
 
 ## 升級到 0.4.1
 
@@ -243,7 +251,7 @@ curl -sS -X POST "$CORE/v3/internal/upgrade" "${H[@]}" \
 
 Body 的欄位都可以省略：`admin_username`、`team_name`（預設 `default-team`）、`agent_name`（預設 `default-agent-<admin>`）、`issue_key`、`dry_run`。
 
-> 若回應是 `no active system admin`，表示這套安裝從來沒有建立管理者，請先建立：
+> 若回應是 `no active system admin` 或 `unknown_department`，表示這套安裝從來沒有建立管理者，請先建立：
 > `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" "${H[@]}" -d '{"username":"admin"}'`
 
 ### B5. 搬移資料並取得 key
@@ -332,7 +340,7 @@ Client 也要改回原本的設定。
 | 症狀 | 原因與處理 |
 | --- | --- |
 | `Agent '…' already has L2/L3 memories` / `409 target_has_profile` | 找到了舊資料，但指定的 agent 已經有自己的場景，系統不會把兩組場景合併。請換一個新的 agent 名稱再執行一次 |
-| `no active system admin` | 這套安裝沒有建立過管理者。`upgrade.sh` 會自動建立；手動做法是 B4 的 `init-admin` 指令 |
+| `no active system admin` 或 `unknown_department` | 這套安裝沒有建立過管理者。`upgrade.sh` 會自動建立；手動做法是 B4 的 `init-admin` 指令 |
 | Client 收到 `401` | Client 仍然只送 Bearer key，請照 C 節修改 |
 | Client 收到 `403 not a member` | 該使用者不在這個 team。請在 Panel 的 Teams → members 加入 |
 | `upgrade.sh` 顯示 `No .env here` | 請在既有的安裝目錄執行，不是在新 clone 的目錄 |

@@ -257,6 +257,27 @@ impl PgDb {
         Ok(removed > 0)
     }
 
+    /// Whether the department is registered; never creates its schema.
+    /// Asks the registry every time: another replica may have dropped the
+    /// department since this one cached its schema, and then the cached
+    /// entry is forgotten so the next `schema()` (an `init-admin`) builds it
+    /// again instead of using tables that are gone.
+    pub async fn is_registered(&self, department: &DepartmentId) -> DomainResult<bool> {
+        let registry = quote_ident(REGISTRY_SCHEMA);
+        let row = fetch_optional(
+            &mut *self.conn().await?,
+            &format!("SELECT 1 AS found FROM {registry}.departments WHERE department_id = ?"),
+            &args![department.as_str()],
+        )
+        .await?;
+        if row.is_none() {
+            if let Ok(mut ready) = self.ready.write() {
+                ready.remove(department);
+            }
+        }
+        Ok(row.is_some())
+    }
+
     /// Departments registered in the database.
     pub async fn known_departments(&self) -> DomainResult<Vec<String>> {
         let registry = quote_ident(REGISTRY_SCHEMA);

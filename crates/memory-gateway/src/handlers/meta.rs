@@ -7,7 +7,7 @@ use memory_application::meta::{
     CreateAssetInput, CreateKeyInput, CreateTaskInput, CreateTeamInput, CreateUserInput,
     GrantInput, ListAccessibleInput, ListAgentsInput, ListAssetsInput, ListParticipationInput,
     ListTasksInput, ListUsersInput, Pagination, UpdateAgentInput, UpdateAssetInput, UpdateKeyInput,
-    UpdateTaskInput, UpdateTeamInput,
+    UpdateTaskInput, UpdateTeamInput, VerifyResult,
 };
 use memory_application::ports::meta::UserFilter;
 use memory_application::redaction::{
@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 
 use crate::context::{Ctx, JsonBody};
 use crate::envelope::{ok, ApiError};
+use crate::handlers::department_exists;
 use crate::state::SharedState;
 
 type ApiResult = Result<Response, ApiError>;
@@ -103,6 +104,16 @@ pub async fn dispatch(
     let department = ctx.department()?;
     if (resource.as_str(), action.as_str()) == ("auth", "verify") {
         let key = required(&ctx, &body, "user_key")?;
+        // Same answer as a wrong key: callers cannot probe department names.
+        if !department_exists(&s, &ctx, &department).await? {
+            return Ok(ok(
+                &ctx.request_id,
+                VerifyResult {
+                    valid: false,
+                    user: None,
+                },
+            ));
+        }
         return Ok(ok(
             &ctx.request_id,
             s.services

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use memory_application::admin::DepartmentLifecycle;
+use memory_application::admin::{DepartmentDirectory, DepartmentLifecycle};
 use memory_application::ports::pipeline::PipelineStateRepository;
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::scope::DepartmentId;
@@ -81,5 +81,12 @@ impl DepartmentLifecycle for StateCleanup {
     async fn destroy(&self, department: &DepartmentId) -> DomainResult<Value> {
         self.state.delete_department(department).await?;
         Ok(json!({"removed": true}))
+    }
+}
+
+#[async_trait]
+impl DepartmentDirectory for DepartmentPool {
+    async fn exists(&self, department: &DepartmentId) -> DomainResult<bool> {
+        Ok(DepartmentPool::exists(self, department))
     }
 }

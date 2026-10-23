@@ -117,7 +117,7 @@ erDiagram
   }
 ```
 
-- **部門**（`x-memory-department-id`，預設 `default`）是硬性的邊界，各自有獨立的 SQLite 檔或 Postgres schema。
+- **部門**（`x-memory-department-id`，預設 `default`）是硬性的邊界，各自有獨立的 SQLite 檔或 Postgres schema，由 `init-admin` 建立。
 - 記憶的**範圍（scope）**是 `team_id / agent_id / user_id（/ task_id）`。L0/L1 以使用者劃分；L2 場景與 L3 persona 以 team + agent 劃分。
 - **User key**（`sk-mem-…`）代表一位使用者，可以列出、撤銷，也會過期。**伺服器 API key**（`AGENT_MEMORY_API_KEY`，以 Bearer 傳送）代表維運人員，不代表任何使用者。
 
@@ -126,15 +126,22 @@ erDiagram
 ```mermaid
 flowchart LR
   R[Request /v3/...] --> Z{Route group}
-  Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> U["require_user<br/>x-memory-user-key only"]
+  Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> KU{"department<br/>exists?"}
+  KU -- "no: 401, as for a wrong key" --> X[Refused]
+  KU -- yes --> U["require_user<br/>x-memory-user-key only"]
   Z -- "ops, meta, internal,<br/>department/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
-  B -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
+  B --> KB{"department<br/>exists?"}
+  KB -- "no: 404 unknown_department" --> X
+  KB -- "yes, or init-admin /<br/>auth/verify" --> D["ops / meta / internal"]
+  D -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
   U --> H[Handler]
-  B --> H
+  D --> H
   M --> H
 ```
 
 因此遠端 client 永遠不需要 伺服器 API key。User key 外洩時，影響範圍只有該使用者在其所屬 team 裡的記憶。
+
+部門的儲存空間是在第一次使用時建立的，所以兩個信任區都會先確認部門是否存在（`DepartmentDirectory`：SQLite 檔，或 Postgres 的登記資料列），確認時不會建立它。在 Postgres 上每個請求都會查登記表，所以一台機器刪除部門後，其他機器立刻就會把它當成不存在。只有 `init-admin` 會建立部門。對不存在的部門，`auth/verify` 回 `valid: false`，資料面的回應和 user key 錯誤時相同，所以回應內容看不出部門是否存在。回應時間則看得出來：不存在的部門查完登記表就被拒絕，存在的部門配上錯誤的 key 還要再查一次 key。部門名稱不視為機密，所以接受這一點。
 
 ### 資料平面授權
 

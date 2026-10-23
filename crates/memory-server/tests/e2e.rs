@@ -319,15 +319,9 @@ async fn the_pipeline_runs_on_the_postgres_backend() {
         destroyed["data"]["cleaned"]["storage"]["postgres"]["removed"], true,
         "{destroyed}"
     );
+    // Gone for good: reading does not bring it back.
     let stats = client.call("/v3/stats/overview", json!({})).await;
-    assert_eq!(stats["data"]["l1"]["total"], 0, "{stats}");
-    // Reading re-created the (empty) schema lazily; leave nothing behind.
-    client
-        .call(
-            "/v3/department/destroy",
-            json!({"department_id": client.department}),
-        )
-        .await;
+    assert_eq!(stats["code"], 404, "{stats}");
 }
 
 /// Scenes are append-only: rewrites, merges and removals add versions, and
@@ -1155,6 +1149,116 @@ async fn clients_older_than_departments_are_told_to_update() {
             .contains("renamed in 0.3.0"),
         "{body}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_departments_get_no_storage() {
+    let (data, client) = start().await;
+    assert_unknown_department_refused(&client).await;
+    let departments = std::fs::read_dir(data.path().join("departments"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(departments, std::slice::from_ref(&client.department));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_departments_get_no_storage_on_postgres() {
+    let Ok(url) = std::env::var("AGENT_MEMORY_TEST_POSTGRES_URL") else {
+        eprintln!("skipping: set AGENT_MEMORY_TEST_POSTGRES_URL to run against Postgres");
+        return;
+    };
+    let base_url = spawn_fake_llm().await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.storage.backend = "postgres".into();
+        config.storage.postgres.url = url;
+    })
+    .await;
+    assert_unknown_department_refused(&client).await;
+    client
+        .call_as(
+            "/v3/department/destroy",
+            "",
+            json!({"department_id": client.department}),
+        )
+        .await;
+}
+
+/// Requests for a department nobody set up are refused without creating
+/// it; `init-admin` still starts one.
+async fn assert_unknown_department_refused(client: &Client) {
+    let unknown = format!("{}-unknown", client.department);
+    let send = |path: &str, user_key: Option<&str>, body: Value| {
+        let mut req = client
+            .http
+            .post(format!("{}{path}", client.base))
+            .bearer_auth("test-key")
+            .header("x-memory-department-id", &unknown);
+        if let Some(key) = user_key {
+            req = req.header("x-memory-user-key", key);
+        }
+        req.json(&body).send()
+    };
+
+    // The data plane answers exactly as for a wrong key in a real department.
+    let wrong_key = client
+        .call_as("/v3/recall", "ak_wrong", json!({"query": "x"}))
+        .await;
+    for path in ["/v3/recall", "/v3/session/add", "/v3/skill/list"] {
+        let res = send(path, Some("ak_wrong"), json!({"query": "x"}))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 401, "{path}");
+        let body: Value = res.json().await.unwrap();
+        assert_eq!(body["code"], wrong_key["code"], "{path}: {body}");
+        assert_eq!(body["message"], wrong_key["message"], "{path}: {body}");
+    }
+    // Panel login: "not valid", as for a wrong key.
+    let res = send(
+        "/v3/meta/auth/verify",
+        None,
+        json!({"user_key": "ak_wrong"}),
+    )
+    .await
+    .unwrap();
+    let body: Value = res.json().await.unwrap();
+    assert_eq!(
+        body["data"],
+        json!({"valid": false, "user": null}),
+        "{body}"
+    );
+    // Bearer routes: 404.
+    for path in ["/v3/stats/overview", "/v3/meta/team/list"] {
+        let res = send(path, None, json!({})).await.unwrap();
+        assert_eq!(res.status(), 404, "{path}");
+    }
+    let id = memory_domain::scope::SegmentId::parse("department", &unknown).unwrap();
+    assert!(!client.state.services.departments.exists(&id).await.unwrap());
+
+    // init-admin creates it.
+    let res = send(
+        "/v3/internal/meta/user/init-admin",
+        None,
+        json!({"username": "admin"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 200);
+    assert!(client.state.services.departments.exists(&id).await.unwrap());
+    let res = send("/v3/stats/overview", None, json!({})).await.unwrap();
+    assert_eq!(res.status(), 200);
+    let res = send(
+        "/v3/department/destroy",
+        None,
+        json!({"department_id": unknown}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 200);
+    assert!(!client.state.services.departments.exists(&id).await.unwrap());
 }
 
 impl Client {
