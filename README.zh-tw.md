@@ -104,7 +104,7 @@ Client（任何機器上的 agent）只用自己的 **user key** 驗證，不需
 ```bash
 cargo test --workspace                 # 單元 + 整合 + 端到端測試（Postgres/Redis 測試預設略過）
 # 對真實的 Postgres 與 Redis 執行整合測試：
-docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg16
+docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg17
 docker run -d --rm --name amem-redis -p 26379:6379 redis:8.4.0
 AGENT_MEMORY_TEST_POSTGRES_URL=postgres://postgres:test@127.0.0.1:25432/postgres \
 AGENT_MEMORY_TEST_REDIS_URL=redis://127.0.0.1:26379 cargo test --workspace

@@ -4,7 +4,7 @@
 
 ## Contents
 
-- [After 0.4.1 (unreleased)](#after-041-unreleased)
+- [To 0.4.2](#to-042)
 - [To 0.4.1](#to-041)
 - [To 0.4.0](#to-040)
 - [To 0.3.0](#to-030)
@@ -19,16 +19,49 @@
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
 
-## After 0.4.1 (unreleased)
+## To 0.4.2
 
-> [!IMPORTANT]
-> **A department must be created with `init-admin` before anything else uses it.** Until now a request naming a new department created it; now it is refused (a wrong-key 401 on the data plane and department routes, `valid: false` at Panel sign-in, 404 `unknown_department` on operator routes). Departments that already exist are not affected. If a Panel, script or client sends a department id that was never initialized, run `init-admin` for it after upgrading ([COLLABORATION §13](COLLABORATION.md#13-departments-and-storage)):
->
-> `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <department>" -H "content-type: application/json" -d '{"username":"admin"}'`
+```bash
+git fetch --tags && git checkout v0.4.2
+./upgrade.sh
+```
+
+`upgrade.sh` takes a backup, checks the configuration (`check-config`) before it replaces anything, and creates an admin if the install never had one.
+
+> [!WARNING]
+> **Going back to 0.4.1 means restoring the backup** ([E. Roll back](#e-roll-back)). When it starts, memory-core runs schema migration 4 (an index of the atoms without an embedding) and 5 (the table of department redaction rules). 0.4.1 refuses data at a newer schema version, and what this version writes would not be carried back.
+
+**Check before upgrading.** This release tightens access, and some setups need a step. Each row links to its section below.
+
+| If … | Then … |
+| --- | --- |
+| A Panel, script or client sends a department id that never ran `init-admin` | Run `init-admin` for it after upgrading ([departments](#departments-are-created-only-by-init-admin)) |
+| Scripts or monitoring call `meta/*`, `pipeline/*`, `stats/overview`, … with only the server API key | Give them a system admin's user key, or use the `internal/…` routes ([server API key](#the-server-api-key-no-longer-opens-department-routes)) |
+| The Panel runs outside Compose, or an override sets `CORE_API_KEY` for it | Remove `CORE_API_KEY` ([server API key](#the-server-api-key-no-longer-opens-department-routes)) |
+| The server API key was handed to department admins | Change it after the upgrade ([server API key](#the-server-api-key-no-longer-opens-department-routes)) |
+| The distillation CLI goes through a cloud provider (Bedrock, Vertex AI, Azure) or a wrapper script | List the variables it needs in `AGENT_MEMORY_LLM_CLI_PASS_ENV` ([CLI](#the-distillation-cli-no-longer-inherits-memory-cores-environment)) |
+| You rely on extracted skills appearing by themselves | Approve them on Panel → Skills, or set `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false` ([skills](#extracted-skills-wait-for-approval)) |
+| Each person has their own agent, but the agents are team-visible (the default) | Set each to `"visibility": "private"` with `/v3/meta/agent/update`, so only its owner and the team's admins use it ([COLLABORATION §9](COLLABORATION.md#9-authorization-of-memory-requests)) |
+| `.env` has a numeric `AGENT_MEMORY_*` value that does not parse | Fix it: memory-core now stops on it, and `upgrade.sh` reports it before replacing anything |
+
+### Departments are created only by init-admin
+
+A request that names a new department no longer creates it. It is refused:
+
+- the data plane and department routes answer 401, the same as a wrong user key;
+- Panel sign-in answers `valid: false`;
+- operator routes answer 404 `unknown_department`.
+
+Departments that already exist are not affected. If a Panel, script or client sends a department id that was never initialized, run `init-admin` for it after upgrading ([COLLABORATION §13](COLLABORATION.md#13-departments-and-storage)):
+
+```bash
+curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
+  -H "x-memory-department-id: <department>" -H "content-type: application/json" -d '{"username":"admin"}'
+```
+
 ### The server API key no longer opens department routes
 
-> [!IMPORTANT]
-> **Calls that used only `Authorization: Bearer $AGENT_MEMORY_API_KEY` on `meta/*`, `pipeline/*`, `stats/overview`, `memory-generation-log/*`, `memory-prompt/*`, `knowledge/*` or `chat-memory/clear` get 401 after the upgrade.** These routes now take the user key of a user of the department, and the server API key does not stand in for one. This keeps each department's administration inside that department ([ARCHITECTURE](ARCHITECTURE.md#three-trust-zones)). Clients (`amem` and the plugins) are not affected: they already use user keys only.
+**Calls that used only `Authorization: Bearer $AGENT_MEMORY_API_KEY` on `meta/*`, `pipeline/*`, `stats/overview`, `memory-generation-log/*`, `memory-prompt/*`, `knowledge/*` or `chat-memory/clear` get 401 after the upgrade.** These routes now take the user key of a user of the department, and the server API key does not stand in for one. This keeps each department's administration inside that department ([ARCHITECTURE](ARCHITECTURE.md#three-trust-zones)). Clients (`amem` and the plugins) are not affected: they already use user keys only.
 
 | Routes | Before | From this version |
 | --- | --- | --- |
@@ -61,13 +94,21 @@ curl -sS -X POST "$CORE/v3/pipeline/status" "${H_ADMIN[@]}" -d '{}'   # "code":0
 
 This change stores nothing new, so going back to the previous version needs no restore on its account.
 
+### The distillation CLI no longer inherits memory-core's environment
+
+It gets `PATH`, `HOME`, locale, certificate and proxy variables and its own settings (`ANTHROPIC_*`/`CLAUDE_*` for claude, `OPENAI_*`/`CODEX_*` for codex, `GEMINI_*`/`GOOGLE_*` for agy). claude, codex and agy logged in as the install describes keep working. A CLI that read some other variable from the container's environment needs it listed in `AGENT_MEMORY_LLM_CLI_PASS_ENV` ([DISTILLATION §6](ops/DISTILLATION.md#what-the-cli-inherits)). **Check this before upgrading** if the CLI goes through a cloud provider (claude on Bedrock: `AWS_*`; claude on Vertex AI: `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS`; codex on Azure: `AZURE_OPENAI_*`) or if `llm.cli.command` is a wrapper script: otherwise distillation fails after the upgrade.
+
 ### Extracted skills wait for approval
 
 Skill extraction no longer saves skills by itself. What it creates or changes waits as a proposal on the Panel's **Skills** page (and `skill/proposal/*`) until the conversation's user (on an agent they may use), an admin of the team, or a system admin approves it. Nothing is lost: after the upgrade, new extractions simply show up there instead of in the skill list. Someone has to look at them, or no new skills appear. Proposals left undecided expire after 30 days (`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`, 0 for never). A deployment that wants the old behaviour sets `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false` (`skill.extraction.requireApproval: false`). The model also gets the conversation as JSON data and may change only the agent's skills it was shown, with or without approval ([ARCHITECTURE](ARCHITECTURE.md#4-memory-model-and-pipeline)).
 
-### Other changes
+### Also in this release
 
-**The distillation CLI no longer inherits memory-core's environment.** It gets `PATH`, `HOME`, locale, certificate and proxy variables and its own settings (`ANTHROPIC_*`/`CLAUDE_*` for claude, `OPENAI_*`/`CODEX_*` for codex, `GEMINI_*`/`GOOGLE_*` for agy). claude, codex and agy logged in as the install describes keep working. A CLI that read some other variable from the container's environment needs it listed in `AGENT_MEMORY_LLM_CLI_PASS_ENV` ([DISTILLATION §6](ops/DISTILLATION.md#what-the-cli-inherits)). **Check this before upgrading** if the CLI goes through a cloud provider (claude on Bedrock: `AWS_*`; claude on Vertex AI: `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS`; codex on Azure: `AZURE_OPENAI_*`) or if `llm.cli.command` is a wrapper script: otherwise distillation fails after the upgrade.
+These need no action. The [CHANGELOG](../CHANGELOG.md#042---2026-10-24) has the details.
+
+- **Secrets are redacted on the server**, on every write path, in many languages and by shape. Data stored before the upgrade is not rewritten. Department system admins can add their own rules (Panel → Metadata → Redaction).
+- **Missing embeddings are filled in later.** On Postgres, migration 4 builds its index on each department's first use after the upgrade, and with a large `atoms` table that first request waits for it.
+- **Recall output quotes stored text**, and a private agent is usable only by its owner, the team's admins and system admins.
 
 ## To 0.4.1
 

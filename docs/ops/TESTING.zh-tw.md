@@ -31,7 +31,7 @@ cargo test --workspace --locked
 這些測試只有在設定了 URL 時才會執行，所以單純跑 `cargo test` **不會**測到 PostgreSQL 和 Redis。只要修改了 `crates/memory-infrastructure/src/postgres/`、`src/redis/`、`src/sqlite_to_postgres.rs` 或任何 SQL，都需要跑這一組：
 
 ```bash
-docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg16
+docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg17
 docker run -d --rm --name amem-redis -p 26379:6379 redis:8.4.0
 until docker exec amem-pg pg_isready -U postgres -q; do sleep 1; done
 

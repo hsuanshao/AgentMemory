@@ -70,7 +70,7 @@ Suggested shape:
 | --- | --- |
 | fmt | `cargo fmt --all -- --check` |
 | clippy | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
-| test | `cargo test --workspace --locked` with `pgvector/pgvector:pg16` and `redis:8.4.0` service containers and the `AGENT_MEMORY_TEST_*_URL` variables, so the SQLite, Postgres and Redis tests all run |
+| test | `cargo test --workspace --locked` with `pgvector/pgvector:pg17` and `redis:8.4.0` service containers and the `AGENT_MEMORY_TEST_*_URL` variables, so the SQLite, Postgres and Redis tests all run |
 | msrv | `cargo check --workspace --all-targets --locked` on Rust 1.88 |
 | panel | Node 22: `npm ci`, typecheck, test, build |
 | scripts | shellcheck v0.10.0 on every script; the Hermes plugin compiles |
