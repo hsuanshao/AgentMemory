@@ -127,7 +127,13 @@ async fn postgres_data_from_0_2_is_migrated() {
                 role.as_str(),
                 version
             ),
-            ("legacy", "department", "20", "member", 3)
+            (
+                "legacy",
+                "department",
+                "20",
+                "member",
+                memory_infrastructure::postgres::schema::SCHEMA_VERSION
+            )
         );
         let left: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM pg_class WHERE relname IN ('instances', 'instances_pkey')",

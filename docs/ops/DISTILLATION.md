@@ -226,8 +226,8 @@ With embeddings on, every atom is embedded when it is stored. When that call fai
 **Backfill.** memory-core embeds atoms stored without one every `backfillIntervalSecs` (default 600; the first run waits one interval after start), up to `backfillBatch` atoms per department per run.
 
 - Each run goes on where the last one stopped, in the order the atoms were written, and starts over at the end.
-- An atom the service refuses on its own (too long for the model, say) is skipped, so it does not hold up the rest; the next pass tries it again.
-- When several atoms in a row are refused, the service is taken as down: the department is left as it is until the next run.
+- An atom whose input the service refuses (HTTP 400, 413 or 422: too long for the model, say) is skipped, however many there are in a row, so they do not hold up the rest; the next pass tries them again.
+- When the service fails three atoms in a row for its own reasons (unreachable, timeouts, 5xx, 429), it is taken as down: the department is left as it is until the next run.
 - The atom is not rewritten, so L2 does not treat it as new.
 
 To run one pass now and see the result:

@@ -234,11 +234,16 @@ impl OpenAiEmbedding {
             .send()
             .await
             .map_err(|e| DomainError::unavailable(format!("embedding request failed: {e}")))?;
-        if !response.status().is_success() {
-            return Err(DomainError::unavailable(format!(
-                "embedding service returned {}",
-                response.status()
-            )));
+        let status = response.status();
+        if !status.is_success() {
+            let detail = format!("embedding service returned {status}");
+            // The input was refused (too long, malformed, …): retrying the
+            // same text will not help, but the service is up. Anything else
+            // (5xx, 429, auth) is the service's state, not the input's.
+            return Err(match status.as_u16() {
+                400 | 413 | 422 => DomainError::invalid(detail),
+                _ => DomainError::unavailable(detail),
+            });
         }
         let mut parsed: Response = response
             .json()
@@ -304,6 +309,47 @@ mod tests {
 
     fn choice(raw: serde_json::Value) -> ChatChoice {
         serde_json::from_value(raw).unwrap()
+    }
+
+    /// An embedding service that answers every request with `status`.
+    async fn embedding_service(status: u16) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}/v1")
+    }
+
+    #[tokio::test]
+    async fn a_refused_input_is_invalid_and_a_failing_service_unavailable() {
+        for (status, kind) in [
+            (400, ErrorKind::InvalidInput),
+            (413, ErrorKind::InvalidInput),
+            (422, ErrorKind::InvalidInput),
+            (429, ErrorKind::Unavailable),
+            (500, ErrorKind::Unavailable),
+            (503, ErrorKind::Unavailable),
+        ] {
+            let embedder = OpenAiEmbedding::new(EmbeddingSettings {
+                base_url: embedding_service(status).await,
+                api_key: "k".into(),
+                model: "m".into(),
+                dimensions: 2,
+                timeout: Duration::from_secs(5),
+                max_concurrency: 1,
+            });
+            let err = embedder.embed(&["text".into()]).await.unwrap_err();
+            assert_eq!(err.kind, kind, "{status}: {err:?}");
+        }
     }
 
     #[test]

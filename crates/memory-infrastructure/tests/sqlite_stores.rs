@@ -429,9 +429,12 @@ impl memory_application::ports::system::EmbeddingProvider for FlakyEmbedder {
     }
 
     async fn embed(&self, texts: &[String]) -> memory_domain::error::DomainResult<Vec<Vec<f32>>> {
-        let up = self.up.load(std::sync::atomic::Ordering::Relaxed);
-        if !up || texts.iter().any(|t| t.contains("TOO LONG")) {
-            return Err(memory_domain::error::DomainError::unavailable("refused"));
+        if !self.up.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(memory_domain::error::DomainError::unavailable("timed out"));
+        }
+        // As the OpenAI adapter maps a 413.
+        if texts.iter().any(|t| t.contains("TOO LONG")) {
+            return Err(memory_domain::error::DomainError::invalid("input too long"));
         }
         Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
     }
@@ -499,4 +502,39 @@ async fn an_atom_the_service_refuses_does_not_block_the_others() {
         .unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].item.content, "TOO LONG");
+}
+
+#[tokio::test]
+async fn several_refused_atoms_in_a_row_do_not_block_the_others() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    // One L1 run wrote several long atoms in a row, oldest first.
+    store_without_embeddings(
+        &store,
+        &department,
+        &[
+            "TOO LONG 1",
+            "TOO LONG 2",
+            "TOO LONG 3",
+            "TOO LONG 4",
+            "five",
+            "six",
+        ],
+    )
+    .await;
+    let embedder = Arc::new(FlakyEmbedder { up: true.into() });
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder);
+
+    for _ in 0..3 {
+        let run = backfill.department(&department, 200).await.unwrap();
+        assert!(!run.service_down, "{run:?}");
+    }
+    let left = store
+        .missing_embeddings(&department, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(left.len(), 4, "only the refused ones are left");
+    assert!(left.iter().all(|a| a.item.content.starts_with("TOO LONG")));
 }

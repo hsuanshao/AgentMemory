@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use memory_domain::error::DomainResult;
+use memory_domain::error::{DomainResult, ErrorKind};
 use memory_domain::memory::AtomicMemory;
 use memory_domain::scope::DepartmentId;
 use serde::Serialize;
@@ -22,8 +22,17 @@ use crate::ports::system::EmbeddingProvider;
 /// Atoms embedded per call to the embedding service.
 const BATCH: usize = 32;
 
-/// Single atoms in a row the service refuses before it counts as down.
+/// Single atoms in a row the service fails on (unavailable, not refusing
+/// the input) before it counts as down.
 const DOWN_AFTER: usize = 3;
+
+/// Why an embedding call did not give vectors.
+enum Failure {
+    /// The service refused this input (HTTP 400/413/422): skip it.
+    Refused,
+    /// The service is unreachable, timing out or failing.
+    Unavailable,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct BackfillReport {
@@ -84,9 +93,10 @@ impl EmbeddingBackfill {
 
     /// Embeds up to `limit` atoms of one department, continuing where the
     /// last run stopped. A failed batch is retried one atom at a time; an
-    /// atom refused on its own is skipped. When `DOWN_AFTER` atoms in a row
-    /// are refused, the service is taken as down: the run stops and the
-    /// next one starts again from those atoms.
+    /// atom whose input the service refuses is skipped, however many there
+    /// are in a row. When the service fails `DOWN_AFTER` atoms in a row
+    /// for its own reasons (unreachable, timeouts, 5xx), it is taken as
+    /// down: the run stops and the next one starts again from those atoms.
     pub async fn department(
         &self,
         department: &DepartmentId,
@@ -103,27 +113,29 @@ impl EmbeddingBackfill {
         report.missing = atoms.len();
         // The seq up to which every atom was embedded or skipped.
         let mut done: Option<i64> = self.cursor(department);
-        let mut refused_in_a_row = 0;
+        let mut failed_in_a_row = 0;
         'batches: for batch in atoms.chunks(BATCH) {
-            if let Some(vectors) = self.embed(batch).await {
+            if let Ok(vectors) = self.embed(batch).await {
                 for (atom, vector) in batch.iter().zip(&vectors) {
                     self.store(department, &atom.item, vector, &mut report)
                         .await?;
                     done = Some(atom.seq);
                 }
-                refused_in_a_row = 0;
+                failed_in_a_row = 0;
                 continue;
             }
             for atom in batch {
                 match self.embed(std::slice::from_ref(atom)).await {
-                    Some(vectors) => {
+                    Ok(vectors) => {
                         self.store(department, &atom.item, &vectors[0], &mut report)
                             .await?;
-                        refused_in_a_row = 0;
+                        failed_in_a_row = 0;
                     }
-                    None => {
-                        refused_in_a_row += 1;
-                        if refused_in_a_row == DOWN_AFTER {
+                    // The service answered: skip this one.
+                    Err(Failure::Refused) => failed_in_a_row = 0,
+                    Err(Failure::Unavailable) => {
+                        failed_in_a_row += 1;
+                        if failed_in_a_row == DOWN_AFTER {
                             report.service_down = true;
                             break 'batches;
                         }
@@ -133,13 +145,13 @@ impl EmbeddingBackfill {
             }
         }
         if report.service_down {
-            // Resume before the atoms refused in a row; skipped ones before
-            // them wait for the next pass.
+            // Resume at the first of the atoms that failed in a row; refused
+            // ones before them wait for the next pass.
             let resume = atoms
                 .iter()
                 .take_while(|a| Some(a.seq) <= done)
                 .count()
-                .saturating_sub(refused_in_a_row - 1);
+                .saturating_sub(failed_in_a_row - 1);
             done = resume
                 .checked_sub(1)
                 .map(|i| atoms[i].seq)
@@ -152,11 +164,13 @@ impl EmbeddingBackfill {
         Ok(report)
     }
 
-    async fn embed(&self, atoms: &[Sequenced<AtomicMemory>]) -> Option<Vec<Vec<f32>>> {
+    async fn embed(&self, atoms: &[Sequenced<AtomicMemory>]) -> Result<Vec<Vec<f32>>, Failure> {
         let texts: Vec<String> = atoms.iter().map(|a| a.item.content.clone()).collect();
         match self.embedder.embed(&texts).await {
-            Ok(v) if v.len() == atoms.len() => Some(v),
-            _ => None,
+            Ok(v) if v.len() == atoms.len() => Ok(v),
+            Ok(_) => Err(Failure::Unavailable),
+            Err(e) if e.kind == ErrorKind::InvalidInput => Err(Failure::Refused),
+            Err(_) => Err(Failure::Unavailable),
         }
     }
 
