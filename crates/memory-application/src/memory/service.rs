@@ -398,6 +398,14 @@ impl MemoryService {
         author: Option<&str>,
     ) -> DomainResult<SceneVersion> {
         validate_scene_path(path)?;
+        validate_new_scene_name(path)?;
+        if let Some(summary) = summary {
+            if summary.chars().count() > MAX_SUMMARY_CHARS {
+                return Err(DomainError::invalid(format!(
+                    "summary is limited to {MAX_SUMMARY_CHARS} characters"
+                )));
+            }
+        }
         let current = self
             .profiles
             .scene(department, profile, path, None)
@@ -615,10 +623,58 @@ fn require_query(query: &str) -> DomainResult<()> {
     Ok(())
 }
 
+/// Characters of a scene summary written through the API, at most.
+const MAX_SUMMARY_CHARS: usize = 500;
+
+/// A scene path written through the API: segments of letters, digits (any
+/// script), `-`, `_` and `.`, like the names L2 gives scenes
+/// (`normalize_scene_filename`). Paths and summaries go into recall output,
+/// so no spaces, newlines or markup. At most 200 characters.
+fn validate_new_scene_name(path: &str) -> DomainResult<()> {
+    let ok = path.chars().count() <= 200
+        && path.split('/').all(|seg| {
+            !seg.is_empty()
+                && seg != "."
+                && seg
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        });
+    if ok {
+        Ok(())
+    } else {
+        Err(DomainError::invalid(
+            "scene path: letters, digits, -, _ and . in segments separated by /, at most 200 characters",
+        ))
+    }
+}
+
 fn validate_scene_path(path: &str) -> DomainResult<()> {
     validate_relative_path(path)?;
     if path.is_empty() || path.ends_with('/') {
         return Err(DomainError::invalid("path must name a file"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_scene_names_are_plain() {
+        for ok in ["deploy.md", "projects/發版-流程.md", "a_b.c.md"] {
+            assert!(validate_new_scene_name(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "a b.md",
+            "x\n### Path: y.md",
+            "</scene-navigation>.md",
+            "a//b.md",
+            "./a.md",
+            "a/",
+        ] {
+            assert!(validate_new_scene_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(validate_new_scene_name(&"a".repeat(201)).is_err());
+    }
 }

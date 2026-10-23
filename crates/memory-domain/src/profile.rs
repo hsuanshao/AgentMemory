@@ -459,15 +459,20 @@ pub fn render_navigation(entries: &mut [NavigationEntry<'_>]) -> String {
     for e in entries.iter() {
         out.push_str(&format!(
             "### Path: scene_blocks/{}\n**Heat**: {}{} | **Updated**: {}\nSummary: {}\n\n",
-            e.filename,
+            one_line(e.filename),
             e.heat,
             heat_flames(e.heat),
             e.updated,
-            e.summary
+            one_line(e.summary)
         ));
     }
     out.push_str("📌 Usage: consult a scene only when the current task needs that context.\n");
     out
+}
+
+/// A field on one line: a stored newline cannot start a fake entry.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Persona body + freshly rendered navigation.
