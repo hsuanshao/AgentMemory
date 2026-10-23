@@ -23,8 +23,10 @@ use regex::{Captures, Regex};
 
 /// (kind, pattern). A pattern with a `keep` group keeps that prefix (e.g.
 /// the `password=` of a key/value pair) and redacts the rest of the match.
-/// An assignment's key must end with the secret word: `DB_PASSWORD=` and
-/// `access_token:` are secrets, `max_tokens=` and `token_count:` are not.
+/// An assignment's key may go on after the secret word (`SECRET_KEY_BASE=`,
+/// `GITHUB_TOKEN_RO=`, `password1=`), unless a part of it says the value is a
+/// setting about the secret, not the secret: `max_tokens=`, `token_count:`
+/// (see [`NON_SECRET_PARTS`]).
 const RULES: &[(&str, &str)] = &[
     (
         "private-key",
@@ -54,7 +56,7 @@ const RULES: &[(&str, &str)] = &[
     ),
     (
         "secret-assignment",
-        r#"(?i)(?P<keep>\b[A-Z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)[^\s"',;]{6,}"#,
+        r#"(?i)(?P<keep>\b(?P<key>[A-Z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Z0-9_.-]*)["']?\s*[:=]\s*["']?)[^\s"',;]{6,}"#,
     ),
 ];
 
@@ -300,14 +302,16 @@ fn model_reference() -> &'static Regex {
 }
 
 /// Text that has a password's symbols but is something else: an email
-/// address, a query string, or code (`cmd1&&cmd2`, `a1!=b2`).
+/// address, a query string, or code (`cmd1&&cmd2`, `a1!=b2`, `C++17&&x86`).
+/// Code means identifiers or numbers joined by operators; `Tr0ub4dor&&3x`
+/// and `P@ss==w0rd9` do not qualify.
 fn not_a_password() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(concat!(
             r"^[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$",
             r"|^[?&]?[\w.-]+=[^&=]*(?:&[\w.-]+=[^&=]*)+$",
-            r"|&&|\|\||!=|==",
+            r"|^(?:[A-Za-z_][\w.]*(?:\+\+\d*)?|\d+(?:\.\d+)?)(?:(?:&&|\|\||!=|==)(?:[A-Za-z_][\w.]*(?:\+\+\d*)?|\d+(?:\.\d+)?))+$",
         ))
         .expect("valid exclusion pattern")
     })
@@ -343,6 +347,9 @@ enum Check {
     /// The natural-language rule: weak-separator matches go through
     /// [`looks_like_secret`].
     Phrase,
+    /// `secret-assignment`: a key with a part from [`NON_SECRET_PARTS`] is
+    /// kept. Rust's regex has no lookahead, so this is checked here.
+    Assignment,
     /// The shape rule: every ASCII run goes through [`looks_like_password`].
     Shape,
 }
@@ -365,7 +372,10 @@ impl Redactor {
             .map(|(kind, pattern)| Rule {
                 kind: (*kind).to_owned(),
                 re: Regex::new(pattern).expect("valid redaction pattern"),
-                check: Check::None,
+                check: match *kind {
+                    "secret-assignment" => Check::Assignment,
+                    _ => Check::None,
+                },
             })
             .collect();
         rules.push(Rule {
@@ -433,6 +443,7 @@ impl Redactor {
                     {
                         c[0].to_owned()
                     }
+                    Check::Assignment if names_a_setting(&c["key"]) => c[0].to_owned(),
                     Check::Shape => {
                         let run = &c[0];
                         let core = run.trim_matches(WRAPPING);
@@ -454,14 +465,17 @@ impl Redactor {
     }
 }
 
-/// Field names whose value is a secret whatever it looks like, compared
-/// against the last words of a key (see [`is_secret_key`]).
+/// Field names whose value is a secret whatever it looks like. A key counts
+/// when these words appear in it as whole parts (see [`is_secret_key`]).
 const SECRET_KEYS: &[&str] = &[
     "password",
     "passwd",
     "pwd",
+    "pass",
     "passphrase",
     "passcode",
+    "pin",
+    "otp",
     "secret",
     "token",
     "api_key",
@@ -476,11 +490,17 @@ const SECRET_KEYS: &[&str] = &[
     "cookie",
 ];
 
-/// Whether a structured field (a JSON key, a tool argument) holds a secret
-/// by its name: `password`, `dbPassword`, `access-token`, `GITHUB_TOKEN`.
-/// Its value then has no name around it for the text rules to see, so the
-/// caller redacts it whole. `max_tokens` and `token_count` are not secrets.
-pub fn is_secret_key(name: &str) -> bool {
+/// Parts of a key that make it a setting about a secret rather than the
+/// secret itself: `max_tokens`, `token_count`, `password_min_length`,
+/// `pass_rate`.
+const NON_SECRET_PARTS: &[&str] = &[
+    "tokens", "count", "limit", "budget", "usage", "size", "max", "min", "length", "len", "rate",
+    "ratio", "total", "ttl", "timeout", "expiry", "expires", "type",
+];
+
+/// A key split into lowercase parts: `dbPassword`, `DB_PASSWORD`,
+/// `db-password` and `db.password` all give `["db", "password"]`.
+fn key_parts(name: &str) -> Vec<String> {
     let mut snake = String::with_capacity(name.len() + 4);
     let mut prev_lower = false;
     for c in name.chars() {
@@ -493,11 +513,34 @@ pub fn is_secret_key(name: &str) -> bool {
             c => c.to_ascii_lowercase(),
         });
     }
+    snake
+        .split('_')
+        .filter(|p| !p.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn names_a_setting(key: &str) -> bool {
+    key_parts(key)
+        .iter()
+        .any(|p| NON_SECRET_PARTS.contains(&p.as_str()))
+}
+
+/// Whether a structured field (a JSON key, a tool argument) holds a secret
+/// by its name: `password`, `dbPassword`, `access-token`, `GITHUB_TOKEN_RO`,
+/// `SECRET_KEY_BASE`. Its value then has no name around it for the text
+/// rules to see, so the caller redacts it whole. `max_tokens` and
+/// `token_count` are settings, not secrets.
+pub fn is_secret_key(name: &str) -> bool {
+    let parts = key_parts(name);
+    if parts.iter().any(|p| NON_SECRET_PARTS.contains(&p.as_str())) {
+        return false;
+    }
     SECRET_KEYS.iter().any(|k| {
-        snake == *k
-            || snake
-                .strip_suffix(k)
-                .is_some_and(|head| head.ends_with('_'))
+        let words: Vec<&str> = k.split('_').collect();
+        parts
+            .windows(words.len())
+            .any(|w| w.iter().zip(&words).all(|(p, k)| p == k))
     })
 }
 
@@ -549,6 +592,25 @@ mod tests {
             redact(&format!("DB_PASSWORD={} next", fake("", 'x', 12))),
             "DB_PASSWORD=[REDACTED:secret-assignment] next"
         );
+        // The key may go on after the secret word.
+        for (text, key) in [
+            (
+                format!("SECRET_KEY_BASE={}", fake("9f8e", '7', 16)),
+                "SECRET_KEY_BASE=",
+            ),
+            (
+                format!("GITHUB_TOKEN_RO={}", fake("abc", '1', 9)),
+                "GITHUB_TOKEN_RO=",
+            ),
+            (format!("api_key_v2={}", fake("abc", '1', 9)), "api_key_v2="),
+            (format!("password1={}", fake("abc", '1', 8)), "password1="),
+        ] {
+            assert_eq!(
+                redact(&text),
+                format!("{key}[REDACTED:secret-assignment]"),
+                "{text}"
+            );
+        }
         assert_eq!(
             redact(r#"{"api_key": "abc123def456"}"#),
             r#"{"api_key": "[REDACTED:secret-assignment]"}"#
@@ -661,6 +723,7 @@ mod tests {
             "tests pass 100ms faster",
             "รหัส 12345 สินค้า",
             "max_tokens=128000 and token_count: 52000",
+            "MAX_TOKENS=4096 password_min_length=12 token_type: Bearer1",
         ] {
             assert_eq!(redact(text), text);
         }
@@ -678,6 +741,11 @@ mod tests {
             "client_secret",
             "Authorization",
             "set-cookie",
+            "SECRET_KEY_BASE",
+            "GITHUB_TOKEN_RO",
+            "pass",
+            "pin",
+            "otp",
         ] {
             assert!(is_secret_key(key), "{key}");
         }
@@ -689,6 +757,9 @@ mod tests {
             "sort_key",
             "secretary",
             "command",
+            "pass_rate",
+            "password_min_length",
+            "spinner",
         ] {
             assert!(!is_secret_key(key), "{key}");
         }
@@ -729,6 +800,9 @@ mod tests {
             ("Solar@2025ab", "[REDACTED:password-shape]"),
             ("Hermes!2024z", "[REDACTED:password-shape]"),
             ("gptW0rk!ng#1", "[REDACTED:password-shape]"),
+            // Operators inside a password do not make it code.
+            ("Tr0ub4dor&&3x", "[REDACTED:password-shape]"),
+            ("P@ss==w0rd9", "[REDACTED:password-shape]"),
         ];
         for (input, expected) in cases {
             assert_eq!(redact(input), expected, "{input}");

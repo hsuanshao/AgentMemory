@@ -178,7 +178,7 @@ Distillation turns whatever it reads into lasting memories, so secrets are remov
 
 **Where.** The `amem` client redacts a turn before it is queued or sent. memory-core redacts again on every write path, so a client that calls the HTTP API directly is covered too:
 
-- conversations (`/v3/conversation/add`) and raw session turns (`/v3/session/add`). In a raw turn, a value under a secret field name (`password`, `dbPassword`, `access_token`, `credentials`, …) is replaced whole as `[REDACTED:secret-field]`, since the text rules cannot see the name;
+- conversations (`/v3/conversation/add`) and raw session turns (`/v3/session/add`). In a raw turn, a value under a secret field name (`password`, `pass`, `pin`, `otp`, `dbPassword`, `access_token`, `SECRET_KEY_BASE`, `credentials`, …) is replaced whole as `[REDACTED:secret-field]`, since the text rules cannot see the name;
 - the skill-extraction buffer (`/v3/skill/conversation/add`), skill content, and skill files that are UTF-8 text (`.sh`, `.env.example`, …);
 - atoms written through the API and atoms the L1 model writes (a model can spell out a secret its input did not contain);
 - scenes and the persona, from L2/L3 and from the API.
@@ -190,9 +190,9 @@ The L1 and skill prompts also tell the model never to record a credential's valu
 | Kind | Catches |
 | --- | --- |
 | `private-key`, `jwt`, `openai-key`, `github-token`, … | Known token and key formats |
-| `secret-assignment` | `password=…`, `api_key: …`: an English key name that ends with the secret word, so `DB_PASSWORD=` and `access_token:` count and `max_tokens=` does not |
+| `secret-assignment` | `password=…`, `api_key: …`: an English key name containing the secret word (`DB_PASSWORD=`, `SECRET_KEY_BASE=`, `GITHUB_TOKEN_RO=`); a key with a part such as `tokens`, `count`, `limit`, `max` or `length` is a setting, so `max_tokens=` and `token_count:` stay |
 | `secret-phrase` | A password named in natural language, then its value. Words, with common abbreviations: English (`password`, `pw`, `pwd`, `pass`, `psw`, …), Chinese (`密碼`, `密码`, `口令`, `金鑰`, …), Japanese (`パスワード`, `パス`, …), Korean (`비밀번호`, `비번`, …), Vietnamese (`mật khẩu`, `mk`), Thai, Indonesian/Malay, Hindi, Arabic, Spanish, Portuguese, French, German, Turkish and Russian. After `:`, `=` or `：` any value is redacted; after an "is" word (`是`, `là`, `は`, `는`, `es`, …) or a space, only one that looks like a secret (a digit, a symbol, or mixed case). Words with an everyday meaning (`token`, `pass`, `mk`, `clave`, `パス`, `トークン`, `รหัส`, …) need `:`, `=` or an "is" word, so `token 4096` and `tests pass 100ms` stay |
-| `password-shape` | No word needed: 8+ ASCII characters with a letter, a digit and one of `!@#$%^&+=?~\|` inside. Left alone: URLs, paths, `x=1` settings, email addresses, query strings (`?page=2&sort=asc1`), code operators (`&&`, `\|\|`, `!=`, `==`) and a whole model reference (`4@qwen3-8b`, `Claude@Opus-5.5`). A model name inside a string is not enough: `Falcon#2024x` is redacted |
+| `password-shape` | No word needed: 8+ ASCII characters with a letter, a digit and one of `!@#$%^&+=?~\|` inside. Left alone: URLs, paths, `x=1` settings, email addresses, query strings (`?page=2&sort=asc1`), code (identifiers or numbers joined by `&&`, `\|\|`, `!=`, `==`, such as `cmd1&&cmd2`) and a whole model reference (`4@qwen3-8b`, `Claude@Opus-5.5`). A model name inside a string is not enough: `Falcon#2024x` is redacted |
 
 **Settings.**
 
