@@ -3571,3 +3571,53 @@ async fn agent_owners_manage_their_agents_only_while_in_the_team() {
         .await;
     assert_eq!(renamed["code"], 403, "{renamed}");
 }
+
+/// A task whose proposals all went undecided past the TTL is closed by the
+/// sweeper: it leaves the review list, and a second sweep finds nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sweeper_closes_expired_proposals() {
+    let (_data, client) = start().await;
+    let tool_calls: Vec<Value> = (0..10)
+        .flat_map(|i| {
+            [
+                json!({"role": "tool_call", "content": format!("run step {i}"), "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+                json!({"role": "tool_result", "content": "ok", "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+            ]
+        })
+        .collect();
+    client
+        .call(
+            "/v3/skill/conversation/add",
+            client.scoped(json!({"session_id": "s-sweep", "messages": tool_calls})),
+        )
+        .await;
+    wait_for_proposal(&client).await;
+    let extraction = &client.state.services.skill_extraction;
+    let department =
+        memory_domain::scope::SegmentId::parse("department", &client.department).unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    assert_eq!(
+        extraction.sweep_expired_at(&department, now).await.unwrap(),
+        0,
+        "not yet"
+    );
+    let later = now + 31 * 86_400_000;
+    assert_eq!(
+        extraction
+            .sweep_expired_at(&department, later)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        extraction
+            .sweep_expired_at(&department, later)
+            .await
+            .unwrap(),
+        0
+    );
+    let listed = client
+        .call("/v3/skill/proposal/list", client.scoped(json!({})))
+        .await;
+    assert_eq!(listed["data"]["items"], json!([]), "{listed}");
+}

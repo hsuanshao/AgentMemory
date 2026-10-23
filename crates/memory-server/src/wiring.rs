@@ -41,8 +41,8 @@ use memory_infrastructure::openai::{
 };
 use memory_infrastructure::system::{RandomIds, SystemClock};
 use memory_infrastructure::worker::{
-    spawn_audit_pruner, spawn_dead_letter_sweeper, spawn_embedding_backfill, spawn_scanner,
-    spawn_worker, WorkerQueue, WorkerSettings,
+    spawn_audit_pruner, spawn_dead_letter_sweeper, spawn_embedding_backfill,
+    spawn_proposal_sweeper, spawn_scanner, spawn_worker, WorkerQueue, WorkerSettings,
 };
 use tokio::task::JoinHandle;
 
@@ -368,7 +368,7 @@ pub async fn build(config: &Config) -> Result<App> {
         redaction,
         chat_memory,
         skills,
-        skill_extraction,
+        skill_extraction: Arc::clone(&skill_extraction),
         lifecycle,
         departments: Arc::clone(&storage.departments),
         migration,
@@ -401,6 +401,7 @@ pub async fn build(config: &Config) -> Result<App> {
         spawn_dead_letter_sweeper(queue, pipeline.clone(), worker),
         spawn_scanner(pipeline, worker.scan_interval),
         spawn_audit_pruner(guard),
+        spawn_proposal_sweeper(skill_extraction, Arc::clone(&atoms)),
     ];
     let e = &config.memory.embedding;
     if embedder.dimensions().is_some() && e.backfill_interval_secs > 0 {
