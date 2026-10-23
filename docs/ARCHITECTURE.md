@@ -185,7 +185,9 @@ The metadata plane has its own, finer rules (`memory-domain/src/meta/access.rs`)
 ```mermaid
 flowchart LR
   T["turn captured<br/>conversation/add"] --> L0[(L0)]
-  T2["tool-heavy turn<br/>skill/conversation/add"] --> SB[(skill buffer)] --> SK[(Skills)]
+  T2["tool-heavy turn<br/>skill/conversation/add"] --> SB[(skill buffer)]
+  SB -- "LLM proposes" --> SP[(proposals)]
+  SP -- "approved by the user,<br/>a team admin/leader<br/>or a system admin" --> SK[(Skills)]
   L0 -- "every N user rounds<br/>(warm-up 1, 2, 4)<br/>or idle timeout" --> J1[[L1 job]]
   J1 -- LLM extract --> L1[(L1 atoms)]
   L1 -- "delay after L1,<br/>min/max interval" --> J2[[L2 job]]
@@ -193,6 +195,8 @@ flowchart LR
   L2 -- "every N new memories" --> J3[[L3 job]]
   J3 -- LLM --> L3[(L3 persona)]
 ```
+
+**Skill extraction proposes; people decide.** Tool-heavy turns carry web pages, files and command output, which anyone can write instructions into. So the model sees the archived conversation as one JSON array (nothing in it can end the transcript or pose as instructions), may change only the skills of that agent it was shown, and its creations and changes wait as proposals (`skill/proposal/*`, the Panel's Skills page) until the conversation's user, an admin or leader of the team, or a system admin approves them. Approval checks that the skill has not changed since the proposal. `skill.extraction.requireApproval: false` (`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`) applies them at once, as before 0.4.2; the other two checks stay.
 
 The trigger values come from `config/memory-core.example.yaml` (`memory.pipeline.*`, `memory.persona.triggerEveryN`).
 

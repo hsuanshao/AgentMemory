@@ -117,8 +117,15 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 
 `/v3/skill/{create,update,patch,delete,get,get-by-name,list,search,versions,listing,extract}`、
 `/v3/skill/files/{write,remove,read}`、
-`/v3/skill/conversation/{add,force-archive}`。
+`/v3/skill/conversation/{add,force-archive}`、
+`/v3/skill/proposal/{list,approve,reject}`。
 `/v3/skill/export` 尚未實作（回傳 501）。
+
+Skill 萃取只提案，在有人核准之前什麼都不會存下：
+
+* `skill/proposal/list` `{team_id, agent_id?}` → `{items: [{task_id, team_id, agent_id, user_id, session_id, archived_at_ms, reason, proposals: [{index, change, base_version?, state}]}]}`，最新的在前。`change` 是 `{action: "create", name, content}`、`{action: "update", skill_id, content}` 或 `{action: "patch", skill_id, old_string, new_string}`。列出呼叫者可以決定的待核准提案：自己對話的提案，或自己擔任 admin／leader 的 team 裡的所有提案；系統管理員可以看到全部。
+* `skill/proposal/approve` `{team_id, agent_id, task_id, index}` → `state: "applied"` 的提案，附 `result {action, skill_id, version}`。修改以該對話的 agent 與使用者身分進行。skill 在 `base_version` 之後被改過時回 409 `skill_changed`；其他人回 403；已決定過的回 404。
+* `skill/proposal/reject` `{team_id, agent_id, task_id, index}` → `state: "rejected"` 的提案。
 
 ### Knowledge metadata、chat memory、prompts、生成紀錄
 

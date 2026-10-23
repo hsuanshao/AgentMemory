@@ -32,6 +32,8 @@ import type {
   ScenarioList,
   Scope,
   SkillDetail,
+  SkillProposal,
+  SkillProposalTask,
   SkillSearchHit,
   SkillSummary,
   SkillVersion,
@@ -117,6 +119,16 @@ export function createCoreApi(client: PanelClient) {
         call<SkillDetail>("skill/get", { ...scope, skill_id: skillId, version, include_content: true }),
       versions: (scope: Scope, skillId: string) =>
         call<{ items: SkillVersion[]; total: number }>("skill/versions", { ...scope, skill_id: skillId }),
+      /** Pending proposals of the scope's team and agent that the caller may decide. */
+      proposals: (scope: Scope) =>
+        call<{ items: SkillProposalTask[] }>("skill/proposal/list", { team_id: scope.team_id, agent_id: scope.agent_id }),
+      decide: (scope: Scope, taskId: string, index: number, approve: boolean) =>
+        call<SkillProposal>(approve ? "skill/proposal/approve" : "skill/proposal/reject", {
+          team_id: scope.team_id,
+          agent_id: scope.agent_id,
+          task_id: taskId,
+          index,
+        }),
     },
 
     meta: {

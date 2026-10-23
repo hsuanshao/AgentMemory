@@ -192,7 +192,9 @@ Metadata 平面有自己更細的規則（`memory-domain/src/meta/access.rs`）�
 ```mermaid
 flowchart LR
   T["turn captured<br/>conversation/add"] --> L0[(L0)]
-  T2["tool-heavy turn<br/>skill/conversation/add"] --> SB[(skill buffer)] --> SK[(Skills)]
+  T2["tool-heavy turn<br/>skill/conversation/add"] --> SB[(skill buffer)]
+  SB -- "LLM proposes" --> SP[(proposals)]
+  SP -- "approved by the user,<br/>a team admin/leader<br/>or a system admin" --> SK[(Skills)]
   L0 -- "every N user rounds<br/>(warm-up 1, 2, 4)<br/>or idle timeout" --> J1[[L1 job]]
   J1 -- LLM extract --> L1[(L1 atoms)]
   L1 -- "delay after L1,<br/>min/max interval" --> J2[[L2 job]]
@@ -200,6 +202,8 @@ flowchart LR
   L2 -- "every N new memories" --> J3[[L3 job]]
   J3 -- LLM --> L3[(L3 persona)]
 ```
+
+**Skill 萃取只提案，由人決定。** 大量使用工具的回合裡有網頁、檔案和指令輸出，任何人都能在裡面寫指令。所以模型看到的封存對話是一個 JSON 陣列（裡面的內容無法結束 transcript，也無法冒充指示），只能修改提供給它看的、該 agent 的 skill，而且它建立或修改的內容都會先成為提案（`skill/proposal/*`、Panel 的 Skills 頁），等對話的使用者本人、該 team 的 admin 或 leader，或系統管理員核准後才生效。核准時會確認 skill 在提案之後沒有被改過。`skill.extraction.requireApproval: false`（`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`）會像 0.4.2 之前一樣直接套用，另外兩項檢查仍然有效。
 
 觸發參數來自 `config/memory-core.example.yaml`（`memory.pipeline.*`、`memory.persona.triggerEveryN`）。
 

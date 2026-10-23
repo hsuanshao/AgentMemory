@@ -6,6 +6,7 @@ use memory_application::ports::skill::{BufferKey, BufferedMessage};
 use memory_application::skill::service::{
     ListQuery, ReadOptions, ResourceInput, SkillIdentity, StringPatch,
 };
+use memory_domain::meta::visibility::ScopeVisibility;
 use serde_json::{json, Value};
 
 use crate::context::{Ctx, JsonBody};
@@ -408,4 +409,80 @@ pub async fn extract(
         &ctx.request_id,
         json!({"ok": true, "task_id": archived.task_id, "archived_at_ms": archived.archived_at_ms, "archive_key": archived.archive_key}),
     ))
+}
+
+// ── Proposals from skill extraction ─────────────────────────────────────
+
+/// What the caller's role lets them decide (their own tasks, or any in a
+/// team they oversee; all for system admins).
+async fn decider(s: &SharedState, ctx: &Ctx) -> Result<(String, ScopeVisibility), ApiError> {
+    let department = ctx.department()?;
+    let key = ctx.user_key()?;
+    let meta = &s.services.meta;
+    let caller = meta
+        .authenticate(&department, &key)
+        .await
+        .map_err(|e| ctx.err(e))?;
+    let visibility = meta
+        .visibility(&department, Some(&key))
+        .await
+        .map_err(|e| ctx.err(e))?;
+    Ok((caller.user_id, visibility))
+}
+
+pub async fn proposal_list(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    let department = ctx.department()?;
+    let team = required(&ctx, &body, "team_id")?;
+    let (_, visibility) = decider(&s, &ctx).await?;
+    let items = s
+        .services
+        .skill_extraction
+        .proposals(&department, &visibility, team, str_of(&body, "agent_id"))
+        .await
+        .map_err(|e| ctx.err(e))?;
+    Ok(ok(&ctx.request_id, json!({ "items": items })))
+}
+
+async fn decide(s: SharedState, ctx: Ctx, body: Value, approve: bool) -> ApiResult {
+    let department = ctx.department()?;
+    let task_id = required(&ctx, &body, "task_id")?;
+    let index = body
+        .get("index")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ApiError::bad_request(&ctx.request_id, "index is required"))?;
+    let (user, visibility) = decider(&s, &ctx).await?;
+    let decided = s
+        .services
+        .skill_extraction
+        .decide(
+            &department,
+            &visibility,
+            &user,
+            task_id,
+            index as usize,
+            approve,
+        )
+        .await
+        .map_err(|e| ctx.err(e))?;
+    Ok(ok(&ctx.request_id, decided))
+}
+
+pub async fn proposal_approve(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    decide(s, ctx, body, true).await
+}
+
+pub async fn proposal_reject(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    decide(s, ctx, body, false).await
 }

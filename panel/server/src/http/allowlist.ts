@@ -37,6 +37,11 @@ export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   "skill/search",
   "skill/get",
   "skill/versions",
+  // proposals from skill extraction (Core lets the conversation's user,
+  // team admins/leaders and system admins decide)
+  "skill/proposal/list",
+  "skill/proposal/approve",
+  "skill/proposal/reject",
   // metadata
   "meta/auth/verify",
   "meta/team/list",

@@ -296,6 +296,7 @@ pub async fn build(config: &Config) -> Result<App> {
             enabled: config.skill.enabled && config.skill.extraction.enabled,
             archive_bytes: config.skill.extraction.archive_bytes,
             tool_call_threshold: config.skill.extraction.tool_call_threshold,
+            require_approval: config.skill.extraction.require_approval,
             ..Default::default()
         },
     ));

@@ -13,6 +13,7 @@ import { truncate } from "../../lib/format";
 import { scopeStore } from "../memory/scope";
 import { ScopePicker } from "../memory/ScopePicker";
 import { SkillDetailPanel } from "./SkillDetail";
+import { SkillProposals } from "./SkillProposals";
 
 const PAGE = 50;
 
@@ -52,6 +53,7 @@ export function SkillsPage() {
     <div className="space-y-4">
       <PageHeader title="Skills" subtitle="Team skills with versions (identity fields from the scope below)" />
       <ScopePicker value={scope} onChange={scopeStore.set} />
+      <SkillProposals scope={scope} onDecided={list.reload} />
       <div className="grid gap-4 xl:grid-cols-[minmax(360px,1fr)_2fr]">
         <Card
           title={`Skills${list.data?.total !== undefined ? ` (${list.data.total})` : ""}`}

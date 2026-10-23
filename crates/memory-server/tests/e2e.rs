@@ -1123,6 +1123,28 @@ async fn assert_tool_calls_become_a_skill(client: &Client) {
     assert_eq!(result["data"]["status"], "archived", "{result}");
     assert_eq!(result["data"]["archived"]["reason"], "tool_calls");
 
+    // The extracted skill waits as a proposal: nothing is saved yet.
+    let task = wait_for_proposal(client).await;
+    assert_eq!(task["proposals"][0]["change"]["action"], "create", "{task}");
+    assert_eq!(task["proposals"][0]["state"], "pending");
+    let stats = client.call("/v3/stats/overview", json!({})).await;
+    assert_eq!(stats["data"]["skills"], 0, "{stats}");
+
+    // Approving it creates the skill, once.
+    let decide = |path: &'static str| {
+        client.call(
+            path,
+            client.scoped(json!({"task_id": task["task_id"], "index": 0})),
+        )
+    };
+    let approved = decide("/v3/skill/proposal/approve").await;
+    assert_eq!(approved["data"]["state"], "applied", "{approved}");
+    assert_eq!(decide("/v3/skill/proposal/approve").await["code"], 404);
+    assert_eq!(decide("/v3/skill/proposal/reject").await["code"], 404);
+    let pending = client
+        .call("/v3/skill/proposal/list", client.scoped(json!({})))
+        .await;
+    assert_eq!(pending["data"]["items"], json!([]), "{pending}");
     client.wait_for(|s| s["skills"] == 1).await;
     let listing = client
         .call("/v3/skill/listing", client.scoped(json!({})))
@@ -1134,6 +1156,98 @@ async fn assert_tool_calls_become_a_skill(client: &Client) {
             .contains("release-checklist"),
         "{listing}"
     );
+}
+
+/// Polls `skill/proposal/list` until a task with proposals shows up.
+async fn wait_for_proposal(client: &Client) -> Value {
+    for _ in 0..100 {
+        let res = client
+            .call("/v3/skill/proposal/list", client.scoped(json!({})))
+            .await;
+        if let Some(task) = res["data"]["items"].get(0) {
+            return task.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("no skill proposal appeared");
+}
+
+/// With approval turned off, extracted changes are applied at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn skill_changes_apply_at_once_without_approval() {
+    let base_url = spawn_fake_llm().await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.skill.extraction.require_approval = false;
+    })
+    .await;
+    let tool_calls: Vec<Value> = (0..10)
+        .flat_map(|i| {
+            [
+                json!({"role": "tool_call", "content": format!("run step {i}"), "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+                json!({"role": "tool_result", "content": "ok", "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+            ]
+        })
+        .collect();
+    client
+        .call(
+            "/v3/skill/conversation/add",
+            client.scoped(json!({"session_id": "s-skill", "messages": tool_calls})),
+        )
+        .await;
+    client.wait_for(|s| s["skills"] == 1).await;
+    let pending = client
+        .call("/v3/skill/proposal/list", client.scoped(json!({})))
+        .await;
+    assert_eq!(pending["data"]["items"], json!([]), "{pending}");
+}
+
+/// Extracted changes wait for someone entitled to decide them; a rejected
+/// one saves nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn skill_proposals_are_decided_by_their_user_or_overseers() {
+    let (_data, client) = start().await;
+    let tool_calls: Vec<Value> = (0..10)
+        .flat_map(|i| {
+            [
+                json!({"role": "tool_call", "content": format!("run step {i}"), "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+                json!({"role": "tool_result", "content": "ok", "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+            ]
+        })
+        .collect();
+    let added = client
+        .call(
+            "/v3/skill/conversation/add",
+            client.scoped(json!({"session_id": "s-skill", "messages": tool_calls})),
+        )
+        .await;
+    assert_eq!(added["data"]["status"], "archived", "{added}");
+    let task = wait_for_proposal(&client).await;
+    let body = || client.scoped_for(json!({"task_id": task["task_id"], "index": 0}), None);
+
+    // Another member of the team neither sees nor decides it.
+    let (_, other_key) = client.create_member("other-member").await;
+    let listed = client
+        .call_as(
+            "/v3/skill/proposal/list",
+            &other_key,
+            client.scoped_for(json!({}), None),
+        )
+        .await;
+    assert_eq!(listed["data"]["items"], json!([]), "{listed}");
+    let refused = client
+        .call_as("/v3/skill/proposal/approve", &other_key, body())
+        .await;
+    assert_eq!(refused["code"], 403, "{refused}");
+
+    // A system admin may; rejecting saves nothing.
+    let rejected = client
+        .call_as("/v3/skill/proposal/reject", &client.admin_key, body())
+        .await;
+    assert_eq!(rejected["data"]["state"], "rejected", "{rejected}");
+    let stats = client.call("/v3/stats/overview", json!({})).await;
+    assert_eq!(stats["data"]["skills"], 0, "{stats}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

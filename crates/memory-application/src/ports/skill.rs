@@ -199,4 +199,10 @@ pub trait SkillBufferStore: Send + Sync {
         department: &DepartmentId,
         task_id: &str,
     ) -> DomainResult<Option<SkillTask>>;
+    /// Tasks whose `status` is `status`.
+    async fn list_tasks(
+        &self,
+        department: &DepartmentId,
+        status: &str,
+    ) -> DomainResult<Vec<SkillTask>>;
 }

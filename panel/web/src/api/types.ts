@@ -312,6 +312,33 @@ export interface SkillVersion extends SkillSummary {
   is_expired?: boolean;
 }
 
+/** A change skill extraction proposed; nothing is saved until approved. */
+export type SkillChange =
+  | { action: "create"; name: string; content: string }
+  | { action: "update"; skill_id: string; content: string }
+  | { action: "patch"; skill_id: string; old_string: string; new_string: string };
+
+export interface SkillProposal {
+  index: number;
+  change: SkillChange;
+  base_version?: number;
+  state: "pending" | "applied" | "rejected";
+  decided_by?: string;
+  decided_at_ms?: number;
+  result?: { action: string; skill_id: string; version: number };
+}
+
+export interface SkillProposalTask {
+  task_id: string;
+  team_id: string;
+  agent_id: string;
+  user_id: string;
+  session_id: string;
+  archived_at_ms: number;
+  reason: string;
+  proposals: SkillProposal[];
+}
+
 // ---------- metadata ----------
 
 export interface Team {

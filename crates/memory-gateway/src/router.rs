@@ -238,6 +238,9 @@ fn skill_routes() -> Router<SharedState> {
         .route("/extract", post(skill::extract))
         .route("/conversation/add", post(skill::conversation_add))
         .route("/conversation/force-archive", post(skill::force_archive))
+        .route("/proposal/list", post(skill::proposal_list))
+        .route("/proposal/approve", post(skill::proposal_approve))
+        .route("/proposal/reject", post(skill::proposal_reject))
 }
 
 /// Department administration and operational state, for the department's

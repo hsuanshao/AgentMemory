@@ -445,4 +445,21 @@ impl SkillBufferStore for PostgresSkillStore {
         .map(|r| doc(&r, "doc"))
         .transpose()
     }
+
+    async fn list_tasks(
+        &self,
+        department: &DepartmentId,
+        status: &str,
+    ) -> DomainResult<Vec<SkillTask>> {
+        let s = self.db.schema(department).await?;
+        fetch_all(
+            &mut *self.db.conn().await?,
+            &format!("SELECT doc FROM {s}.skill_tasks WHERE doc->>'status' = ?"),
+            &args![status],
+        )
+        .await?
+        .iter()
+        .map(|r| doc(r, "doc"))
+        .collect()
+    }
 }
