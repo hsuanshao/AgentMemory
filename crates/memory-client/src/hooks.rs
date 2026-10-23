@@ -213,7 +213,8 @@ fn hook_context(event: &str, context: &str) -> Value {
 
 /// Recalls for the prompt. The memories go out on every prompt; the persona
 /// and scene navigation only when they changed since this session last got
-/// them (or every `system_context_every` prompts). Without a session id
+/// them, and every `system_context_every` prompts (20 unless set) as a
+/// fallback for a compaction or `/rewind` without a `SessionStart`. Without a session id
 /// there is nothing to compare against, so everything is sent.
 pub fn claude_code_user_prompt_submit() {
     let input = stdin_json();
@@ -251,9 +252,22 @@ pub fn claude_code_user_prompt_submit() {
     }
 }
 
-/// Writes the prompt's decision to the cursor file.
+/// Writes the prompt's decision to the cursor file. Re-reads first: a Stop
+/// that finished meanwhile owns `line` and `tail`, and the prompt owns only
+/// the system-context keys.
 fn save_system_context(decided: &Cursor) {
-    decided.save();
+    let mut cursor = Cursor::at(decided.path.clone());
+    for key in [SYSTEM_CONTEXT_HASH, SYSTEM_CONTEXT_AGE] {
+        match decided.state.get(key) {
+            Some(v) => cursor.state[key] = v.clone(),
+            None => {
+                if let Some(map) = cursor.state.as_object_mut() {
+                    map.remove(key);
+                }
+            }
+        }
+    }
+    cursor.save();
 }
 
 /// The memories, then the fixed part when it is due.

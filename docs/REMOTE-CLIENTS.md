@@ -139,7 +139,7 @@ All hosts on this machine share these settings. You can override them per proces
 
 Some prompts are not a person's turn, for example messages that an orchestrator types into the agent. Set `AMEM_SKIP_PROMPT_PREFIXES` (or `skip_prompt_prefixes` in `client.json`) to a comma-separated list of prefixes, such as `[AGEND-`. A prompt that starts with one of them, after any leading whitespace, is not used for recall, and its whole turn is not captured. Messages you send while the agent is still working are captured as part of the current turn. When such a message starts with a skip prefix, only that message is dropped; the turn around it is kept. Prefixes are compared at the start of the prompt only, so a person's prompt that merely contains one is still captured. The default is empty, which skips nothing.
 
-Recall returns two blocks: the memories that match the prompt, and the persona with the scene navigation, which is the same on most prompts of a session. In Claude Code the memories are injected on every prompt; the persona and scene navigation only when their content changed since the session last received them, and again after Claude Code starts, resumes, clears, forks or compacts the session (`SessionStart`). Set `AMEM_SYSTEM_CONTEXT_EVERY` (or `system_context_every` in `client.json`) to `1` to inject them on every prompt as before, or to `N` to also repeat them every N prompts. The decision is kept per session in `~/.local/share/agent-memory/state/claude-code/`.
+Recall returns two blocks: the memories that match the prompt, and the persona with the scene navigation, which is the same on most prompts of a session. In Claude Code the memories are injected on every prompt; the persona and scene navigation only when their content changed since the session last received them, and again after Claude Code starts, resumes, clears, forks or compacts the session (`SessionStart`). They are also repeated every 20 prompts, so a compaction or `/rewind` that dropped them without a `SessionStart` is covered. Set `AMEM_SYSTEM_CONTEXT_EVERY` (or `system_context_every` in `client.json`) to another `N`, to `0` for only on change, or to `1` to inject them on every prompt as before. The decision is kept per session in `~/.local/share/agent-memory/state/claude-code/`.
 
 ## 5. Claude Code
 
@@ -159,7 +159,7 @@ What the plugin does:
 | Hook | Behaviour |
 | --- | --- |
 | `SessionStart` | Notes that the session's context is new (start, resume, `/clear`, fork, compaction), so the next prompt gets the persona and scene navigation again. |
-| `UserPromptSubmit` | Recalls memories for the prompt and adds them as context (at most ~9,500 characters). The persona and scene navigation are added only when they changed since this session last got them (`AMEM_SYSTEM_CONTEXT_EVERY`). |
+| `UserPromptSubmit` | Recalls memories for the prompt and adds them as context (at most ~9,500 characters). The persona and scene navigation are added only when they changed since this session last got them, and every 20 prompts (`AMEM_SYSTEM_CONTEXT_EVERY`). |
 | `Stop` | Sends the turn: your prompt, the replies, and every tool call and result. Only lines added since the last Stop are sent. |
 | MCP server `agent-memory` | Tool `memory_recall`, so Claude can search memory on purpose. |
 

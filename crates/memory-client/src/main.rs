@@ -27,8 +27,9 @@ Settings can be overridden with AMEM_SERVER_URL, AMEM_USER_KEY, AMEM_TEAM_ID,
 AMEM_AGENT_ID, AMEM_DEPARTMENT_ID; AMEM_SKIP_PROMPT_PREFIXES (comma-separated)
 skips recall and capture for prompts starting with one of them;
 AMEM_SYSTEM_CONTEXT_EVERY=N sends the persona and scene navigation to a
-Claude Code session every N prompts even when unchanged (0 = only when they
-change, 1 = every prompt); AMEM_CONFIG and AMEM_DATA_DIR move the files.";
+Claude Code session every N prompts even when unchanged (default 20; 0 = only
+when they change, 1 = every prompt); AMEM_CONFIG and AMEM_DATA_DIR move the
+files.";
 
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter()

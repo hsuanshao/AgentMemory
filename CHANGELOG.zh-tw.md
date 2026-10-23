@@ -7,7 +7,7 @@
 ## [未發布]
 
 ### 變更
-- `amem` 對 Claude Code session 只在 persona 和 scene 導覽的內容和這個 session 上次收到的不同時才送，`SessionStart`（啟動、resume、`/clear`、fork、壓縮）之後再送一次；相關記憶仍然每個 prompt 都送。在一個約 20 個 agent 的部署裡，這部分占全部注入 context 的三分之二，而且每 4 個 prompt 有 3 個是原封不動重送。`AMEM_SYSTEM_CONTEXT_EVERY=1`（或 `client.json` 的 `system_context_every`）可恢復原本行為；設成 `N` 則每 N 個 prompt 也重送一次。Claude Code plugin 為此多註冊一個 `SessionStart` hook；手寫的 `settings.json` 要自行加上 `amem hook claude-code session-start`。Codex 和 Antigravity 不變（#39）。
+- `amem` 對 Claude Code session 只在 persona 和 scene 導覽的內容和這個 session 上次收到的不同時才送，`SessionStart`（啟動、resume、`/clear`、fork、壓縮）之後再送一次；相關記憶仍然每個 prompt 都送。在一個約 20 個 agent 的部署裡，這部分占全部注入 context 的三分之二，而且每 4 個 prompt 有 3 個是原封不動重送。預設另外每 20 個 prompt 重送一次，以涵蓋沒有 `SessionStart` 的壓縮或 `/rewind`；`AMEM_SYSTEM_CONTEXT_EVERY`（或 `client.json` 的 `system_context_every`）可設成別的 `N`、`0` 只在變動時送、`1` 恢復原本行為。Claude Code plugin 為此多註冊一個 `SessionStart` hook；手寫的 `settings.json` 要自行加上 `amem hook claude-code session-start`。Codex 和 Antigravity 不變（#39）。
 
 ## [0.4.1] - 2026-10-23
 

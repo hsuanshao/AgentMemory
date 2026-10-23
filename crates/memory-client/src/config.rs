@@ -89,10 +89,11 @@ impl Config {
             .any(|prefix| !prefix.is_empty() && prompt.starts_with(prefix))
     }
 
-    /// `system_context_every` as a number; anything unreadable means 0
-    /// (only when it changes).
+    /// `system_context_every` as a number. Unset or unreadable means 20:
+    /// a resend every 20 prompts covers a compaction or `/rewind` that
+    /// dropped the persona without a `SessionStart`. `0` is only on change.
     pub fn system_context_every(&self) -> u64 {
-        self.system_context_every.trim().parse().unwrap_or(0)
+        self.system_context_every.trim().parse().unwrap_or(20)
     }
 
     /// Names of required fields that are still empty.
