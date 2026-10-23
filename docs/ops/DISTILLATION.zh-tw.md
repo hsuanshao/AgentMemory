@@ -178,8 +178,8 @@ memory-core 送出的 request 從來不帶 `tools`。所以如果回應只有工
 
 **在哪裡遮罩。** `amem` client 在排入佇列或送出前先遮罩一次。memory-core 在每條寫入路徑上再遮罩一次，所以直接呼叫 HTTP API 的 client 也涵蓋在內：
 
-- 對話（`/v3/conversation/add`）和原始 session 紀錄（`/v3/session/add`）；
-- skill 萃取緩衝（`/v3/skill/conversation/add`）和 skill 內容；
+- 對話（`/v3/conversation/add`）和原始 session 紀錄（`/v3/session/add`）。原始紀錄裡，欄位名稱是機密類（`password`、`dbPassword`、`access_token`、`credentials` 等）的值會整個換成 `[REDACTED:secret-field]`，因為文字規則看不到欄位名稱；
+- skill 萃取緩衝（`/v3/skill/conversation/add`）、skill 內容，以及 UTF-8 文字格式的 skill 檔案（`.sh`、`.env.example` 等）；
 - 透過 API 寫入的 atom，以及 L1 模型寫出的 atom（模型可能寫出輸入裡沒有的機密）；
 - 場景和 persona，不論來自 L2／L3 或 API。
 
@@ -190,9 +190,9 @@ L1 和 skill 的 prompt 也要求模型不得記錄任何憑證的值。
 | Kind | 抓什麼 |
 | --- | --- |
 | `private-key`、`jwt`、`openai-key`、`github-token` 等 | 已知的 token 和金鑰格式 |
-| `secret-assignment` | 英文鍵名的 `password=…`、`api_key: …` |
-| `secret-phrase` | 用自然語言提到密碼，後面接著值。關鍵字含常見縮寫：英文（`password`、`pw`、`pwd`、`pass`、`psw` 等）、中文（`密碼`、`密码`、`口令`、`金鑰` 等）、日文（`パスワード`、`パス` 等）、韓文（`비밀번호`、`비번` 等）、越南文（`mật khẩu`、`mk`）、泰文、印尼／馬來文、印地文、阿拉伯文、西班牙文、葡萄牙文、法文、德文、土耳其文和俄文。接在 `:`、`=`、`：` 之後的值一律遮掉；接在「是」這類字（`是`、`là`、`は`、`는`、`es` 等）或空白之後的，只遮看起來像機密的值（含數字、符號或大小寫混合） |
-| `password-shape` | 不需要關鍵字：8 個以上的 ASCII 字元，同時包含字母、數字，以及夾在中間的 `!@#$%^&+=?~\|` 其中之一。網址、路徑、`x=1` 這類設定值，以及含已知模型名稱（`qwen`、`llama`、`claude` 等）的字串不會遮掉。在一個部署的歷史資料上實測：8 字元以上的 token 有 0.26% 命中，幾乎都是程式碼；L1 沒有命中 |
+| `secret-assignment` | 英文鍵名的 `password=…`、`api_key: …`。鍵名要以機密字詞結尾：`DB_PASSWORD=`、`access_token:` 算，`max_tokens=` 不算 |
+| `secret-phrase` | 用自然語言提到密碼，後面接著值。關鍵字含常見縮寫：英文（`password`、`pw`、`pwd`、`pass`、`psw` 等）、中文（`密碼`、`密码`、`口令`、`金鑰` 等）、日文（`パスワード`、`パス` 等）、韓文（`비밀번호`、`비번` 等）、越南文（`mật khẩu`、`mk`）、泰文、印尼／馬來文、印地文、阿拉伯文、西班牙文、葡萄牙文、法文、德文、土耳其文和俄文。接在 `:`、`=`、`：` 之後的值一律遮掉；接在「是」這類字（`是`、`là`、`は`、`는`、`es` 等）或空白之後的，只遮看起來像機密的值（含數字、符號或大小寫混合）。有日常意思的字（`token`、`pass`、`mk`、`clave`、`パス`、`トークン`、`รหัส` 等）必須接 `:`、`=` 或「是」這類字才算，所以 `token 4096`、`tests pass 100ms` 不會被遮 |
+| `password-shape` | 不需要關鍵字：8 個以上的 ASCII 字元，同時包含字母、數字，以及夾在中間的 `!@#$%^&+=?~\|` 其中之一。不會遮掉的有：網址、路徑、`x=1` 這類設定值、email、query string（`?page=2&sort=asc1`）、程式運算子（`&&`、`\|\|`、`!=`、`==`），以及整串都是模型名稱的寫法（`4@qwen3-8b`、`Claude@Opus-5.5`）。字串裡只是含有模型名稱還不夠，`Falcon#2024x` 仍會被遮 |
 
 **設定。**
 
@@ -210,9 +210,10 @@ redaction:
 - 規則無法編譯，或 `AGENT_MEMORY_REDACTION_PATTERNS` 不是 JSON 陣列時，memory-core 會拒絕啟動；`memory-server check-config` 也會回報。
 - `.env` 裡的 `$` 會被 Docker Compose 展開，要寫 `$$`，或改寫在設定檔裡。
 - 身分證字號、電話這類個資預設不遮。哪些格式重要因國家和部署而異，請在這裡自行加入。
+- 這些設定只影響 memory-core。`amem` 一律使用內建規則（含形狀規則），所以關掉 `passwordShape` 或加入 patterns，都不會改變 client 送出前遮掉的內容。
 
 **限制。**
 
 - 規則是啟發式的，只是安全網，不是保證。
 - 升級前已經存進去的資料不會被改寫。
-- skill 的二進位資源檔不會掃描。
+- skill 的二進位資源檔（非 UTF-8）不會掃描。

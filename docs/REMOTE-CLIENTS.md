@@ -263,7 +263,7 @@ To remove the client from a machine later, run `./uninstall.sh client` from a ch
   - a password named in natural language with its value, in English and the major languages of Asia (`資料庫密碼是 …`, `mật khẩu: …`, `pw …`)
   - password-shaped strings: 8+ characters mixing letters, digits and a symbol such as `!@#$`
 
-  Matches become `[REDACTED:<kind>]`. memory-core applies the same rules again before it stores anything, so data written straight to its API is covered too ([DISTILLATION §7](ops/DISTILLATION.md#7-secrets-and-redaction)). Redaction is pattern-based; treat it as a safety net, not a guarantee.
+  Matches become `[REDACTED:<kind>]`. memory-core applies the same rules again before it stores anything, so data written straight to its API is covered too ([DISTILLATION §7](ops/DISTILLATION.md#7-secrets-and-redaction)). `amem` always uses the built-in rules: the server's `redaction` settings (turning the shape rule off, extra patterns) do not change what the client redacts. Redaction is pattern-based; treat it as a safety net, not a guarantee.
 - **Offline queue.** If the server is unreachable (or the key is rejected), captures wait in `~/.local/share/agent-memory/queue/`, readable only by you. They are sent in order on the next turn, or run `amem flush`. At most 2,000 requests are kept; the oldest are dropped first. Requests the server rejects as malformed move to `queue/failed/` for inspection.
 - **Sub-agents** (Claude Code side chains, Hermes sub-agents) are not captured.
 

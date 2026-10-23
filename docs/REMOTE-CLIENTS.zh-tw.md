@@ -263,7 +263,7 @@ Hermes 會讀取 `amem login` 的設定。Provider 的行為：
   - 用自然語言提到密碼並接著寫出值，涵蓋英文和亞洲主要語言（`資料庫密碼是 …`、`mật khẩu: …`、`pw …`）
   - 長得像密碼的字串：8 個以上字元，混合字母、數字和 `!@#$` 這類符號
 
-  符合的內容會換成 `[REDACTED:<種類>]`。memory-core 在儲存前會用同一套規則再過濾一次，所以直接寫進它 API 的資料也涵蓋在內（[DISTILLATION §7](ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。過濾是以樣式比對進行，請把它當成安全網，而不是保證。
+  符合的內容會換成 `[REDACTED:<種類>]`。memory-core 在儲存前會用同一套規則再過濾一次，所以直接寫進它 API 的資料也涵蓋在內（[DISTILLATION §7](ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。`amem` 一律使用內建規則，server 的 `redaction` 設定（關閉形狀規則、額外的 patterns）不會改變 client 遮掉的內容。過濾是以樣式比對進行，請把它當成安全網，而不是保證。
 - **離線佇列：** 伺服器連不上（或 key 被拒）時，資料會暫存在 `~/.local/share/agent-memory/queue/`，只有你本人可讀。下一輪會依序補送，也可以手動執行 `amem flush`。最多保留 2,000 筆請求，超過時從最舊的開始丟棄。被伺服器判定為格式錯誤的請求會移到 `queue/failed/` 供檢查。
 - **子 agent**（Claude Code 的 side chain、Hermes 的子 agent）不會被記錄。
 

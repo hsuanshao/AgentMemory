@@ -23,6 +23,8 @@ use regex::{Captures, Regex};
 
 /// (kind, pattern). A pattern with a `keep` group keeps that prefix (e.g.
 /// the `password=` of a key/value pair) and redacts the rest of the match.
+/// An assignment's key must end with the secret word: `DB_PASSWORD=` and
+/// `access_token:` are secrets, `max_tokens=` and `token_count:` are not.
 const RULES: &[(&str, &str)] = &[
     (
         "private-key",
@@ -52,7 +54,7 @@ const RULES: &[(&str, &str)] = &[
     ),
     (
         "secret-assignment",
-        r#"(?i)(?P<keep>\b[A-Z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Z0-9_.-]*["']?\s*[:=]\s*["']?)[^\s"',;]{6,}"#,
+        r#"(?i)(?P<keep>\b[A-Z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)[^\s"',;]{6,}"#,
     ),
 ];
 
@@ -68,7 +70,6 @@ const SECRET_WORDS_LATIN: &[&str] = &[
     "passphrase",
     "pwd",
     "pw",
-    "pass",
     "passw",
     "psw",
     "pswd",
@@ -81,16 +82,13 @@ const SECRET_WORDS_LATIN: &[&str] = &[
     "access key",
     "private key",
     "client secret",
-    "token",
     // Spanish
     "contraseña",
     "contrasena",
-    "clave",
     "clave secreta",
     // Vietnamese
     "mật khẩu",
     "mat khau",
-    "mk",
     "mã bí mật",
     "khóa bí mật",
     // Indonesian / Malay
@@ -103,7 +101,6 @@ const SECRET_WORDS_LATIN: &[&str] = &[
     "passwort",
     "kennwort",
     "şifre",
-    "parola",
 ];
 
 const SECRET_WORDS_OTHER: &[&str] = &[
@@ -116,16 +113,12 @@ const SECRET_WORDS_OTHER: &[&str] = &[
     "金鑰",
     "私鑰",
     "私钥",
-    "令牌",
-    "權杖",
     // Japanese
     "パスワード",
     "パスコード",
-    "パス",
     "暗証番号",
     "秘密鍵",
     "アクセスキー",
-    "トークン",
     // Korean
     "비밀번호",
     "비번",
@@ -133,11 +126,9 @@ const SECRET_WORDS_OTHER: &[&str] = &[
     "암호",
     "비밀키",
     "비밀 키",
-    "토큰",
     // Thai
     "รหัสผ่าน",
     "รหัสลับ",
-    "รหัส",
     // Hindi
     "पासवर्ड",
     "कूटशब्द",
@@ -149,6 +140,12 @@ const SECRET_WORDS_OTHER: &[&str] = &[
     // Russian
     "пароль",
 ];
+
+/// Words that also mean something ordinary: `token 4096`, `tests pass 100ms`,
+/// `รหัส 12345` (a code), `パス` (a path). They count only before a strong
+/// separator or an "is" word, never before a bare space.
+const AMBIGUOUS_WORDS_LATIN: &[&str] = &["token", "pass", "mk", "clave", "parola"];
+const AMBIGUOUS_WORDS_OTHER: &[&str] = &["令牌", "權杖", "パス", "トークン", "토큰", "รหัส"];
 
 /// "is" between the word and the value: Latin-script ones need spaces
 /// around them, the others may touch the word (`密碼是`, `비밀번호는`).
@@ -186,21 +183,29 @@ fn alternation(words: &[&str]) -> String {
 /// The natural-language rule: a secret word, then either a strong separator
 /// (`:`, `=`, `：`), after which any value is redacted, or a weak one (an
 /// "is" word or just a space), after which only a value that looks like a
-/// secret is (see [`looks_like_secret`]). Values are ASCII: a CJK word after
-/// `密碼是` is a sentence going on, not a password.
+/// secret is (see [`looks_like_secret`]). An ambiguous word takes no bare
+/// space. Values are ASCII: a CJK word after `密碼是` is a sentence going on,
+/// not a password.
 fn secret_phrase_pattern() -> String {
-    let word = format!(
-        r"(?:\b(?:{})\b|(?:{}))",
-        alternation(SECRET_WORDS_LATIN),
-        alternation(SECRET_WORDS_OTHER)
-    );
-    let weak = format!(
-        r"(?:\s+(?:{})\s+|\s*(?:{})\s*|\s+)",
+    let words = |latin: &[&str], other: &[&str]| {
+        format!(
+            r"(?:\b(?:{})\b|(?:{}))",
+            alternation(latin),
+            alternation(other)
+        )
+    };
+    let word = words(SECRET_WORDS_LATIN, SECRET_WORDS_OTHER);
+    let ambiguous = words(AMBIGUOUS_WORDS_LATIN, AMBIGUOUS_WORDS_OTHER);
+    let connector = format!(
+        r"\s+(?:{})\s+|\s*(?:{})\s*",
         alternation(CONNECTORS_LATIN),
         alternation(CONNECTORS_OTHER)
     );
+    // Group names must be unique, hence `strong` and `strong2`.
+    let strong = |name: &str| format!(r#"(?P<{name}>\s*[:=：]\s*["']?)"#);
+    let (strong1, strong2) = (strong("strong"), strong("strong2"));
     format!(
-        r#"(?i)(?P<keep>{word}(?:(?P<strong>\s*[:=：]\s*["']?)|{weak}))(?P<value>[A-Za-z0-9][!-~&&[^"'`,;)\]}}]]{{3,}})"#
+        r#"(?i)(?P<keep>{word}(?:{strong1}|{connector}|\s+)|{ambiguous}(?:{strong2}|{connector}))(?P<value>[A-Za-z0-9][!-~&&[^"'`,;)\]}}]]{{3,}})"#
     )
 }
 
@@ -228,6 +233,8 @@ const WRAPPING: &[char] = &[
 ];
 
 /// Model names, open and commercial: `4@qwen3-8b` is a model, not a password.
+/// Only a whole model reference counts (see [`model_reference`]), so
+/// `Falcon#2024x` and `gptW0rk!ng#1` are still passwords.
 const MODEL_NAMES: &[&str] = &[
     "llama",
     "qwen",
@@ -237,7 +244,7 @@ const MODEL_NAMES: &[&str] = &[
     "gemma",
     "deepseek",
     "nemotron",
-    "phi-",
+    "phi",
     "glm",
     "chatglm",
     "baichuan",
@@ -254,7 +261,6 @@ const MODEL_NAMES: &[&str] = &[
     "exaone",
     "hunyuan",
     "ernie",
-    "gpt-oss",
     "openchat",
     "vicuna",
     "wizardlm",
@@ -262,7 +268,7 @@ const MODEL_NAMES: &[&str] = &[
     "dolphin",
     "smollm",
     "tinyllama",
-    "bge-",
+    "bge",
     "jina",
     "nomic",
     "whisper",
@@ -278,10 +284,40 @@ const MODEL_NAMES: &[&str] = &[
     "grok",
 ];
 
+/// A whole run that names a model: an optional count (`4@`), a model name
+/// followed by nothing, a digit or a separator and then a version
+/// (`qwen3-8b`, `llama-3.1-70b`), and optionally `@` and another model, a
+/// quantization (`q4`) or a dotted version (`2.5-pro`).
+fn model_reference() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let model = format!(r"(?:{})(?:[-_.:0-9][\w.:-]*)?", alternation(MODEL_NAMES));
+        Regex::new(&format!(
+            r"(?i)^(?:\d+@)?{model}(?:@(?:{model}|q\d\w*|\d+(?:\.\d+)+[\w.-]*))?$"
+        ))
+        .expect("valid model reference pattern")
+    })
+}
+
+/// Text that has a password's symbols but is something else: an email
+/// address, a query string, or code (`cmd1&&cmd2`, `a1!=b2`).
+fn not_a_password() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(concat!(
+            r"^[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$",
+            r"|^[?&]?[\w.-]+=[^&=]*(?:&[\w.-]+=[^&=]*)+$",
+            r"|&&|\|\||!=|==",
+        ))
+        .expect("valid exclusion pattern")
+    })
+}
+
 /// A run of ASCII that looks like a password: once trimmed, at least 8
 /// characters with a letter, a digit and a password symbol somewhere inside
 /// (not first or last, so `#57`, `~15s`, `@someone` and `50%` stay). URLs,
-/// paths, `x=1` style settings and model names are not passwords.
+/// paths, `x=1` style settings, model names, email addresses, query strings
+/// and code operators are not passwords.
 fn looks_like_password(core: &str) -> bool {
     if core.len() < 8 || core.contains("://") || core.contains('/') || core.contains('\\') {
         return false;
@@ -294,8 +330,7 @@ fn looks_like_password(core: &str) -> bool {
     if symbols.is_empty() || symbols.iter().all(|c| *c == '=') {
         return false;
     }
-    let lower = core.to_ascii_lowercase();
-    if MODEL_NAMES.iter().any(|m| lower.contains(m)) {
+    if model_reference().is_match(core) || not_a_password().is_match(core) {
         return false;
     }
     core.chars().any(|c| c.is_ascii_alphabetic()) && core.chars().any(|c| c.is_ascii_digit())
@@ -392,7 +427,9 @@ impl Redactor {
                 .re
                 .replace_all(&out, |c: &Captures| match rule.check {
                     Check::Phrase
-                        if c.name("strong").is_none() && !looks_like_secret(&c["value"]) =>
+                        if c.name("strong").is_none()
+                            && c.name("strong2").is_none()
+                            && !looks_like_secret(&c["value"]) =>
                     {
                         c[0].to_owned()
                     }
@@ -417,6 +454,53 @@ impl Redactor {
     }
 }
 
+/// Field names whose value is a secret whatever it looks like, compared
+/// against the last words of a key (see [`is_secret_key`]).
+const SECRET_KEYS: &[&str] = &[
+    "password",
+    "passwd",
+    "pwd",
+    "passphrase",
+    "passcode",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_key",
+    "secret_key",
+    "private_key",
+    "client_secret",
+    "credential",
+    "credentials",
+    "authorization",
+    "cookie",
+];
+
+/// Whether a structured field (a JSON key, a tool argument) holds a secret
+/// by its name: `password`, `dbPassword`, `access-token`, `GITHUB_TOKEN`.
+/// Its value then has no name around it for the text rules to see, so the
+/// caller redacts it whole. `max_tokens` and `token_count` are not secrets.
+pub fn is_secret_key(name: &str) -> bool {
+    let mut snake = String::with_capacity(name.len() + 4);
+    let mut prev_lower = false;
+    for c in name.chars() {
+        if c.is_ascii_uppercase() && prev_lower {
+            snake.push('_');
+        }
+        prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
+        snake.push(match c {
+            '-' | '.' | ' ' => '_',
+            c => c.to_ascii_lowercase(),
+        });
+    }
+    SECRET_KEYS.iter().any(|k| {
+        snake == *k
+            || snake
+                .strip_suffix(k)
+                .is_some_and(|head| head.ends_with('_'))
+    })
+}
+
 /// Replaces every secret with `[REDACTED:<kind>]`, using the built-in rules.
 pub fn redact(text: &str) -> String {
     Redactor::builtin().redact(text)
@@ -424,7 +508,7 @@ pub fn redact(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{redact, Redactor};
+    use super::{is_secret_key, redact, Redactor};
 
     /// `prefix` followed by `len` filler characters. Fixtures are built at
     /// runtime so the source holds no token-shaped literal for a secret
@@ -470,7 +554,7 @@ mod tests {
             r#"{"api_key": "[REDACTED:secret-assignment]"}"#
         );
         assert_eq!(
-            redact("Authorization: Bearer abcdefghijklmnopqrstuvwx"),
+            redact(&format!("Authorization: Bearer {}", fake("", 'x', 24))),
             "Authorization: Bearer [REDACTED:bearer-token]"
         );
         let url = format!("postgres://memory:{}@db:5432/x", fake("", 'x', 10));
@@ -518,7 +602,9 @@ mod tests {
             format!("mk: {value}"),
             format!("パス：{value}"),
             format!("비번은 {value}"),
-            format!("รหัส {value}"),
+            format!("รหัส: {value}"),
+            format!("token: {value}"),
+            format!("トークンは {value}"),
             format!("the password is {value}"),
             format!("la contraseña es {value}"),
             format!("パスワードは {value}"),
@@ -571,8 +657,40 @@ mod tests {
             "did the build pass on Monday",
             "パスタは美味しい",
             "mk dir later",
+            "token 4096 is the limit",
+            "tests pass 100ms faster",
+            "รหัส 12345 สินค้า",
+            "max_tokens=128000 and token_count: 52000",
         ] {
             assert_eq!(redact(text), text);
+        }
+    }
+
+    #[test]
+    fn knows_secret_field_names() {
+        for key in [
+            "password",
+            "dbPassword",
+            "DB_PASSWORD",
+            "access-token",
+            "GITHUB_TOKEN",
+            "apiKey",
+            "client_secret",
+            "Authorization",
+            "set-cookie",
+        ] {
+            assert!(is_secret_key(key), "{key}");
+        }
+        for key in [
+            "max_tokens",
+            "token_count",
+            "input_tokens",
+            "tokenizer",
+            "sort_key",
+            "secretary",
+            "command",
+        ] {
+            assert!(!is_secret_key(key), "{key}");
         }
     }
 
@@ -606,6 +724,11 @@ mod tests {
             ),
             ("設定成ab12!xyz9了", "設定成[REDACTED:password-shape]了"),
             ("(Hk3$9aB2qZ)", "([REDACTED:password-shape])"),
+            // A model name inside is not enough to pass.
+            ("Falcon#2024x", "[REDACTED:password-shape]"),
+            ("Solar@2025ab", "[REDACTED:password-shape]"),
+            ("Hermes!2024z", "[REDACTED:password-shape]"),
+            ("gptW0rk!ng#1", "[REDACTED:password-shape]"),
         ];
         for (input, expected) in cases {
             assert_eq!(redact(input), expected, "{input}");
@@ -631,6 +754,11 @@ mod tests {
             "RUST_LOG=debug2 cargo run",
             "2026-10-23T08:04:03Z",
             "sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e",
+            "mail bob.smith1@example.com, foo@bar2.com or user@host1.example",
+            "cmd1&&cmd2 then a1!=b2&&c3",
+            "GET ?page=2&sort=asc1",
+            "C++17&&x86_64",
+            "if x1==y2 || z3",
         ] {
             assert_eq!(redact(text), text);
         }

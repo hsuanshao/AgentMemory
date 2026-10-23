@@ -227,7 +227,13 @@ struct Resource {
     is_executable: bool,
 }
 
-fn decode_resources(inputs: Vec<ResourceInput>) -> DomainResult<Vec<Resource>> {
+/// Decodes uploaded files. A file that is UTF-8 text (`.sh`, `.env.example`,
+/// …), however it was encoded, is redacted like the skill itself; anything
+/// else is binary and stored as sent.
+fn decode_resources(
+    redactor: &Redactor,
+    inputs: Vec<ResourceInput>,
+) -> DomainResult<Vec<Resource>> {
     if inputs.len() > 100 {
         return Err(skill_error(
             ErrorKind::InvalidInput,
@@ -261,6 +267,10 @@ fn decode_resources(inputs: Vec<ResourceInput>) -> DomainResult<Vec<Resource>> {
                     format!("{} exceeds 5MB", r.path),
                 ));
             }
+            let bytes = match String::from_utf8(bytes) {
+                Ok(text) => redactor.redact(&text).into_bytes(),
+                Err(binary) => binary.into_bytes(),
+            };
             Ok(Resource {
                 mime_type: r.mime_type.unwrap_or_else(|| guess_mime(&r.path).into()),
                 path: r.path,
@@ -351,7 +361,7 @@ impl SkillService {
                 format!("skill name exists: {name}"),
             ));
         }
-        let resources = decode_resources(resources)?;
+        let resources = decode_resources(&self.redactor, resources)?;
         let skill_id = self.new_skill_id(department).await?;
         let now = self.now_ms();
         let mut manifest = Vec::new();
@@ -632,7 +642,7 @@ impl SkillService {
         let head = self
             .head_for_write(department, who, skill_id, expected)
             .await?;
-        let writes = decode_resources(files)?;
+        let writes = decode_resources(&self.redactor, files)?;
         self.append_next(department, who, head, None, writes, Vec::new())
             .await
     }

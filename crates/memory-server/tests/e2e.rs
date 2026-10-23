@@ -567,7 +567,8 @@ async fn secrets_are_redacted_on_every_server_write_path() {
             "/v3/skill/create",
             &client.admin_key,
             json!({"team_id": client.team_id, "agent_id": client.agent_id, "name": "db-login",
-                   "content": format!("---\nname: db-login\ndescription: log in\n---\nlogin with password: {secret}")}),
+                   "content": format!("---\nname: db-login\ndescription: log in\n---\nlogin with password: {secret}"),
+                   "resources": [{"path": "scripts/login.sh", "content": format!("export DB_PASSWORD={secret}\n")}]}),
         )
         .await;
     assert_eq!(skill["code"], 0, "{skill}");
@@ -597,6 +598,18 @@ async fn secrets_are_redacted_on_every_server_write_path() {
         .await;
     assert!(!read.to_string().contains(secret), "{read}");
     assert!(read.to_string().contains("[REDACTED:"), "{read}");
+    // A text file of the skill too.
+    let file = client
+        .call_as(
+            "/v3/skill/files/read",
+            &client.admin_key,
+            json!({"skill_id": skill_id, "path": "scripts/login.sh",
+                   "team_id": client.team_id, "agent_id": client.agent_id}),
+        )
+        .await;
+    assert_eq!(file["code"], 0, "{file}");
+    assert!(!file.to_string().contains(secret), "{file}");
+    assert!(file.to_string().contains("[REDACTED:"), "{file}");
 }
 
 async fn assert_conversation_is_distilled(client: &Client) {

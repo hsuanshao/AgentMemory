@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use memory_redact::Redactor;
+use memory_redact::{is_secret_key, Redactor};
 
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::scope::{DepartmentId, SegmentId};
@@ -173,13 +173,28 @@ fn is_fixed_timestamp(s: &str) -> bool {
 
 /// Redacts every string in a raw turn, however deeply nested.
 fn redact_strings(redactor: &Redactor, value: &mut Value) {
+    redact_value(redactor, value, false);
+}
+
+/// Under a secret field name (`{"password": "Hunter2xyz99"}`) a value has no
+/// name around it for the text rules to see, so every string and number
+/// below that key is replaced whole.
+fn redact_value(redactor: &Redactor, value: &mut Value, secret: bool) {
     match value {
+        Value::String(s) if secret => *s = SECRET_FIELD.into(),
+        Value::Number(_) if secret => *value = Value::String(SECRET_FIELD.into()),
         Value::String(s) => *s = redactor.redact(s),
-        Value::Array(items) => items.iter_mut().for_each(|v| redact_strings(redactor, v)),
-        Value::Object(map) => map.values_mut().for_each(|v| redact_strings(redactor, v)),
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|v| redact_value(redactor, v, secret)),
+        Value::Object(map) => map
+            .iter_mut()
+            .for_each(|(k, v)| redact_value(redactor, v, secret || is_secret_key(k))),
         _ => {}
     }
 }
+
+const SECRET_FIELD: &str = "[REDACTED:secret-field]";
 
 #[cfg(test)]
 mod tests {
@@ -232,6 +247,24 @@ mod tests {
             "{text}"
         );
         assert_eq!(turn["output"]["content"]["nested"][1], 7);
+        // A secret named only by its field still goes.
+        turn["messages"][0]["tool_input"] = json!({
+            "password": "Hunter2xyz99",
+            "auth": {"credentials": {"user": "bob", "pass": "letmein99"}},
+            "max_tokens": 4096,
+        });
+        redact_strings(Redactor::builtin(), &mut turn);
+        let input = &turn["messages"][0]["tool_input"];
+        assert_eq!(input["password"], "[REDACTED:secret-field]");
+        assert_eq!(
+            input["auth"]["credentials"]["user"],
+            "[REDACTED:secret-field]"
+        );
+        assert_eq!(
+            input["auth"]["credentials"]["pass"],
+            "[REDACTED:secret-field]"
+        );
+        assert_eq!(input["max_tokens"], 4096);
         assert_eq!(turn["user_query"], "q");
     }
 }
