@@ -555,13 +555,15 @@ async fn renewal_keeps_a_lock_past_its_ttl() {
     let Some((url, keys)) = redis().await else {
         return;
     };
-    let ttl = Duration::from_millis(300);
+    // Long enough that a slow round trip to Redis does not eat the TTL;
+    // held for three TTLs, so it must have been renewed.
+    let ttl = Duration::from_secs(1);
     let a = RedisKeyLock::new(conn(&url).await, keys.child("lock:job"), ttl);
     let b = RedisKeyLock::new(conn(&url).await, keys.child("lock:job"), ttl);
 
     let guard = a.try_lock("long-job").await.unwrap().expect("free key");
     for _ in 0..10 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(
             b.try_lock("long-job").await.unwrap().is_none(),
             "a held lock must not expire while its guard lives"

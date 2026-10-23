@@ -2921,9 +2921,17 @@ async fn operational_state_is_visible_by_role() {
             users
         }
     };
-    assert_eq!(l1_users(&bob_key).await, std::slice::from_ref(&bob_id));
     let mut team = vec![bob_id.clone(), client.user_id.clone()];
     team.sort();
+    // The L1 logs are written as each run finishes; the count waited for
+    // above can be reached before every one of them is in.
+    for _ in 0..100 {
+        if l1_users(&lead_key).await == team {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(l1_users(&bob_key).await, std::slice::from_ref(&bob_id));
     assert_eq!(l1_users(&lead_key).await, team);
 
     // Seeing state is not reading memory.
