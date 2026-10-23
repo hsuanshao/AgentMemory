@@ -4,7 +4,6 @@
 //! (in-process here, Redis for multi-node) and per-job exclusivity is a
 //! [`KeyLock`] (local or distributed).
 
-use memory_application::audit::CredentialGuard;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,6 +12,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use memory_application::admin::DepartmentDirectory;
+use memory_application::audit::CredentialGuard;
 use memory_application::memory::backfill::EmbeddingBackfill;
 use memory_application::pipeline::service::{JobFailure, PipelineService};
 use memory_application::ports::coordination::KeyLock;

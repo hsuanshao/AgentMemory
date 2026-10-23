@@ -95,7 +95,8 @@ pub struct BindingInput {
     pub asset_type: String,
     pub injection_mode: Option<String>,
     pub priority: Option<i64>,
-    pub created_by: Option<String>,
+    // No `created_by`: the binding records the caller, whatever a request
+    // says (an old client's field is ignored).
 }
 
 #[derive(Debug, Deserialize)]
@@ -592,7 +593,7 @@ impl MetaService {
         inputs: Vec<BindingInput>,
     ) -> DomainResult<Vec<AgentBinding>> {
         let agent = self.get_agent(department, agent_id).await?;
-        if agent.owner_user_id != caller.user_id && !caller.is_system_admin {
+        if !caller.is_system_admin && !self.is_active_owner(department, &agent, caller).await? {
             self.require_team_admin(department, &agent.team_id, caller)
                 .await?;
         }
@@ -621,7 +622,7 @@ impl MetaService {
                     .transpose()?
                     .unwrap_or(InjectionMode::Summary),
                 priority: input.priority.unwrap_or(50),
-                created_by: input.created_by.unwrap_or_else(|| caller.user_id.clone()),
+                created_by: caller.user_id.clone(),
                 created_at: self.now(),
             });
         }
@@ -657,7 +658,7 @@ impl MetaService {
         // unfiltered loadout or bump usage counters.
         let agent = self.read_agent(department, caller, agent_id).await?;
         let privileged = caller.is_system_admin
-            || agent.owner_user_id == caller.user_id
+            || self.is_active_owner(department, &agent, caller).await?
             || self
                 .require_team_admin(department, &agent.team_id, caller)
                 .await

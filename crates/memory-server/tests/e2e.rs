@@ -3517,3 +3517,57 @@ async fn init_admin_creates_one_administrator_with_a_strong_key() {
         "{statuses:?}"
     );
 }
+
+/// A binding records who set it, whatever the request says; an agent's
+/// owner who left its team can no longer change the agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_owners_manage_their_agents_only_while_in_the_team() {
+    let (_data, client) = start().await;
+    let (owner, key) = client.create_member("owner1").await;
+    let team = &client.team_id;
+    let agent = client
+        .call_as(
+            "/v3/meta/agent/create",
+            &key,
+            json!({"team_id": team, "owner_user_id": owner, "name": "mine"}),
+        )
+        .await;
+    let agent_id = agent["data"]["agent_id"].as_str().unwrap().to_owned();
+    let asset = client
+        .call_as(
+            "/v3/meta/asset/create",
+            &key,
+            json!({"asset_id": "ast-e2e-binding", "team_id": team, "asset_type": "skill", "name": "a",
+                   "owner_user_id": owner, "source_type": "manual", "visibility": "team"}),
+        )
+        .await;
+    assert_eq!(asset["code"], 0, "{asset}");
+    let set = |agent_id: String| {
+        client.call_as(
+            "/v3/meta/agent-fixed-asset/set",
+            &key,
+            json!({"agent_id": agent_id, "bindings": [
+                {"asset_id": "ast-e2e-binding", "asset_type": "skill", "created_by": client.user_id}]}),
+        )
+    };
+    let bound = set(agent_id.clone()).await;
+    assert_eq!(bound["data"][0]["created_by"], owner.as_str(), "{bound}");
+
+    let removed = client
+        .call_as(
+            "/v3/meta/team-member/remove",
+            &client.admin_key,
+            json!({"team_id": team, "user_id": owner}),
+        )
+        .await;
+    assert_eq!(removed["code"], 0, "{removed}");
+    assert_eq!(set(agent_id.clone()).await["code"], 403);
+    let renamed = client
+        .call_as(
+            "/v3/meta/agent/update",
+            &key,
+            json!({"agent_id": agent_id, "name": "still mine?"}),
+        )
+        .await;
+    assert_eq!(renamed["code"], 403, "{renamed}");
+}

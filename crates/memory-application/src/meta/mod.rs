@@ -12,12 +12,11 @@ mod teams;
 mod users;
 mod visibility;
 
-use crate::ports::coordination::KeyLock;
 use std::sync::{Arc, OnceLock};
 
 use chrono::SecondsFormat;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
-use memory_domain::meta::{TeamMember, User, UserType, Visibility};
+use memory_domain::meta::{Agent, TeamMember, User, UserType, Visibility};
 use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +26,7 @@ pub use teams::*;
 pub use users::*;
 pub use visibility::DisplayNames;
 
+use crate::ports::coordination::KeyLock;
 use crate::ports::meta::{AgentFilter, MetaStore};
 use crate::ports::system::{Clock, IdGenerator};
 
@@ -163,6 +163,21 @@ impl MetaService {
         self.active_membership(department, team_id, &caller.user_id)
             .await?
             .ok_or_else(|| denied("not an active member of the team"))
+    }
+
+    /// The agent's owner, still an active member of its team. Ownership
+    /// alone does not outlast leaving the team.
+    pub(crate) async fn is_active_owner(
+        &self,
+        department: &DepartmentId,
+        agent: &Agent,
+        caller: &Caller,
+    ) -> DomainResult<bool> {
+        Ok(agent.owner_user_id == caller.user_id
+            && self
+                .active_membership(department, &agent.team_id, &caller.user_id)
+                .await?
+                .is_some())
     }
 
     pub(crate) async fn require_team_admin(
