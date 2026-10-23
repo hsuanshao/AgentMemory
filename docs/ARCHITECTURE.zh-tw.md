@@ -274,7 +274,7 @@ sequenceDiagram
 
 | Host | 召回 hook | 寫入 hook | 安裝單位 |
 | --- | --- | --- | --- |
-| Claude Code | `UserPromptSubmit` | `Stop` | plugin（`.claude-plugin`、`hooks/hooks.json`、`.mcp.json`）；設定值以 `CLAUDE_PLUGIN_OPTION_*` 傳入 |
+| Claude Code | `SessionStart`, `UserPromptSubmit` | `Stop` | plugin（`.claude-plugin`、`hooks/hooks.json`、`.mcp.json`）；設定值以 `CLAUDE_PLUGIN_OPTION_*` 傳入 |
 | Codex CLI | `UserPromptSubmit` | `Stop`；回合內容由 `UserPromptSubmit` 和 `PostToolUse` 的 payload 組成（transcript 不是穩定介面） | 從 `.agents/plugins/marketplace.json` 安裝的 plugin（`.codex-plugin/plugin.json`、`hooks/hooks.json`、`.mcp.json`）；hook 需先用 `/hooks` 信任 |
 | Antigravity | `PreInvocation` 且 `invocationNum == 0` 時，以 `injectSteps` 注入 ephemeral message | `Stop` | plugin（`plugin.json`、`hooks.json`、`mcp_config.json`），裝在使用者層級或 workspace 的 `.agents/plugins` |
 | Hermes | `prefetch` | `sync_turn`，由單一背景 worker 依序送出 | `$HERMES_HOME/plugins` 下的 MemoryProvider `agentmemory` |

@@ -220,26 +220,39 @@ pub fn claude_code_user_prompt_submit() {
         .unwrap_or_default()
         .trim();
     let every = api.config().system_context_every();
-    let send_system = match input["session_id"].as_str().filter(|s| !s.is_empty()) {
-        Some(session) if every != 1 => {
-            let mut cursor = Cursor::open("claude-code", session);
-            let due = system_context_due(&mut cursor.state, system, every);
-            cursor.save();
-            due
-        }
-        _ => true,
+    let mut cursor = input["session_id"]
+        .as_str()
+        .filter(|s| !s.is_empty() && every != 1)
+        .map(|session| Cursor::open("claude-code", session));
+    let send_system = match cursor.as_mut() {
+        Some(c) => system_context_due(&mut c.state, system, every),
+        None => true,
     };
-    let context = [memories, system]
+    let full = compose_context(memories, system, send_system);
+    let context = clip(&full, MAX_CONTEXT_CHARS);
+    if send_system && context.len() < full.len() {
+        // The host got a cut persona: try again next prompt.
+        if let Some(c) = cursor.as_mut() {
+            forget_system_context(&mut c.state);
+        }
+    }
+    if let Some(c) = &cursor {
+        c.save();
+    }
+    if !context.is_empty() {
+        println!("{}", hook_context("UserPromptSubmit", &context));
+    }
+}
+
+/// The memories, then the fixed part when it is due.
+fn compose_context(memories: &str, system: &str, send_system: bool) -> String {
+    [memories, system]
         .into_iter()
         .enumerate()
         .filter(|(i, s)| !s.is_empty() && (*i == 0 || send_system))
         .map(|(_, s)| s)
         .collect::<Vec<_>>()
-        .join("\n\n");
-    let context = clip(&context, MAX_CONTEXT_CHARS);
-    if !context.is_empty() {
-        println!("{}", hook_context("UserPromptSubmit", &context));
-    }
+        .join("\n\n")
 }
 
 /// A new, resumed, cleared, forked or compacted session no longer has the
@@ -318,6 +331,12 @@ pub fn claude_code_stop() {
     }
 
     deliver("claude-code", session, msgs);
+    // A UserPromptSubmit that ran during the capture may have written the
+    // system-context keys: keep theirs, not the ones read before.
+    let fresh = Cursor::open("claude-code", session);
+    for key in [SYSTEM_CONTEXT_HASH, SYSTEM_CONTEXT_AGE] {
+        cursor.state[key] = fresh.state[key].clone();
+    }
     cursor.state = json!({"line": lines.len(), "tail": tail});
     cursor.save();
 }
@@ -473,6 +492,14 @@ mod tests {
         assert!(system_context_due(&mut state, "p", 0));
         assert!(!system_context_due(&mut state, "", 0));
         assert!(system_context_due(&mut state, "p", 0));
+    }
+
+    #[test]
+    fn compose_puts_memories_first_and_drops_the_fixed_part_when_not_due() {
+        assert_eq!(compose_context("m", "s", true), "m\n\ns");
+        assert_eq!(compose_context("m", "s", false), "m");
+        assert_eq!(compose_context("", "s", true), "s");
+        assert_eq!(compose_context("", "s", false), "");
     }
 
     #[test]

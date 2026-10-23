@@ -267,7 +267,7 @@ Host adapters:
 
 | Host | Recall hook | Capture hook | Install unit |
 | --- | --- | --- | --- |
-| Claude Code | `UserPromptSubmit` | `Stop` | plugin (`.claude-plugin`, `hooks/hooks.json`, `.mcp.json`); settings as `CLAUDE_PLUGIN_OPTION_*` |
+| Claude Code | `SessionStart`, `UserPromptSubmit` | `Stop` | plugin (`.claude-plugin`, `hooks/hooks.json`, `.mcp.json`); settings as `CLAUDE_PLUGIN_OPTION_*` |
 | Codex CLI | `UserPromptSubmit` | `Stop`, with the turn assembled from `UserPromptSubmit` + `PostToolUse` payloads (the transcript is not a stable interface) | plugin (`.codex-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json`) from `.agents/plugins/marketplace.json`; hooks need `/hooks` trust |
 | Antigravity | `PreInvocation` with `invocationNum == 0` → `injectSteps` ephemeral message | `Stop` | plugin (`plugin.json`, `hooks.json`, `mcp_config.json`), user or workspace `.agents/plugins` |
 | Hermes | `prefetch` | `sync_turn`, one background worker so turns stay ordered | MemoryProvider `agentmemory` in `$HERMES_HOME/plugins` |
