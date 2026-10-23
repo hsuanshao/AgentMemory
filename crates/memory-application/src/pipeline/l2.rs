@@ -100,25 +100,31 @@ impl SceneExtractor {
             .iter()
             .map(|a| serde_json::json!({"id": a.id, "type": a.atom_type.as_str(), "content": a.content, "created_at": a.created_at.to_rfc3339()}))
             .collect();
-        let mut summary = format!(
-            "**Current scene count: {} / {}**\n{}\n\n",
-            scenes.len(),
-            self.max_scenes,
-            scene_capacity_guidance(scenes.len(), self.max_scenes)
-        );
-        for s in scenes {
-            let meta = s.meta.clone().unwrap_or_default();
-            let (_, body) = memory_domain::profile::parse_scene(&s.file.content);
-            summary.push_str(&format!(
-                "### {}\nheat: {} | updated: {}\nsummary: {}\n{}\n\n",
-                s.relative_path, meta.heat, meta.updated, meta.summary, body
-            ));
-        }
-        format!(
-            "### 1. New memories\n{}\n\n### 2. Existing scenes (full content)\n{}\n### 3. Current time\n{}",
-            serde_json::to_string_pretty(&memories).unwrap_or_default(),
-            summary,
-            self.clock.now().to_rfc3339()
+        let existing: Vec<serde_json::Value> = scenes
+            .iter()
+            .map(|s| {
+                let meta = s.meta.clone().unwrap_or_default();
+                let (_, body) = memory_domain::profile::parse_scene(&s.file.content);
+                serde_json::json!({
+                    "file": s.relative_path, "heat": meta.heat, "updated": meta.updated,
+                    "summary": meta.summary, "body": body,
+                })
+            })
+            .collect();
+        prompts::data_input(
+            &serde_json::json!({
+                "new_memories": memories,
+                "existing_scenes": existing,
+                "scene_count": scenes.len(),
+                "max_scenes": self.max_scenes,
+                "current_time": self.clock.now().to_rfc3339(),
+            }),
+            &format!(
+                "Scenes: {} of {}. {}\n\nRespond only per the output contract.",
+                scenes.len(),
+                self.max_scenes,
+                scene_capacity_guidance(scenes.len(), self.max_scenes)
+            ),
         )
     }
 

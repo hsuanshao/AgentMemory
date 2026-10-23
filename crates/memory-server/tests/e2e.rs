@@ -58,9 +58,9 @@ async fn fake_llm(Json(req): Json<Value>) -> Json<Value> {
         "[]"
     } else if system.starts_with("You are a Memory Consolidation") {
         let input = req["messages"][1]["content"].as_str().unwrap_or_default();
-        if input.contains("### Legacy-Release.md") {
+        if input.contains(r#""file":"Legacy-Release.md""#) {
             L2_MERGE_REPLY
-        } else if input.contains("### Race-Seed.md") {
+        } else if input.contains(r#""file":"Race-Seed.md""#) {
             let race = RACE.lock().unwrap().take();
             if let Some((base, department, key, team, agent, writes)) = race {
                 let http = reqwest::Client::new();
@@ -3246,10 +3246,16 @@ async fn superseding_l1(Json(req): Json<Value>) -> Json<Value> {
     }
     let input = req["messages"][1]["content"].as_str().unwrap_or_default();
     let reply = if input.contains("The pilot is complete") {
-        let listed = input
-            .split_once("record_id=")
-            .and_then(|(_, rest)| rest.split_whitespace().next())
+        // The input's JSON object is the line after its heading.
+        let data: Value = input
+            .lines()
+            .nth(1)
+            .and_then(|line| serde_json::from_str(line).ok())
             .unwrap_or_default();
+        let listed = data["session_memories"][0]["record_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         json!([{"scene_name": "I (the AI) am running a pilot with the user", "memories": [
             {"content": "The pilot was completed on Tuesday", "type": "episodic", "priority": 85,
              "source_message_ids": [], "supersedes": [listed]},
@@ -3501,6 +3507,13 @@ async fn init_admin_creates_one_administrator_with_a_strong_key() {
     while let Some(done) = calls.join_next().await {
         statuses.push(done.unwrap().unwrap().status().as_u16());
     }
-    assert_eq!(statuses.iter().filter(|s| **s == 200).count(), 1, "{statuses:?}");
-    assert!(statuses.iter().all(|s| matches!(s, 200 | 409)), "{statuses:?}");
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 200).count(),
+        1,
+        "{statuses:?}"
+    );
+    assert!(
+        statuses.iter().all(|s| matches!(s, 200 | 409)),
+        "{statuses:?}"
+    );
 }
