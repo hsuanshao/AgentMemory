@@ -80,7 +80,6 @@ services:
     image: memory-panel:${MEMORY_IMAGE_TAG:-local}
     environment:
       CORE_URL: http://memory-core:8420
-      CORE_API_KEY: ${AGENT_MEMORY_API_KEY}
       CORE_DEPARTMENT_ID: ${CORE_DEPARTMENT_ID:-default}
     ports:
       - "${PANEL_PORT:-8125}:8125"

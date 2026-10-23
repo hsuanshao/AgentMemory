@@ -22,9 +22,46 @@
 ## After 0.4.1 (unreleased)
 
 > [!IMPORTANT]
-> **A department must be created with `init-admin` before anything else uses it.** Until now a request naming a new department created it; now it is refused (a wrong-key 401 on the data plane, `valid: false` at Panel sign-in, 404 `unknown_department` elsewhere). Departments that already exist are not affected. If a Panel, script or client sends a department id that was never initialized, run `init-admin` for it after upgrading ([COLLABORATION §13](COLLABORATION.md#13-departments-and-storage)):
+> **A department must be created with `init-admin` before anything else uses it.** Until now a request naming a new department created it; now it is refused (a wrong-key 401 on the data plane and department routes, `valid: false` at Panel sign-in, 404 `unknown_department` on operator routes). Departments that already exist are not affected. If a Panel, script or client sends a department id that was never initialized, run `init-admin` for it after upgrading ([COLLABORATION §13](COLLABORATION.md#13-departments-and-storage)):
 >
 > `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <department>" -H "content-type: application/json" -d '{"username":"admin"}'`
+### The server API key no longer opens department routes
+
+> [!IMPORTANT]
+> **Calls that used only `Authorization: Bearer $AGENT_MEMORY_API_KEY` on `meta/*`, `pipeline/*`, `stats/overview`, `memory-generation-log/*`, `memory-prompt/*`, `knowledge/*` or `chat-memory/clear` get 401 after the upgrade.** These routes now take the user key of a user of the department, and the server API key does not stand in for one. This keeps each department's administration inside that department ([ARCHITECTURE](ARCHITECTURE.md#three-trust-zones)). Clients (`amem` and the plugins) are not affected: they already use user keys only.
+
+| Routes | Before | From this version |
+| --- | --- | --- |
+| `meta/*`, `pipeline/status`, `pipeline/dead-letter/*`, `stats/overview`, `memory-generation-log/*` | Server API key (plus a user key on `meta/*`) | A user key of the department; the caller's role applies. The server API key is ignored |
+| `memory-prompt/*`, `knowledge/*`, `chat-memory/clear` | Server API key | A user key of a **system admin** of the department |
+| `internal/*`, `department/destroy` | Server API key | Server API key (unchanged) |
+| `internal/pipeline/dead-letter/{list,redrive}`, `internal/memory-generation-log/{list,summary}` | (new) | Server API key: the operator's whole-department view |
+
+What to do, by setup:
+
+1. **Panel with Docker Compose (`install.sh` / `upgrade.sh`).** Nothing: `docker-compose.yml` no longer gives the Panel `CORE_API_KEY`, and the Panel forwards the signed-in user's key. If a `docker-compose.override.yml` or another env file sets `CORE_API_KEY` for `memory-panel`, remove it; the Panel logs a warning while it is set.
+2. **Panel run on its own** (`docker run`, `npm start`). Remove `CORE_API_KEY` from its environment. `PANEL_REQUIRE_USER_KEY=false` no longer gives anonymous access: Core refuses calls without a user key.
+3. **Your own scripts or monitoring** that call the routes above with the server API key only. Send `x-memory-user-key` with the key of a system admin instead; a dedicated user for automation (Panel → Metadata → Users) keeps it separate from people's keys. For the whole department's dead letters and generation logs, call the `internal/…` routes above with the server API key, or use `memory-server dead-letters` / `memory-server generations`.
+4. **`memory-server generations` / `dead-letters`.** Nothing: they call the `internal/…` routes. Run them from the upgraded image; an older memory-core does not have those routes.
+5. **Department admins who were given the server API key** to administer their department no longer need it. Change `AGENT_MEMORY_API_KEY` in `.env` after the upgrade and restart (`docker compose up -d`), so only the operator holds it. `upgrade.sh` and `install.sh` read it from `.env`.
+
+Before upgrading, look for such calls in your scripts:
+
+```bash
+grep -rn "Authorization: Bearer" --include='*.sh' --include='*.py' . | grep -v "/v3/internal/\|department/destroy"
+```
+
+After upgrading, check both sides (`H_ADMIN` carries a system admin's user key, `x-memory-department-id` and `content-type`):
+
+```bash
+curl -sS -X POST "$CORE/v3/pipeline/status" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
+  -H "x-memory-department-id: default" -d '{}'        # 401: the server key alone opens nothing here
+curl -sS -X POST "$CORE/v3/pipeline/status" "${H_ADMIN[@]}" -d '{}'   # "code":0
+```
+
+This change stores nothing new, so going back to the previous version needs no restore on its account.
+
+### Other changes
 
 **The distillation CLI no longer inherits memory-core's environment.** It gets `PATH`, `HOME`, locale, certificate and proxy variables and its own settings (`ANTHROPIC_*`/`CLAUDE_*` for claude, `OPENAI_*`/`CODEX_*` for codex, `GEMINI_*`/`GOOGLE_*` for agy). claude, codex and agy logged in as the install describes keep working. A CLI that read some other variable from the container's environment needs it listed in `AGENT_MEMORY_LLM_CLI_PASS_ENV` ([DISTILLATION §6](ops/DISTILLATION.md#what-the-cli-inherits)). **Check this before upgrading** if the CLI goes through a cloud provider (claude on Bedrock: `AWS_*`; claude on Vertex AI: `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS`; codex on Azure: `AZURE_OPENAI_*`) or if `llm.cli.command` is a wrapper script: otherwise distillation fails after the upgrade.
 

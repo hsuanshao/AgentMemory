@@ -128,11 +128,11 @@ Every client needs four values: the server URL, the user's key, the team id and 
 
 ### With the API
 
-The same steps with `curl`. Metadata calls need the server API key (Bearer) **and** the user key of a system admin:
+The same steps with `curl`. Metadata calls need the user key of a system admin of the department; the server API key is not needed (and does not replace the user key):
 
 ```bash
 CORE=https://memory.example.com
-H=(-H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: default"
+H=(-H "x-memory-department-id: default"
    -H "x-memory-user-key: $ADMIN_KEY" -H "content-type: application/json")
 
 # a user (the response includes user_id and default_user_key, shown once)
@@ -272,21 +272,22 @@ Pipeline state (`/v3/pipeline/status`), generation logs (`/v3/memory-generation-
 
 | Caller | Sees |
 | --- | --- |
-| The server API key without a user key (the operator, `memory-server` commands) | The whole department |
 | A system admin | The whole department |
+| The operator: the server API key on `/v3/internal/…` (`memory-server generations`, `dead-letters`) | The whole department |
 | A team **admin** or **leader** | Everything of that team: every member's L0/L1 work and the agents' L2/L3 work |
 | A team **member** | The team's shared L2/L3 work, and their own L0/L1 work |
 | Anyone | Nothing of teams they are not an active member of |
 
 - Skill-extraction dead letters name only a task, so only the whole-department view lists them.
-- Redriving dead letters spends the department's LLM budget: with a user key, only a system admin may do it.
+- Redriving dead letters spends the department's LLM budget: only a system admin (or the operator) may do it.
+- These routes need a user key of the department. The server API key alone gets 401 on them; it opens only the `/v3/internal/…` views.
 - The worker's last error can come from any team, so only the whole-department view gets it. `/health`, which needs no key, never shows it.
 - Seeing a row is not reading memory. Each scope row carries `can_read_memory`, the data-plane rule of §9: your own scopes and your teams' shared layers. The Panel links a row to the memory browser only when it is true. A leader sees that a member's session was distilled, but cannot open it.
 - Every row has a unique `key`, plus `team_name`, `agent_name` and `username`. A name is absent when its id no longer exists.
 
 ## 13. Departments and storage
 
-- A department is created by `init-admin` (below). Every other request for a department that does not exist is refused without storing anything: data-plane routes answer as for a wrong user key, `meta/auth/verify` with `valid: false`, other routes with 404 `unknown_department`. The answer does not tell whether a department exists, but the response time can (department names are not secrets; [ARCHITECTURE](ARCHITECTURE.md#two-trust-zones)). With SQLite that is a database file at `<data>/departments/<id>/memory.db`; with Postgres, a schema of its own. Files (skill resources, raw session turns) live under `<data>/departments/<id>/`.
+- A department is created by `init-admin` (below). Every other request for a department that does not exist is refused without storing anything: data-plane and department routes answer as for a wrong user key, `meta/auth/verify` with `valid: false`, operator routes (server API key) with 404 `unknown_department`. The answer does not tell whether a department exists, but the response time can (department names are not secrets; [ARCHITECTURE](ARCHITECTURE.md#three-trust-zones)). With SQLite that is a database file at `<data>/departments/<id>/memory.db`; with Postgres, a schema of its own. Files (skill resources, raw session turns) live under `<data>/departments/<id>/`.
 - Users are per department, so each new department needs its own administrator: `POST /v3/internal/meta/user/init-admin` with that department's `x-memory-department-id`.
 - One Panel deployment serves one department (`CORE_DEPARTMENT_ID`). Run a second Panel to manage another one.
 - `POST /v3/department/destroy` removes a department and everything in it, including its dead letters. It needs the server API key; the department is named in the body, no header needed. Jobs still queued for it are dropped when a worker takes them; if the same department id is initialized again before that, such a job runs against the new department.

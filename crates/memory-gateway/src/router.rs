@@ -14,7 +14,8 @@ use crate::context::{Ctx, DEPARTMENT_ID, USER_KEY};
 use crate::envelope::ApiError;
 use crate::handlers::{department_exists, memory, meta, ops, skill};
 use crate::state::SharedState;
-use memory_application::meta::invalid_user_key;
+use memory_application::meta::{invalid_user_key, Caller};
+use memory_domain::error::DomainError;
 
 /// Length-independent comparison so token checks do not leak timing.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -123,6 +124,52 @@ async fn require_department(
     }
 }
 
+/// A user of the request's department (`x-memory-user-key`), the caller of
+/// every department route; `meta/auth/verify` checks a key itself. The
+/// server API key does not stand in for one.
+async fn require_member(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    req: Request,
+    next: Next,
+) -> Response {
+    if original_path(&req) == "/v3/meta/auth/verify" {
+        return next.run(req).await;
+    }
+    match caller(&s, &ctx).await {
+        Ok(_) => next.run(req).await,
+        Err(e) => e.into_response(),
+    }
+}
+
+/// A system admin of the request's department.
+async fn require_system_admin(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    req: Request,
+    next: Next,
+) -> Response {
+    match caller(&s, &ctx).await {
+        Ok(c) if c.is_system_admin => next.run(req).await,
+        Ok(_) => ctx
+            .err(DomainError::permission_denied(
+                "system admins of the department only",
+            ))
+            .into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+async fn caller(s: &SharedState, ctx: &Ctx) -> Result<Caller, ApiError> {
+    let department = ctx.department()?;
+    let key = ctx.user_key()?;
+    s.services
+        .meta
+        .authenticate(&department, &key)
+        .await
+        .map_err(|e| ctx.err(e))
+}
+
 fn cors(origins: &[String]) -> Option<CorsLayer> {
     if origins.is_empty() {
         return None;
@@ -193,7 +240,11 @@ fn skill_routes() -> Router<SharedState> {
         .route("/conversation/force-archive", post(skill::force_archive))
 }
 
-fn ops_routes() -> Router<SharedState> {
+/// Department administration and operational state, for the department's
+/// own users: every call carries a user key of the department, and the
+/// handlers apply that user's role (`meta/*` per action, scopes and logs
+/// by `ScopeVisibility`, redrive for system admins).
+fn department_routes() -> Router<SharedState> {
     Router::new()
         .route("/pipeline/status", post(ops::pipeline_status))
         .route("/pipeline/dead-letter/list", post(ops::dead_letter_list))
@@ -211,6 +262,13 @@ fn ops_routes() -> Router<SharedState> {
             "/memory-generation-log/summary",
             post(ops::generation_log_summary),
         )
+        .route("/meta/config/user/:action", post(meta::config_user))
+        .route("/meta/:resource/:action", post(meta::dispatch))
+}
+
+/// Department-wide settings and data: system admins of the department only.
+fn system_admin_routes() -> Router<SharedState> {
+    Router::new()
         .route("/memory-prompt/create", post(ops::prompt_create))
         .route("/memory-prompt/get", post(ops::prompt_get))
         .route("/memory-prompt/update", post(ops::prompt_update))
@@ -224,9 +282,14 @@ fn ops_routes() -> Router<SharedState> {
         .route("/knowledge/delete", post(ops::knowledge_delete))
         .route("/knowledge/list", post(ops::knowledge_list))
         .route("/chat-memory/clear", post(ops::chat_memory_clear))
+}
+
+/// The server operator's: bootstrap, upgrades, destruction and the
+/// operator commands (`memory-server generations`, `dead-letters`), which
+/// see the whole department. Only the server API key opens these.
+fn operator_routes() -> Router<SharedState> {
+    Router::new()
         .route("/department/destroy", post(ops::department_destroy))
-        .route("/meta/config/user/:action", post(meta::config_user))
-        .route("/meta/:resource/:action", post(meta::dispatch))
         .route(
             "/internal/meta/user/init-admin",
             post(meta::internal_init_admin),
@@ -240,17 +303,37 @@ fn ops_routes() -> Router<SharedState> {
             post(meta::internal_migrate_default_scope),
         )
         .route("/internal/upgrade", post(meta::internal_upgrade))
+        .route(
+            "/internal/pipeline/dead-letter/list",
+            post(ops::dead_letter_list),
+        )
+        .route(
+            "/internal/pipeline/dead-letter/redrive",
+            post(ops::dead_letter_redrive),
+        )
+        .route(
+            "/internal/memory-generation-log/list",
+            post(ops::generation_log_list),
+        )
+        .route(
+            "/internal/memory-generation-log/summary",
+            post(ops::generation_log_summary),
+        )
 }
 
-/// Two trust zones. The memory data plane, skills and session turns are
-/// authorized per user (`x-memory-user-key`, see `authz`), so remote
-/// clients never hold the server API key. Everything else (ops, metadata,
-/// internal bootstrap) still requires the Bearer key.
+/// Three trust zones, none of which lets one department reach another:
+/// - the memory data plane, skills and session turns, authorized per user
+///   and scope (`x-memory-user-key`, see `authz`);
+/// - department administration and operational state, for users of that
+///   department (`require_member`, `require_system_admin`);
+/// - the operator's bootstrap, upgrade and destroy routes, which alone take
+///   the server API key (Bearer).
 pub fn build_router(state: SharedState) -> Router {
     // Layers run outermost (last added) first.
     let user_auth = || middleware::from_fn_with_state(state.clone(), authz::require_user);
     let user_department =
         || middleware::from_fn_with_state(state.clone(), require_department_for_user);
+    let member = || middleware::from_fn_with_state(state.clone(), require_member);
     let session = Router::new()
         .route("/session/add", post(memory::session_add))
         .layer(DefaultBodyLimit::max(state.settings.max_session_body_bytes))
@@ -262,7 +345,19 @@ pub fn build_router(state: SharedState) -> Router {
         .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
         .layer(user_auth())
         .layer(user_department());
-    let bearer_scoped = ops_routes()
+    let department = department_routes()
+        .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
+        .layer(member())
+        .layer(user_department());
+    let system_admin = system_admin_routes()
+        .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_system_admin,
+        ))
+        .layer(member())
+        .layer(user_department());
+    let operator = operator_routes()
         .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -275,7 +370,9 @@ pub fn build_router(state: SharedState) -> Router {
     let v3 = Router::new()
         .merge(user_scoped)
         .merge(session)
-        .merge(bearer_scoped);
+        .merge(department)
+        .merge(system_admin)
+        .merge(operator);
 
     let mut app = Router::new()
         .route("/health", get(ops::health))

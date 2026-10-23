@@ -6,9 +6,13 @@ import { createApp } from "./http/app.js";
 
 function main(): void {
   const config = loadConfig();
+  if (config.staleCoreApiKey) {
+    console.warn(
+      "[panel] CORE_API_KEY is set but no longer used: Core authorizes each signed-in user's key. Remove it so the panel does not hold the server API key.",
+    );
+  }
   const core = new FetchCoreClient({
     baseUrl: config.coreUrl,
-    apiKey: config.coreApiKey,
     departmentId: config.coreDepartmentId,
     timeoutMs: config.coreTimeoutMs,
   });

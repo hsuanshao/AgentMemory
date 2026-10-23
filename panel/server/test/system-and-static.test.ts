@@ -16,7 +16,6 @@ describe("system routes", () => {
     const res = await buildApp(noCore()).request("/api/config");
     const body = await res.json();
     expect(body).toEqual({ department_id: "dept-1", core_url_display: "http://core.test:8420" });
-    expect(JSON.stringify(body)).not.toContain("secret-core-key");
   });
 
   it("unknown /api paths return a JSON 404", async () => {

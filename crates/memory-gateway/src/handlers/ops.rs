@@ -63,9 +63,10 @@ pub async fn health(State(s): State<SharedState>) -> Response {
     .into_response()
 }
 
-/// Who is asking. The server API key alone sees the whole department;
-/// with `x-memory-user-key` (the Panel always sends one), what that user's
-/// role allows (`ScopeVisibility`).
+/// Who is asking. On the department routes there is always a user key, and
+/// the caller sees what that user's role allows (`ScopeVisibility`); the
+/// operator routes (`/v3/internal/…`, server API key only) see the whole
+/// department.
 async fn visibility(
     s: &SharedState,
     ctx: &Ctx,

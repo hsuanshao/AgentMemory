@@ -37,12 +37,15 @@
 
 ## 1. 存取權限如何運作
 
-伺服器分成兩個信任區：
+伺服器分成三個信任區：
 
 | 區域 | 路由 | 憑證 |
 | --- | --- | --- |
-| **使用者範圍** | 記憶（L0–L3）、`recall`、`session/add`、`skill/*` | 只需 `x-memory-user-key` |
-| **Bearer 範圍** | pipeline/stats、logs、prompts、`meta/*`、`internal/*` | `Authorization: Bearer <AGENT_MEMORY_API_KEY>` |
+| **使用者範圍** | 記憶（L0–L3）、`recall`、`session/add`、`skill/*` | `x-memory-user-key` |
+| **部門** | `meta/*`、pipeline、stats、生成紀錄；prompts、knowledge 與 `chat-memory/clear` 只限系統管理員 | 該部門使用者的 `x-memory-user-key` |
+| **營運者** | `internal/*`、`department/destroy` | 只接受 `Authorization: Bearer <AGENT_MEMORY_API_KEY>` |
+
+client 和部門管理員都不需要伺服器 API key；它只留在架設伺服器的人手上。
 
 每一次記憶呼叫都必須指定 **team** 與 **agent**：
 

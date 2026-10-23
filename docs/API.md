@@ -12,15 +12,21 @@ authorization flow, pipeline) see [ARCHITECTURE.md](ARCHITECTURE.md).
 * Envelope: `{ "code": 0, "message": "ok", "request_id": "req-…", "data": … }`.
   HTTP status equals `code` for 4xx/5xx; skill errors use five-digit codes
   (e.g. `40901`) with the matching HTTP status.
-* Two trust zones:
-  * **User-scoped** — the data plane (L0–L3, `recall`, `session/add`) and
-    `/v3/skill/*`. Authorized by `x-memory-user-key` alone; no Bearer key is
-    needed, so remote clients never hold the server API key.
-  * **Bearer-scoped** — everything else (pipeline/stats, logs, prompts,
-    knowledge, `meta/*`, `internal/*`, `department/destroy`):
-    `Authorization: Bearer <AGENT_MEMORY_API_KEY>` when an API key is
-    configured. `/v3/meta/*` additionally needs `x-memory-user-key`
-    (except `/v3/meta/auth/verify`).
+* Three trust zones. None of them lets one department reach another:
+  * **User-scoped**: the data plane (L0–L3, `recall`, `session/add`) and
+    `/v3/skill/*`. Authorized by `x-memory-user-key` and the requested scope.
+  * **Department**: `meta/*`, `pipeline/*`, `stats/overview`,
+    `memory-generation-log/*`, and, for system admins only,
+    `memory-prompt/*`, `knowledge/*` and `chat-memory/clear`. They need
+    `x-memory-user-key` of a user of that department (except
+    `/v3/meta/auth/verify`), and the caller's role decides what it may do
+    and see. The server API key does not stand in for a user here.
+  * **Operator**: `internal/*` and `department/destroy`. Only
+    `Authorization: Bearer <AGENT_MEMORY_API_KEY>` opens them (when an API
+    key is configured).
+
+  So a department's admins never need the server API key, and the Panel
+  does not hold it.
 * `x-memory-department-id: <department id>` — required on every `/v3/*` route
   except `/v3/department/destroy`. Installs use `default`.
 * Isolation: `team_id`/`agent_id`/`user_id`/`task_id`/`session_id` in the
@@ -42,9 +48,9 @@ The HTTP status equals `code` in the envelope; `message` explains.
 | Status | When |
 | --- | --- |
 | 400 | Invalid JSON or input; `team_id` / `agent_id` missing on the data plane |
-| 401 | Missing or wrong Bearer key; unknown, revoked or expired user key (also on the data plane for a department that does not exist) |
-| 403 | Not an active member of the team; agent of another team; naming another `user_id` without being a system admin; metadata action not allowed |
-| 404 | Unknown route or entity; `unknown_department` on a Bearer route for a department that does not exist (run `init-admin` for it) |
+| 401 | Missing or wrong Bearer key on an operator route; missing, unknown, revoked or expired user key on the other routes (also for a department that does not exist) |
+| 403 | Not an active member of the team; agent of another team; naming another `user_id` without being a system admin; metadata action not allowed; `memory-prompt/*`, `knowledge/*` or `chat-memory/clear` without being a system admin |
+| 404 | Unknown route or entity; `unknown_department` on an operator route for a department that does not exist (run `init-admin` for it) |
 | 409 | Conflict, e.g. `already_initialized`, `target_has_profile` |
 | 413 | Body over `max_body_bytes` (`max_session_body_bytes` for `session/add`) |
 | 429 | Quota exceeded |
@@ -103,7 +109,7 @@ Every L1, L2 and L3 run that reaches the LLM leaves a generation log with a `sta
 
 `model` names the LLM, including the model a CLI provider selects (`cli:agy:gemini-3.8-flash-high`). A job whose every attempt fails becomes a **dead letter**, kept with its last error until it is redriven. With `coordination.backend: local`, dead letters live in memory (at most 1,000) and are lost on restart. The same views are in the Panel dashboard and in `memory-server generations` / `memory-server dead-letters` ([docs/ops/DISTILLATION.md](ops/DISTILLATION.md)).
 
-These routes take an optional `x-memory-user-key`. Without one (the operator, `memory-server` commands) they cover the whole department. With one, scopes, generation logs and dead letters are limited to what that user's role allows: a team admin or leader sees their whole team, a member sees the team's shared L2/L3 work and their own ([COLLABORATION.md §12](COLLABORATION.md#12-operational-state-by-role)). The Panel always sends the signed-in user's key.
+These routes need `x-memory-user-key`. Scopes, generation logs and dead letters are limited to what that user's role allows: a system admin sees the whole department, a team admin or leader their whole team, a member the team's shared L2/L3 work and their own ([COLLABORATION.md §12](COLLABORATION.md#12-operational-state-by-role)). `stats/overview` counts the whole department for any member. The operator's whole-department view, used by `memory-server generations` and `memory-server dead-letters`, is under `/v3/internal/` (below).
 
 ### Recall
 
@@ -158,13 +164,15 @@ These routes take an optional `x-memory-user-key`. Without one (the operator, `m
 
 Meta list responses: `{items, total, limit, offset}`; `redaction-rule/list` returns `{builtin, deployment_password_shape, deployment, department}` instead.
 
-### Internal / operations (Bearer only)
+### Internal / operations (server API key only)
+
+`/v3/internal/pipeline/dead-letter/{list,redrive}`, `/v3/internal/memory-generation-log/{list,summary}`: as without `internal/`, for the whole department; what `memory-server dead-letters` and `memory-server generations` call.
 
 `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`
 — first-run bootstrap: a system admin plus `default-team` and `default-agent-<username>`
 (409 `already_initialized` once any user exists); the only route that creates a department:
-for one that does not exist, every other route is refused (a wrong-key 401 on the data plane,
-`valid: false` from `meta/auth/verify`, 404 `unknown_department` elsewhere),
+for one that does not exist, every other route is refused (a wrong-key 401 on the data plane and
+department routes, `valid: false` from `meta/auth/verify`, 404 `unknown_department` on operator routes),
 `/v3/internal/meta/user/list-by-department`,
 `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` →
 `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`

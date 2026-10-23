@@ -41,7 +41,7 @@ flowchart LR
   end
   Browser((Browser)) -- user key --> PANEL
   AMEM -- "HTTPS, x-memory-user-key" --> CORE
-  PANEL -- "Bearer key + user key<br/>(allowlisted paths)" --> CORE
+  PANEL -- "user key<br/>(allowlisted paths)" --> CORE
   CORE --> STORE
   CORE --> COORD
   CORE -- distillation --> LLM
@@ -52,7 +52,7 @@ flowchart LR
 | memory-core | HTTP API、授權、記憶管線、召回 | `crates/memory-*` |
 | amem | 所有整合共用的 client 執行檔：召回、寫入、離線佇列、MCP server | `crates/memory-client` |
 | 整合 | 呼叫 `amem` 的輕量 host adapter | `clients/claude-code`、`clients/codex`、`clients/antigravity`、`clients/hermes` |
-| Monitor Panel | 管理與檢視介面。伺服器 API key 只在 BFF；瀏覽器只持有 user key | `panel/server`、`panel/web` |
+| Monitor Panel | 管理與檢視介面。BFF 只轉送登入使用者的 user key，不持有伺服器 API key | `panel/server`、`panel/web` |
 | Scripts | 給維運人員的安裝、升級、移除工具 | `install.sh`、`upgrade.sh`、`uninstall.sh` |
 
 ## 2. 程式結構（Clean Architecture）
@@ -121,25 +121,26 @@ erDiagram
 - 記憶的**範圍（scope）**是 `team_id / agent_id / user_id（/ task_id）`。L0/L1 以使用者劃分；L2 場景與 L3 persona 以 team + agent 劃分。
 - **User key**（`sk-mem-…`）代表一位使用者，可以列出、撤銷，也會過期。**伺服器 API key**（`AGENT_MEMORY_API_KEY`，以 Bearer 傳送）代表維運人員，不代表任何使用者。
 
-### 兩種信任區
+### 三個信任區
 
 ```mermaid
 flowchart LR
   R[Request /v3/...] --> Z{Route group}
   Z -- "data plane + skills<br/>(conversation, atomic, scenario,<br/>core, recall, session, skill)" --> KU{"department<br/>exists?"}
+  Z -- "department: meta, pipeline, stats,<br/>generation logs, prompts,<br/>knowledge, chat-memory" --> KU
   KU -- "no: 401, as for a wrong key" --> X[Refused]
-  KU -- yes --> U["require_user<br/>x-memory-user-key only"]
-  Z -- "ops, meta, internal,<br/>department/destroy" --> B["require_bearer<br/>Authorization: Bearer"]
+  KU -- "yes (data plane)" --> U["require_user<br/>user key + scope"]
+  KU -- "yes (department)" --> DM["require_member<br/>user key of the department;<br/>prompts, knowledge, chat-memory:<br/>system admins"]
+  Z -- "operator: internal/*,<br/>department/destroy" --> B["require_bearer<br/>server API key"]
   B --> KB{"department<br/>exists?"}
   KB -- "no: 404 unknown_department" --> X
-  KB -- "yes, or init-admin /<br/>auth/verify" --> D["ops / meta / internal"]
-  D -- "meta/*" --> M["+ x-memory-user-key<br/>caller = that user"]
+  KB -- "yes, or init-admin /<br/>destroy" --> O[Operator routes]
   U --> H[Handler]
-  D --> H
-  M --> H
+  DM --> H
+  O --> H
 ```
 
-因此遠端 client 永遠不需要 伺服器 API key。User key 外洩時，影響範圍只有該使用者在其所屬 team 裡的記憶。
+因此遠端 client、部門管理員和 Panel 都不需要伺服器 API key。它只能開啟營運者路由：初始化（`init-admin`）、升級、`department/destroy`，以及 `memory-server generations`／`dead-letters` 看整個部門的檢視。user key 只在自己的部門有效，所以一個部門的管理員管不到另一個部門。User key 外洩時，影響範圍只有該使用者在其部門裡能做的事。
 
 部門的儲存空間是在第一次使用時建立的，所以兩個信任區都會先確認部門是否存在（`DepartmentDirectory`：SQLite 檔，或 Postgres 的登記資料列），確認時不會建立它。在 Postgres 上每個請求都會查登記表，所以一台機器刪除部門後，其他機器立刻就會把它當成不存在。只有 `init-admin` 會建立部門，儲存層本身也不會開啟其他部門：不論是請求還是背景工作，用到不存在的部門都會得到 `unknown_department`，而不會建立它。worker 在每個 job 執行前也會確認（同時清掉這台機器過期的資訊），部門已不存在的 job 直接丟棄，不重試、不進 dead letter；部門被刪除後才失敗的 job 也一樣丟棄。`department/destroy` 會刪除該部門的 dead letter；在 SQLite 上，它會在持有 pool 鎖的期間一次完成「移出 pool」與「把目錄搬開」，中間沒有任何操作能重新開啟它。對不存在的部門，`auth/verify` 回 `valid: false`，資料面的回應和 user key 錯誤時相同，所以回應內容看不出部門是否存在。回應時間則看得出來：不存在的部門查完登記表就被拒絕，存在的部門配上錯誤的 key 還要再查一次 key。部門名稱不視為機密，所以接受這一點。
 
@@ -299,12 +300,12 @@ sequenceDiagram
   F->>C: meta/auth/verify (cached briefly)
   C-->>F: user, user_type
   F->>F: path in ADMIN_ONLY_V3_PATHS and not system_admin? → 403
-  F->>C: /v3/<path> + Bearer key + user key
+  F->>C: /v3/<path> + user key
   C-->>F: envelope (core applies its own rules too)
   F-->>B: envelope
 ```
 
-- **伺服器 API key 只放在伺服器端**（`panel/server`）。瀏覽器只持有使用者自己的 key。
+- **Panel 不持有伺服器 API key。** 它轉送登入使用者的 key，由 Core 依該使用者的角色判斷。瀏覽器只持有使用者自己的 key。
 - **Allowlist**（`panel/server/src/http/allowlist.ts`）讓 BFF 不會變成任意轉送的 proxy：`internal/*` 和 `department/destroy` 永遠無法經由 Panel 呼叫。
 - **v1 權限模型**：只有系統管理者能建立、修改使用者、team、成員和 agent。其他人只能檢視：L0–L3 分頁仍會顯示資料，但編輯和刪除的操作會被隱藏。
 - `panel/web` 使用 React + Vite，提供健康狀態、各層筆數、管線狀態、記憶瀏覽（L0–L3）、skills，以及 metadata（使用者、team、成員、agent）。

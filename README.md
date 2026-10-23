@@ -80,8 +80,7 @@ docker run --rm -p 8420:8420 -e AGENT_MEMORY_API_KEY=change-me \
   -e AGENT_MEMORY_LLM_API_KEY=sk-... -v memory-core-data:/data memory-core:local
 
 docker build -t memory-panel:local panel
-docker run --rm -p 8125:8125 -e CORE_URL=http://host.docker.internal:8420 \
-  -e CORE_API_KEY=change-me memory-panel:local
+docker run --rm -p 8125:8125 -e CORE_URL=http://host.docker.internal:8420 memory-panel:local
 ```
 
 ## Users, Teams and Access
@@ -165,7 +164,7 @@ Config file keys (`server`, `data`, `llm`, `memory.pipeline`, `memory.recall`, `
 | --- | --- | --- |
 | `AGENT_MEMORY_CONFIG` | Auto-discover `memory-core.yaml` | Config file path |
 | `AGENT_MEMORY_HOST` / `AGENT_MEMORY_PORT` | `127.0.0.1` / `8420` | Bind address; an API key is required for non-loopback addresses |
-| `AGENT_MEMORY_API_KEY` | Unset | Bearer token |
+| `AGENT_MEMORY_API_KEY` | Unset | Server API key (Bearer) for the operator routes only: `internal/*` (init-admin, upgrades) and `department/destroy`. Clients, department admins and the Panel use user keys |
 | `AGENT_MEMORY_STORAGE_BACKEND` / `AGENT_MEMORY_POSTGRES_URL` | `sqlite` / unset | Storage backend (see "Storage and Coordination Backends") |
 | `AGENT_MEMORY_COORDINATION_BACKEND` / `AGENT_MEMORY_REDIS_URL` | `local` / unset | Coordination backend |
 | `AGENT_MEMORY_DATA_DIR` | `~/.agent-memory` | Data directory (one SQLite per department) |

@@ -35,7 +35,6 @@ export function coreFetch(handler: (url: string, init: RequestInit) => Response 
 export function buildApp(fetchFn: FetchMock, opts: { requireUserKey?: boolean; uiDistDir?: string; timeoutMs?: number } = {}) {
   const core = new FetchCoreClient({
     baseUrl: CORE,
-    apiKey: "secret-core-key",
     departmentId: "dept-1",
     timeoutMs: opts.timeoutMs ?? 1_000,
     fetchFn,
