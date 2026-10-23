@@ -7,6 +7,7 @@
 ## [未發布]
 
 ### 安全性
+- **召回輸出會引用儲存的內容，而不是原樣嵌入。** 各整合注入的 persona、scene 導覽和召回的記憶裡，`<` 會寫成 `&lt;`，每個區塊也標明它是資料、不是指令。透過 API 寫入的 scene 路徑限定為以 `/` 分隔、由字母、數字、`-`、`_`、`.` 組成的片段，summary 最多 500 字元（[ARCHITECTURE 第 5 節](docs/ARCHITECTURE.zh-tw.md#5-召回)）。
 - **私人 agent 只屬於它的 owner。** 記憶 API 現在會套用 agent 的可見性：私人 agent（它的記憶、場景、persona 和 skills，包括整個 team 範圍的 skill 列表與搜尋）只有 owner、team 的管理者和系統管理者能使用，已封存的 agent 一律拒絕。agent 會維持建立時的可見性（預設 `team`）：每人一個 agent 的團隊，應該用 `/v3/meta/agent/update` 把每個 agent 設成 `"visibility": "private"`（[COLLABORATION 第 9 節](docs/COLLABORATION.zh-tw.md#9-記憶請求的授權)）。
 - **memory-core 在每條寫入路徑上遮罩機密**，儲存或蒸餾前就先處理：對話、原始 session 紀錄、skill 緩衝與 skill、atom（含 L1 模型寫出的內容），以及場景和 persona。之前只有 `amem` client 會遮罩，直接寫進 HTTP API 的文字會原樣存下，模型也可能把機密帶進 L1 記憶（#57）。
 - 遮罩規則能抓到用自然語言提到並寫出值的密碼，涵蓋英文和亞洲主要語言（中文、日文、韓文、越南文、泰文、印尼／馬來文、印地文、阿拉伯文），以及西班牙文、葡萄牙文、法文、德文、土耳其文和俄文，常見縮寫也包含在內（`pw`、`pwd`、`pass`、`mk`、`비번`、`パス` 等）；`token`、`pass` 這類有日常意思的字，值前面要有 `:`、`=` 或「是」才算。另外也會抓長得像密碼的字串（8 個以上字元，混合字母、數字和符號），網址、路徑、email、query string、程式運算子和模型名稱除外。原始 session 紀錄裡，機密類欄位（`password`、`access_token` 等）的值會整個遮掉；文字格式的 skill 檔案也會和 skill 一樣遮罩。L1 和 skill 的 prompt 也要求模型不得記錄任何憑證的值。`amem` 使用同一套規則（#57）。

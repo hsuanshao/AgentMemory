@@ -224,6 +224,7 @@ flowchart LR
 - Documents and queries share one tokenizer: lower-cased Latin words plus overlapping CJK bigrams. Keyword scores are normalized against the best hit, so the threshold doesn't depend on corpus size.
 - Without an embedding provider (`AGENT_MEMORY_EMBEDDING_PROVIDER=none`), recall is BM25 only; `strategy` in the response says which was used.
 - `append_system_context` is what the integrations inject: `<user-persona>`, `<scene-navigation>`, and a short guide on how to use them.
+- Everything stored that goes into these blocks (the persona, scene paths and summaries, atoms) has `<` written as `&lt;`, and each block says it is data, not instructions. What a member stores in a shared agent therefore reaches the others as quoted data: it cannot close a block or open one that looks like system context. Stored text is unchanged; escaping happens at output. Scene paths written through the API are letters, digits, `-`, `_` and `.` in `/`-separated segments; summaries are at most 500 characters.
 
 ## 6. The `amem` client and integrations
 
