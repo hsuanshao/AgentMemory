@@ -162,7 +162,9 @@ Meta list responses: `{items, total, limit, offset}`; `redaction-rule/list` retu
 
 `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`
 — first-run bootstrap: a system admin plus `default-team` and `default-agent-<username>`
-(409 `already_initialized` once any user exists),
+(409 `already_initialized` once any user exists); the only route that creates a department:
+for one that does not exist, every other route is refused (a wrong-key 401 on the data plane,
+`valid: false` from `meta/auth/verify`, 404 `unknown_department` elsewhere),
 `/v3/internal/meta/user/list-by-department`,
 `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` →
 `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`

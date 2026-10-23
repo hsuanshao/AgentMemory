@@ -7,6 +7,7 @@
 ## [未發布]
 
 ### 安全性
+- **部門只由 `init-admin` 建立。** 對不存在的部門發出請求，不會再建立它的儲存空間（SQLite 資料庫或 Postgres schema）。資料面路由的回應和 user key 錯誤時相同，`meta/auth/verify` 回 `valid: false`，其他路由回 404 `unknown_department`（[COLLABORATION §13](docs/COLLABORATION.zh-tw.md#13-部門與儲存)）。安裝從未建立管理者時，`upgrade.sh` 和以前一樣會自動建立。
 - **召回輸出會引用儲存的內容，而不是原樣嵌入。** 各整合注入的 persona、scene 導覽和召回的記憶裡，可能開始一個標籤的 `<` 會寫成 `&lt;`，中間夾了空白或不可見格式字元也一樣（`x<1` 維持原樣），每個區塊也標明它是資料、不是指令。透過 API 新建的 scene 路徑限定為以 `/` 分隔、由字母、數字、`-`、`_`、`.` 組成的片段，summary 最多 500 字元；已經存在的 scene 保留原名稱，仍然可以更新（[ARCHITECTURE 第 5 節](docs/ARCHITECTURE.zh-tw.md#5-召回)）。
 - **私人 agent 只屬於它的 owner。** 記憶 API 現在會套用 agent 的可見性：私人 agent（它的記憶、場景、persona 和 skills，包括整個 team 範圍的 skill 列表與搜尋）只有 owner、team 的管理者和系統管理者能使用，已封存的 agent 一律拒絕。agent 會維持建立時的可見性（預設 `team`）：每人一個 agent 的團隊，應該用 `/v3/meta/agent/update` 把每個 agent 設成 `"visibility": "private"`（[COLLABORATION 第 9 節](docs/COLLABORATION.zh-tw.md#9-記憶請求的授權)）。
 - **memory-core 在每條寫入路徑上遮罩機密**，儲存或蒸餾前就先處理：對話、原始 session 紀錄、skill 緩衝與 skill、atom（含 L1 模型寫出的內容），以及場景和 persona。之前只有 `amem` client 會遮罩，直接寫進 HTTP API 的文字會原樣存下，模型也可能把機密帶進 L1 記憶（#57）。

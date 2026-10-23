@@ -119,7 +119,9 @@ pub struct UpdateKeyInput {
     pub expires_at: Option<String>,
 }
 
-fn invalid_user_key() -> DomainError {
+/// The 401 for a user key that does not authenticate (also used for a
+/// department that does not exist, so the two cannot be told apart).
+pub fn invalid_user_key() -> DomainError {
     DomainError::new(
         ErrorKind::Unauthenticated,
         "unauthorized",

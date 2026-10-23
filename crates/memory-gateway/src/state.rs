@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use memory_application::admin::{
-    ChatMemoryService, DepartmentLifecycle, KnowledgeService, StatsService,
+    ChatMemoryService, DepartmentDirectory, DepartmentLifecycle, KnowledgeService, StatsService,
 };
 use memory_application::memory::recall::RecallService;
 use memory_application::memory::service::MemoryService;
@@ -57,6 +57,8 @@ pub struct Services {
     pub skills: Arc<SkillService>,
     pub skill_extraction: Arc<SkillExtractionService>,
     pub lifecycle: Arc<dyn DepartmentLifecycle>,
+    /// Requests for a department without storage stop at the gateway.
+    pub departments: Arc<dyn DepartmentDirectory>,
     pub migration: Arc<LegacyScopeMigration>,
     pub upgrade: Arc<LegacyUpgrade>,
 }

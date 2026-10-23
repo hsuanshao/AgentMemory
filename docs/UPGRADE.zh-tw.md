@@ -243,7 +243,7 @@ curl -sS -X POST "$CORE/v3/internal/upgrade" "${H[@]}" \
 
 Body 的欄位都可以省略：`admin_username`、`team_name`（預設 `default-team`）、`agent_name`（預設 `default-agent-<admin>`）、`issue_key`、`dry_run`。
 
-> 若回應是 `no active system admin`，表示這套安裝從來沒有建立管理者，請先建立：
+> 若回應是 `no active system admin` 或 `unknown_department`，表示這套安裝從來沒有建立管理者，請先建立：
 > `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" "${H[@]}" -d '{"username":"admin"}'`
 
 ### B5. 搬移資料並取得 key
@@ -332,7 +332,7 @@ Client 也要改回原本的設定。
 | 症狀 | 原因與處理 |
 | --- | --- |
 | `Agent '…' already has L2/L3 memories` / `409 target_has_profile` | 找到了舊資料，但指定的 agent 已經有自己的場景，系統不會把兩組場景合併。請換一個新的 agent 名稱再執行一次 |
-| `no active system admin` | 這套安裝沒有建立過管理者。`upgrade.sh` 會自動建立；手動做法是 B4 的 `init-admin` 指令 |
+| `no active system admin` 或 `unknown_department` | 這套安裝沒有建立過管理者。`upgrade.sh` 會自動建立；手動做法是 B4 的 `init-admin` 指令 |
 | Client 收到 `401` | Client 仍然只送 Bearer key，請照 C 節修改 |
 | Client 收到 `403 not a member` | 該使用者不在這個 team。請在 Panel 的 Teams → members 加入 |
 | `upgrade.sh` 顯示 `No .env here` | 請在既有的安裝目錄執行，不是在新 clone 的目錄 |

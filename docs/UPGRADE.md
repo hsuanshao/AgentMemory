@@ -243,7 +243,7 @@ The answer shows the admin (`username`), `team_name`/`team_id` and `agent_name`/
 
 All body fields are optional: `admin_username`, `team_name` (default `default-team`), `agent_name` (default `default-agent-<admin>`), `issue_key`, `dry_run`.
 
-> If the answer says `no active system admin`, the install never created one. Create it first:
+> If the answer says `no active system admin` or `unknown_department`, the install never created one. Create it first:
 > `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" "${H[@]}" -d '{"username":"admin"}'`
 
 ### B5. Move the data and get a key
@@ -332,7 +332,7 @@ Point the clients back at their old configuration as well.
 | Symptom | Cause and fix |
 | --- | --- |
 | `Agent '…' already has L2/L3 memories` / `409 target_has_profile` | Old data was found, but the chosen agent already has its own scenes, and the two sets are never merged. Choose a new agent name and run again |
-| `no active system admin` | The install never created an admin. `upgrade.sh` creates one. By hand, use the `init-admin` call in B4 |
+| `no active system admin` or `unknown_department` | The install never created an admin. `upgrade.sh` creates one. By hand, use the `init-admin` call in B4 |
 | Clients get `401` | They still send only the Bearer key. See C |
 | Clients get `403 not a member` | The user is not in the team. Add them in the Panel, under Teams → members |
 | `upgrade.sh`: `No .env here` | Run it from the existing install directory, not from a fresh clone |

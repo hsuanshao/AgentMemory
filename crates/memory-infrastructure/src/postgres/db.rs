@@ -257,6 +257,21 @@ impl PgDb {
         Ok(removed > 0)
     }
 
+    /// Whether the department is registered; never creates its schema.
+    pub async fn is_registered(&self, department: &DepartmentId) -> DomainResult<bool> {
+        if self.cached(department).is_some() {
+            return Ok(true);
+        }
+        let registry = quote_ident(REGISTRY_SCHEMA);
+        let row = fetch_optional(
+            &mut *self.conn().await?,
+            &format!("SELECT 1 AS found FROM {registry}.departments WHERE department_id = ?"),
+            &args![department.as_str()],
+        )
+        .await?;
+        Ok(row.is_some())
+    }
+
     /// Departments registered in the database.
     pub async fn known_departments(&self) -> DomainResult<Vec<String>> {
         let registry = quote_ident(REGISTRY_SCHEMA);

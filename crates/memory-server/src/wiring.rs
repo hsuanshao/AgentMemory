@@ -349,6 +349,7 @@ pub async fn build(config: &Config) -> Result<App> {
         skills,
         skill_extraction,
         lifecycle,
+        departments: Arc::clone(&storage.departments),
         migration,
         upgrade,
     };
