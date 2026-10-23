@@ -578,19 +578,15 @@ impl SkillExtractionService {
     ) -> DomainResult<Vec<ProposalTask>> {
         let now = self.clock.now().timestamp_millis();
         let mut candidates = Vec::new();
-        for mut task in self.buffers.list_tasks(department, PROPOSED).await? {
+        for task in self.buffers.list_tasks(department, PROPOSED).await? {
             let key = &task.key;
             if key.team_id != team_id || agent_id.is_some_and(|a| a != key.agent_id) {
                 continue;
             }
+            // Expired ones are left out here; the state is written only by
+            // `decide`, under the task's lock.
             let mut proposals = proposals_of(&task)?;
-            if self.expire(&mut proposals, now) {
-                task.status = EXPIRED.into();
-                task.candidates = serde_json::to_value(&proposals)
-                    .map_err(|e| DomainError::internal(e.to_string()))?;
-                self.buffers.put_task(department, &task).await?;
-                continue;
-            }
+            self.expire(&mut proposals, task.archived_at_ms, now);
             if proposals.iter().any(|p| p.state == ProposalState::Pending) {
                 candidates.push((task, proposals));
             }
@@ -623,8 +619,13 @@ impl SkillExtractionService {
         Ok(out)
     }
 
-    fn expire(&self, proposals: &mut [SkillProposal], now_ms: i64) -> bool {
-        expire_pending(proposals, now_ms, self.settings.proposal_ttl_days)
+    fn expire(&self, proposals: &mut [SkillProposal], archived_at_ms: i64, now_ms: i64) -> bool {
+        expire_pending(
+            proposals,
+            archived_at_ms,
+            now_ms,
+            self.settings.proposal_ttl_days,
+        )
     }
 
     /// Approves (applies) or rejects one pending proposal. The change is
@@ -651,7 +652,7 @@ impl SkillExtractionService {
         self.may_review(department, caller, &task.key).await?;
         let mut proposals = proposals_of(&task)?;
         let now = self.clock.now().timestamp_millis();
-        if self.expire(&mut proposals, now) {
+        if self.expire(&mut proposals, task.archived_at_ms, now) {
             task.status = EXPIRED.into();
         }
         if proposals
@@ -991,15 +992,26 @@ fn search_text(messages: &[BufferedMessage]) -> String {
 }
 
 /// Marks pending proposals older than `ttl_days` (0: never) as expired;
-/// `true` when that leaves none pending, so the task expires too.
-fn expire_pending(proposals: &mut [SkillProposal], now_ms: i64, ttl_days: u64) -> bool {
+/// `true` when that leaves none pending, so the task expires too. A
+/// proposal stored without `proposed_at_ms` counts from `archived_at_ms`.
+fn expire_pending(
+    proposals: &mut [SkillProposal],
+    archived_at_ms: i64,
+    now_ms: i64,
+    ttl_days: u64,
+) -> bool {
     if ttl_days == 0 {
         return false;
     }
     let cutoff = now_ms - (ttl_days as i64) * 86_400_000;
     let mut changed = false;
     for p in proposals.iter_mut() {
-        if p.state == ProposalState::Pending && p.proposed_at_ms < cutoff {
+        let at = if p.proposed_at_ms > 0 {
+            p.proposed_at_ms
+        } else {
+            archived_at_ms
+        };
+        if p.state == ProposalState::Pending && at < cutoff {
             p.state = ProposalState::Expired;
             changed = true;
         }
@@ -1086,14 +1098,18 @@ mod tests {
             proposal(ProposalState::Pending, now - 31 * day),
             proposal(ProposalState::Applied, now - 40 * day),
         ];
-        assert!(expire_pending(&mut ps, now, 30));
+        assert!(expire_pending(&mut ps, now, now, 30));
         assert_eq!(ps[0].state, ProposalState::Expired);
         assert_eq!(ps[1].state, ProposalState::Applied);
         let mut fresh = [proposal(ProposalState::Pending, now - 29 * day)];
-        assert!(!expire_pending(&mut fresh, now, 30));
+        assert!(!expire_pending(&mut fresh, now, now, 30));
         let mut never = [proposal(ProposalState::Pending, 0)];
-        assert!(!expire_pending(&mut never, now, 0));
+        assert!(!expire_pending(&mut never, 0, now, 0));
         assert_eq!(never[0].state, ProposalState::Pending);
+        // Stored without proposed_at_ms: counted from the task's archive time.
+        let mut undated = [proposal(ProposalState::Pending, 0)];
+        assert!(!expire_pending(&mut undated, now - day, now, 30));
+        assert!(expire_pending(&mut undated, now - 31 * day, now, 30));
     }
 
     #[test]
