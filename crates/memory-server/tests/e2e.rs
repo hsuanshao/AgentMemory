@@ -572,6 +572,54 @@ async fn a_private_agent_is_its_owners() {
         assert_ne!(r["code"], 0, "other member {path}: {r}");
     }
 
+    // Nor its skills, reached from the member's own agent: by owner, by a
+    // team-wide list or search, or by id.
+    let mine = client
+        .call_as("/v3/skill/list", &owner_key, on(json!({})))
+        .await;
+    let skill_id = mine["data"]["items"][0]["skill_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let own_agent = |body: Value| {
+        let mut body = body;
+        body["team_id"] = json!(client.team_id);
+        body["agent_id"] = json!(client.agent_id);
+        body
+    };
+    for (path, body) in [
+        (
+            "/v3/skill/list",
+            own_agent(json!({"filters": {"owner_agent_id": agent}})),
+        ),
+        ("/v3/skill/list", own_agent(json!({}))),
+        (
+            "/v3/skill/search",
+            own_agent(json!({"query": "mine-skill steps", "scope": "team"})),
+        ),
+    ] {
+        let r = client.call_as(path, &other_key, body).await;
+        assert_eq!(r["code"], 0, "{path}: {r}");
+        assert!(
+            !r.to_string().contains(&skill_id),
+            "other member {path}: {r}"
+        );
+    }
+    for (path, body) in [
+        ("/v3/skill/get", own_agent(json!({"skill_id": skill_id}))),
+        (
+            "/v3/skill/versions",
+            own_agent(json!({"skill_id": skill_id})),
+        ),
+        (
+            "/v3/skill/files/read",
+            own_agent(json!({"skill_id": skill_id, "path": "SKILL.md"})),
+        ),
+    ] {
+        let r = client.call_as(path, &other_key, body).await;
+        assert_ne!(r["code"], 0, "other member {path}: {r}");
+    }
+
     // A team admin (the bootstrap admin is a system admin; add a plain team
     // admin) reads it.
     let (_, team_admin_key) = client.create_member_as("user-team-admin", "admin").await;
@@ -579,7 +627,15 @@ async fn a_private_agent_is_its_owners() {
         .call_as("/v3/core/read", &team_admin_key, on(json!({})))
         .await;
     assert_eq!(read["code"], 0, "team admin: {read}");
-    assert!(read.to_string().contains("# Mine"), "{read}");
+    // (Its content may already be the distilled persona: the owner's
+    // conversation above starts the pipeline.)
+    let listed = client
+        .call_as("/v3/skill/list", &team_admin_key, own_agent(json!({})))
+        .await;
+    assert!(
+        listed.to_string().contains(&skill_id),
+        "team admin lists it: {listed}"
+    );
 
     // Archived: refused, owner included.
     let archived = client

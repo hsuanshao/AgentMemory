@@ -13,6 +13,8 @@ pub struct SkillFilter {
     pub owner_user_id: Option<String>,
     pub name_prefix: Option<String>,
     pub statuses: Vec<SkillStatus>,
+    /// Skills of these agents are left out: other members' private agents.
+    pub excluded_owner_agents: Vec<String>,
 }
 
 /// Versioned SKILL.md rows. Every write produces a new immutable version

@@ -442,10 +442,17 @@ impl SkillService {
             .head(department, skill_id)
             .await?
             .ok_or_else(|| not_found(skill_id))?;
-        // Team members read team skills; without a team only the owner
-        // user does. Mismatches look like absence, so ids cannot be probed.
+        // Team members read team skills, except those of other members'
+        // private agents; without a team only the owner user does.
+        // Mismatches look like absence, so ids cannot be probed.
         let visible = match who.team_id.as_deref() {
-            Some(team) => team == head.team_id,
+            Some(team) => {
+                team == head.team_id
+                    && !self
+                        .hidden_agents(department, who)
+                        .await?
+                        .contains(&head.owner_agent_id)
+            }
             None => who.user_id.as_deref() == Some(head.owner_user_id.as_str()),
         };
         if !visible {
@@ -752,13 +759,33 @@ impl SkillService {
         Ok(Self::detail(v, read))
     }
 
-    fn filter_for(
+    /// Other members' private agents in the caller's team: their skills are
+    /// theirs (see `authorize_memory_scope`).
+    async fn hidden_agents(
+        &self,
+        department: &DepartmentId,
+        who: &SkillIdentity,
+    ) -> DomainResult<Vec<String>> {
+        match (who.team_id.as_deref(), who.user_id.as_deref()) {
+            (Some(team), Some(user)) if !team.is_empty() && !user.is_empty() => {
+                self.meta
+                    .private_agents_hidden_from(department, team, user)
+                    .await
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    async fn filter_for(
+        &self,
+        department: &DepartmentId,
         who: &SkillIdentity,
         owner_agent: Option<String>,
         name_prefix: Option<String>,
         statuses: Vec<SkillStatus>,
-    ) -> SkillFilter {
-        SkillFilter {
+    ) -> DomainResult<SkillFilter> {
+        Ok(SkillFilter {
+            excluded_owner_agents: self.hidden_agents(department, who).await?,
             team_id: who.team_id.clone(),
             owner_agent_id: owner_agent,
             owner_user_id: if who.team_id.is_none() {
@@ -772,7 +799,7 @@ impl SkillService {
             } else {
                 statuses
             },
-        }
+        })
     }
 
     pub async fn list(
@@ -781,7 +808,15 @@ impl SkillService {
         who: &SkillIdentity,
         query: ListQuery,
     ) -> DomainResult<(Vec<SkillSummary>, usize)> {
-        let filter = Self::filter_for(who, query.owner_agent_id, query.name_prefix, query.statuses);
+        let filter = self
+            .filter_for(
+                department,
+                who,
+                query.owner_agent_id,
+                query.name_prefix,
+                query.statuses,
+            )
+            .await?;
         let (heads, total) = self
             .repo
             .list_heads(
@@ -812,7 +847,9 @@ impl SkillService {
         } else {
             who.agent_id.clone()
         };
-        let filter = Self::filter_for(who, owner, None, Vec::new());
+        let filter = self
+            .filter_for(department, who, owner, None, Vec::new())
+            .await?;
         let hits = self
             .repo
             .search_heads(department, &filter, query, top_k.unwrap_or(10).clamp(1, 50))
@@ -917,7 +954,9 @@ impl SkillService {
             .filter(|q| !q.trim().is_empty())
         {
             Some(q) => {
-                let filter = Self::filter_for(who, who.agent_id.clone(), None, Vec::new());
+                let filter = self
+                    .filter_for(department, who, who.agent_id.clone(), None, Vec::new())
+                    .await?;
                 (
                     "search",
                     self.repo
@@ -929,7 +968,9 @@ impl SkillService {
                 )
             }
             None => {
-                let filter = Self::filter_for(who, who.agent_id.clone(), None, Vec::new());
+                let filter = self
+                    .filter_for(department, who, who.agent_id.clone(), None, Vec::new())
+                    .await?;
                 let (heads, total) = self.repo.list_heads(department, &filter, top_k, 0).await?;
                 (if total < top_k { "full" } else { "search" }, heads)
             }
