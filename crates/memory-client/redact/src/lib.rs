@@ -205,7 +205,8 @@ fn secret_phrase_pattern() -> String {
         alternation(CONNECTORS_OTHER)
     );
     // Group names must be unique, hence `strong` and `strong2`.
-    let strong = |name: &str| format!(r#"(?P<{name}>\s*[:=：]\s*["']?)"#);
+    // A bracket may open the value: `pw: [hunter2xyz99]`.
+    let strong = |name: &str| format!(r#"(?P<{name}>\s*[:=：]\s*["'\[(]?)"#);
     let (strong1, strong2) = (strong("strong"), strong("strong2"));
     format!(
         r#"(?i)(?P<keep>{word}(?:{strong1}|{connector}|\s+)|{ambiguous}(?:{strong2}|{connector}))(?P<value>[A-Za-z0-9][!-~&&[^"'`,;)\]}}]]{{3,}})"#
@@ -373,17 +374,47 @@ pub fn check_pattern(pattern: &str) -> Result<(), String> {
     compile_extra(pattern).map(|_| ())
 }
 
-/// A marker left by a rule, here or in the client.
-fn marker() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\[REDACTED:[^\]\s]*\]").expect("valid marker pattern"))
+/// Kind of the marker that replaces a value found under a secret field name
+/// (see [`is_secret_key`]).
+pub const SECRET_FIELD_KIND: &str = "secret-field";
+
+/// A kind is what `[REDACTED:<kind>]` shows: 1-40 characters of a-z, 0-9
+/// and `-`, not starting with `-`. Every layer's kinds follow it.
+pub fn check_kind(kind: &str) -> Result<(), String> {
+    let valid = (1..=40).contains(&kind.len())
+        && kind
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !kind.starts_with('-');
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "kind {kind:?} must be 1-40 characters of a-z, 0-9 and -"
+        ))
+    }
+}
+
+/// Matches the markers of exactly these kinds. Only a marker a rule could
+/// have written counts: `[REDACTED:Tr0ub4dor&3x]` is a secret dressed up as
+/// a marker, not a marker, and is redacted like any other text.
+fn marker_pattern<'a>(kinds: impl IntoIterator<Item = &'a str>) -> Regex {
+    let mut kinds: Vec<&str> = kinds.into_iter().collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let alternation = kinds
+        .iter()
+        .map(|k| regex::escape(k))
+        .collect::<Vec<_>>()
+        .join("|");
+    Regex::new(&format!(r"\[REDACTED:(?:{alternation})\]")).expect("valid marker pattern")
 }
 
 /// `f` applied to the text between markers; the markers are kept as they are.
-fn outside_markers(text: &str, mut f: impl FnMut(&str) -> String) -> String {
+fn outside_markers(marker: &Regex, text: &str, mut f: impl FnMut(&str) -> String) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
-    for m in marker().find_iter(text) {
+    for m in marker.find_iter(text) {
         out.push_str(&f(&text[last..m.start()]));
         out.push_str(m.as_str());
         last = m.end();
@@ -392,7 +423,8 @@ fn outside_markers(text: &str, mut f: impl FnMut(&str) -> String) -> String {
     out
 }
 
-/// Everyday text, English and Chinese, prose and a little code, with no
+/// Everyday text in the languages the built-in rules know best (English,
+/// Chinese, Japanese, Korean, Vietnamese, Thai), prose and a little code, with no
 /// secret in it: what a pattern an administrator adds must leave mostly
 /// alone (see [`check_pattern_breadth`]).
 const ORDINARY_TEXT: &[&str] = &[
@@ -403,9 +435,13 @@ const ORDINARY_TEXT: &[&str] = &[
     "資料庫連線失敗時，先確認服務有沒有啟動，再看日誌。",
     "fn main() { let total = items.iter().map(|x| x.price).sum::<u32>(); }",
     "會議改到星期三下午兩點，地點在三樓會議室。",
+    "来週の月曜日に新しいバージョンをリリースします。テストは先に実行してください。",
+    "다음 주 월요일에 새 버전을 배포합니다. 먼저 통합 테스트를 실행하세요.",
+    "Thứ Hai tuần sau chúng tôi phát hành phiên bản mới, hãy chạy kiểm thử trước.",
+    "เราจะปล่อยเวอร์ชันใหม่วันจันทร์หน้า กรุณารันการทดสอบก่อน",
 ];
 
-/// Share of [`ORDINARY_TEXT`] a pattern may match, at most.
+/// Share of any sentence of [`ORDINARY_TEXT`] a pattern may match, at most.
 pub const MAX_ORDINARY_SHARE: f64 = 0.2;
 
 /// Share of `text`'s characters that `pattern` matches, from 0 to 1.
@@ -421,12 +457,13 @@ pub fn coverage(pattern: &str, text: &str) -> Result<f64, String> {
 
 /// Refuses a pattern so broad that it would wipe ordinary text: one that
 /// matches a single letter, digit or CJK character on its own (`.`, `\w`,
-/// `\d`, `e`), or more than [`MAX_ORDINARY_SHARE`] of everyday sentences
-/// (`\S+`, `\w+`). Redaction happens before anything is stored, so such a
+/// `\d`, `e`), or more than [`MAX_ORDINARY_SHARE`] of any everyday sentence
+/// (`\S+`, `\w+`, `\p{Hangul}+`). Redaction happens before anything is
+/// stored, so such a
 /// rule would destroy every write until it is noticed.
 pub fn check_pattern_breadth(pattern: &str) -> Result<(), String> {
     let re = compile_extra(pattern)?;
-    if let Some(c) = ["a", "e", "Z", "7", "中", "あ"]
+    if let Some(c) = ["a", "e", "Z", "7", "中", "あ", "ア", "한", "ไ", "ệ", "đ"]
         .into_iter()
         .find(|c| re.is_match(c))
     {
@@ -434,10 +471,15 @@ pub fn check_pattern_breadth(pattern: &str) -> Result<(), String> {
             "it matches the single character {c:?}; make it specific"
         ));
     }
-    let share = coverage(pattern, &ORDINARY_TEXT.join("\n"))?;
+    // Sentence by sentence: a pattern that wipes one language is too broad
+    // even when the others dilute it.
+    let mut share: f64 = 0.0;
+    for sentence in ORDINARY_TEXT {
+        share = share.max(coverage(pattern, sentence)?);
+    }
     if share > MAX_ORDINARY_SHARE {
         return Err(format!(
-            "it matches {:.0}% of ordinary text (at most {:.0}%); make it specific",
+            "it matches {:.0}% of an ordinary sentence (at most {:.0}%); make it specific",
             share * 100.0,
             MAX_ORDINARY_SHARE * 100.0
         ));
@@ -468,6 +510,8 @@ struct Rule {
 /// A compiled set of rules: the built-in ones, plus any a deployment adds.
 pub struct Redactor {
     rules: Vec<Rule>,
+    /// Markers of known kinds; see [`marker_pattern`].
+    marker: Regex,
 }
 
 impl Redactor {
@@ -520,6 +564,7 @@ impl Redactor {
             rules.push(Self::shape_rule());
         }
         for (kind, pattern) in extra {
+            check_kind(kind)?;
             let re = compile_extra(pattern)
                 .map_err(|e| format!("redaction pattern {kind:?} is rejected: {e}"))?;
             rules.push(Rule {
@@ -528,7 +573,31 @@ impl Redactor {
                 check: Check::None,
             });
         }
-        Ok(Redactor { rules })
+        let marker = Self::markers(&rules, &[]);
+        Ok(Redactor { rules, marker })
+    }
+
+    /// Every built-in kind, whether or not its rule runs here (a client
+    /// marks with all of them), the rules' own kinds, and `more`.
+    fn markers(rules: &[Rule], more: &[String]) -> Regex {
+        marker_pattern(
+            builtin_kinds()
+                .into_iter()
+                .chain([SECRET_FIELD_KIND])
+                .chain(rules.iter().map(|r| r.kind.as_str()))
+                .chain(more.iter().map(String::as_str)),
+        )
+    }
+
+    /// Also takes markers of these kinds as markers: rules that wrote them
+    /// before and no longer run (a disabled department rule). Fails on a
+    /// kind [`check_kind`] rejects.
+    pub fn knowing(mut self, kinds: &[String]) -> Result<Redactor, String> {
+        for kind in kinds {
+            check_kind(kind)?;
+        }
+        self.marker = Self::markers(&self.rules, kinds);
+        Ok(self)
     }
 
     /// Replaces every secret with `[REDACTED:<kind>]`.
@@ -549,7 +618,7 @@ impl Redactor {
                 continue;
             }
             let mut n = 0;
-            out = outside_markers(&out, |gap| {
+            out = outside_markers(&self.marker, &out, |gap| {
                 if !rule.re.is_match(gap) {
                     return gap.to_owned();
                 }
@@ -956,6 +1025,13 @@ mod tests {
         }
         assert!(check_pattern(r"\w{1000}{1000}").is_err());
         assert!(Redactor::with_extra(&[("all".into(), "a*".into())]).is_err());
+        // Kinds follow one format in every layer.
+        for kind in ["Bad", "with space", "-x", ""] {
+            assert!(
+                Redactor::with_extra(&[(kind.into(), r"x\d".into())]).is_err(),
+                "{kind}"
+            );
+        }
         // Zero-width elsewhere: allowed, but never inserts a marker.
         let r = Redactor::with_extra(&[("edge".into(), r"\b".into())]).unwrap();
         assert_eq!(r.redact("two words"), "two words");
@@ -973,6 +1049,27 @@ mod tests {
             r.redact("[REDACTED:openai-key] then ABC"),
             "[REDACTED:openai-key] then [REDACTED:x]"
         );
+        // A secret dressed up as a marker is not one: it is redacted.
+        for (text, secret) in [
+            ("pw is [REDACTED:Tr0ub4dor&3x]", "Tr0ub4dor"),
+            ("pw: [REDACTED:hunter2xyz99]", "hunter2xyz99"),
+        ] {
+            assert!(!redact(text).contains(secret), "{text} → {}", redact(text));
+        }
+        let key = format!("key [REDACTED:{}]", fake("sk-proj-", 'A', 24));
+        assert!(
+            redact(&key).contains("[REDACTED:openai-key]"),
+            "{}",
+            redact(&key)
+        );
+        // Markers of rules that no longer run, when told about them.
+        let plain = Redactor::with_extra(&[("x".into(), "[A-Z]{3,}".into())]).unwrap();
+        assert_eq!(plain.redact("[REDACTED:emp-id]"), "[[REDACTED:x]:emp-id]");
+        let knowing = Redactor::with_extra(&[("x".into(), "[A-Z]{3,}".into())])
+            .unwrap()
+            .knowing(&["emp-id".into()])
+            .unwrap();
+        assert_eq!(knowing.redact("[REDACTED:emp-id]"), "[REDACTED:emp-id]");
         // Redacting again changes nothing.
         let once = r.redact("pw: Hunter2xyz99 and ABC");
         assert_eq!(r.redact(&once), once);
@@ -980,7 +1077,20 @@ mod tests {
 
     #[test]
     fn broad_patterns_are_refused_specific_ones_kept() {
-        for broad in [".", r"\w", r"\d", "e", r"\S+", r"[\s\S]+", r"\w+", "[a-z]+"] {
+        for broad in [
+            ".",
+            r"\w",
+            r"\d",
+            "e",
+            r"\S+",
+            r"[\s\S]+",
+            r"\w+",
+            "[a-z]+",
+            r"\p{Hangul}+",
+            r"\p{Thai}+",
+            r"[\p{Hiragana}\p{Katakana}]{2,}",
+            "[à-ỹ]",
+        ] {
             assert!(check_pattern_breadth(broad).is_err(), "{broad}");
         }
         for specific in [

@@ -168,7 +168,14 @@ impl RedactionService {
                 .map(|r| (r.kind.clone(), r.pattern.clone())),
         );
         patterns.extend(extra);
+        // Markers written by rules disabled since still count as markers.
+        let disabled: Vec<String> = rules
+            .iter()
+            .filter(|r| !r.enabled)
+            .map(|r| r.kind.clone())
+            .collect();
         Redactor::new(&patterns, self.deployment.password_shape)
+            .and_then(|r| r.knowing(&disabled))
             .map_err(|e| DomainError::internal(format!("redaction rules: {e}")))
     }
 
@@ -360,17 +367,8 @@ impl RedactionService {
 /// [`RedactionService::check`]), so a marker always says which layer caught
 /// it.
 fn check_rule(kind: &str, pattern: &str, description: &str) -> DomainResult<()> {
-    let valid_kind = (1..=40).contains(&kind.len())
-        && kind
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        && !kind.starts_with('-');
-    if !valid_kind {
-        return Err(DomainError::invalid(
-            "kind must be 1-40 characters of a-z, 0-9 and -",
-        ));
-    }
-    if memory_redact::builtin_kinds().contains(&kind) {
+    memory_redact::check_kind(kind).map_err(DomainError::invalid)?;
+    if memory_redact::builtin_kinds().contains(&kind) || kind == memory_redact::SECRET_FIELD_KIND {
         return Err(DomainError::invalid(format!("{kind} is a built-in kind")));
     }
     if pattern.chars().count() > MAX_PATTERN_CHARS {
@@ -429,6 +427,7 @@ mod tests {
             ("emp id", r"x\d"),
             ("-emp", r"x\d"),
             ("jwt", r"x\d"),
+            ("secret-field", r"x\d"),
             ("emp", "a*"),
             ("emp", "("),
         ] {

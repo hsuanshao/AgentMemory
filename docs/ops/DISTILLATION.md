@@ -216,7 +216,8 @@ redaction:
 **Department rules.** A department's system admins add their own patterns, on top of the built-in and deployment ones, in the Panel (Metadata → Redaction) or through `/v3/meta/redaction-rule/*` ([API](../API.md)). Other users, MCP and the distillation model cannot see or change them.
 
 - Each rule is a kind (shown as `[REDACTED:<kind>]`; not a built-in one, nor one of `redaction.patterns`) and a Rust regex, at most 500 characters. A pattern that does not compile, matches the empty string or is too large is refused. So is one too broad to be meant: it matches a single letter, digit or CJK character on its own (`.`, `\w`, `e`), or more than 20% of a set of everyday sentences (`\S+`, `\w+`). Redaction happens before anything is stored, so such a rule would erase every write. At most 50 enabled rules per department.
-- Rules never touch text already redacted (`[REDACTED:…]` from the client or an earlier rule), so markers stay readable and say which rule caught what.
+- Rules never touch text already redacted (`[REDACTED:…]` from the client or an earlier rule), so markers stay readable and say which rule caught what. Only a marker of a known kind counts: `[REDACTED:hunter2xyz99]` is not one, and the secret in it is redacted like any other text.
+- A kind is 1-40 characters of a-z, 0-9 and `-` in every layer; a `redaction.patterns` kind that is not stops memory-core at startup.
 - **Try it** (`test`) runs sample text through the department's rules, plus a pattern not saved yet, and shows the result, what each kind caught and how much of the sample the pattern matches; a pattern too broad to save is still previewed, with the reason. The text is not stored.
 - A new or changed rule applies to the next write on that replica; other replicas pick it up within 30 seconds. Stored data is not rewritten.
 - Removing a rule disables it. The record of who added and changed it, and when, stays; it can be enabled again.
