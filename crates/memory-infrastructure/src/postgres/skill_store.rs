@@ -42,6 +42,12 @@ fn head_where(f: &SkillFilter) -> Where {
         .eq_opt("team_id", f.team_id.clone())
         .eq_opt("owner_agent_id", f.owner_agent_id.clone())
         .eq_opt("owner_user_id", f.owner_user_id.clone());
+    if !f.excluded_owner_agents.is_empty() {
+        w.raw(
+            "NOT (owner_agent_id = ANY(?))",
+            [Arg::Texts(f.excluded_owner_agents.clone())],
+        );
+    }
     if let Some(p) = &f.name_prefix {
         // SQLite's `LIKE` ignores ASCII case; `ILIKE` keeps that.
         w.raw("name ILIKE ? ESCAPE '\\'", [Arg::from(like_prefix(p))]);

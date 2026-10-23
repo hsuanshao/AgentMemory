@@ -59,6 +59,13 @@ fn head_where(f: &SkillFilter, prefix: &str) -> Where {
         .eq_opt(&col("team_id"), f.team_id.clone())
         .eq_opt(&col("owner_agent_id"), f.owner_agent_id.clone())
         .eq_opt(&col("owner_user_id"), f.owner_user_id.clone());
+    if !f.excluded_owner_agents.is_empty() {
+        let marks = vec!["?"; f.excluded_owner_agents.len()].join(",");
+        w.raw(
+            &format!("{} NOT IN ({marks})", col("owner_agent_id")),
+            f.excluded_owner_agents.iter().cloned().map(Value::from),
+        );
+    }
     if let Some(p) = &f.name_prefix {
         w.raw(
             &format!("{} LIKE ? ESCAPE '\\'", col("name")),

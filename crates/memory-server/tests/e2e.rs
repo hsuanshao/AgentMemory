@@ -506,6 +506,152 @@ async fn scene_writes_during_l2_are_kept() {
     );
 }
 
+/// A private agent is its owner's: another member of the team can neither
+/// read nor write its memory or skills; the owner and team admins can.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_private_agent_is_its_owners() {
+    let (_data, client) = start().await;
+    let (owner_id, owner_key) = (client.user_id.clone(), client.member_key.clone());
+    let (_, other_key) = client.create_member("user-other").await;
+    let created = client
+        .call_as(
+            "/v3/meta/agent/create",
+            &owner_key,
+            json!({"team_id": client.team_id, "owner_user_id": owner_id, "name": "mine", "visibility": "private"}),
+        )
+        .await;
+    assert_eq!(created["code"], 0, "{created}");
+    let agent = created["data"]["agent_id"].as_str().unwrap().to_owned();
+    let on = |body: Value| {
+        let mut body = body;
+        body["team_id"] = json!(client.team_id);
+        body["agent_id"] = json!(agent);
+        body
+    };
+    let skill = |name: &str| {
+        on(
+            json!({"name": name, "content": format!("---\nname: {name}\ndescription: d\n---\nsteps")}),
+        )
+    };
+
+    // The owner uses it.
+    for (path, body) in [
+        ("/v3/core/write", on(json!({"content": "# Mine"}))),
+        (
+            "/v3/scenario/write",
+            on(json!({"path": "deploy.md", "content": "how I deploy"})),
+        ),
+        (
+            "/v3/conversation/add",
+            on(json!({"session_id": "s", "messages": [{"role": "user", "content": "hi"}]})),
+        ),
+        ("/v3/skill/create", skill("mine-skill")),
+    ] {
+        let r = client.call_as(path, &owner_key, body).await;
+        assert_eq!(r["code"], 0, "owner {path}: {r}");
+    }
+
+    // Another member: nothing, read or write.
+    for (path, body) in [
+        ("/v3/core/read", on(json!({}))),
+        ("/v3/scenario/ls", on(json!({}))),
+        ("/v3/recall", on(json!({"query": "deploy"}))),
+        ("/v3/core/write", on(json!({"content": "# Theirs"}))),
+        (
+            "/v3/scenario/write",
+            on(json!({"path": "x.md", "content": "x"})),
+        ),
+        (
+            "/v3/conversation/add",
+            on(json!({"session_id": "s", "messages": [{"role": "user", "content": "hi"}]})),
+        ),
+        ("/v3/skill/list", on(json!({}))),
+        ("/v3/skill/create", skill("their-skill")),
+    ] {
+        let r = client.call_as(path, &other_key, body).await;
+        assert_ne!(r["code"], 0, "other member {path}: {r}");
+    }
+
+    // Nor its skills, reached from the member's own agent: by owner, by a
+    // team-wide list or search, or by id.
+    let mine = client
+        .call_as("/v3/skill/list", &owner_key, on(json!({})))
+        .await;
+    let skill_id = mine["data"]["items"][0]["skill_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let own_agent = |body: Value| {
+        let mut body = body;
+        body["team_id"] = json!(client.team_id);
+        body["agent_id"] = json!(client.agent_id);
+        body
+    };
+    for (path, body) in [
+        (
+            "/v3/skill/list",
+            own_agent(json!({"filters": {"owner_agent_id": agent}})),
+        ),
+        ("/v3/skill/list", own_agent(json!({}))),
+        (
+            "/v3/skill/search",
+            own_agent(json!({"query": "mine-skill steps", "scope": "team"})),
+        ),
+    ] {
+        let r = client.call_as(path, &other_key, body).await;
+        assert_eq!(r["code"], 0, "{path}: {r}");
+        assert!(
+            !r.to_string().contains(&skill_id),
+            "other member {path}: {r}"
+        );
+    }
+    for (path, body) in [
+        ("/v3/skill/get", own_agent(json!({"skill_id": skill_id}))),
+        (
+            "/v3/skill/versions",
+            own_agent(json!({"skill_id": skill_id})),
+        ),
+        (
+            "/v3/skill/files/read",
+            own_agent(json!({"skill_id": skill_id, "path": "SKILL.md"})),
+        ),
+    ] {
+        let r = client.call_as(path, &other_key, body).await;
+        assert_ne!(r["code"], 0, "other member {path}: {r}");
+    }
+
+    // A team admin (the bootstrap admin is a system admin; add a plain team
+    // admin) reads it.
+    let (_, team_admin_key) = client.create_member_as("user-team-admin", "admin").await;
+    let read = client
+        .call_as("/v3/core/read", &team_admin_key, on(json!({})))
+        .await;
+    assert_eq!(read["code"], 0, "team admin: {read}");
+    // (Its content may already be the distilled persona: the owner's
+    // conversation above starts the pipeline.)
+    let listed = client
+        .call_as("/v3/skill/list", &team_admin_key, own_agent(json!({})))
+        .await;
+    assert!(
+        listed.to_string().contains(&skill_id),
+        "team admin lists it: {listed}"
+    );
+
+    // Archived: refused, owner included.
+    let archived = client
+        .call_as(
+            "/v3/meta/agent/archive",
+            &owner_key,
+            json!({"agent_id": agent}),
+        )
+        .await;
+    assert_eq!(archived["code"], 0, "{archived}");
+    let r = client
+        .call_as("/v3/core/read", &owner_key, on(json!({})))
+        .await;
+    assert_ne!(r["code"], 0, "archived: {r}");
+}
+
 /// A department's system admins add redaction rules; writes follow them at
 /// once, and only admins can see or change them (#57).
 #[tokio::test(flavor = "multi_thread")]

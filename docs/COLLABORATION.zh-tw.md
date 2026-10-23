@@ -82,7 +82,18 @@ flowchart TD
 
 **B. 共享知識的團隊**：所有成員使用同一個 agent，例如 `team-assistant`，場景和 persona 會累積團隊共同的工作內容。只有在大家都能接受自己的事實影響共用輪廓時才這樣做。
 
-**C. 同一個團隊、各自的輪廓**：大家為了方便管理放在同一個 team，但每個人用自己的 agent（`alice-claude`、`bob-claude`），不會跨人蒸餾。Skills 仍然是整個 team 可見。
+**C. 同一個團隊、各自的輪廓**：大家為了方便管理放在同一個 team，但每個人用自己的 agent（`alice-claude`、`bob-claude`），建立時設定 `"visibility": "private"`。不會跨人蒸餾：私人 agent 只有 owner 和 team 的管理者能使用，其他成員讀不到它的場景、persona 和 skills，也不能寫入或把自己的對話餵給它。team agent（預設的 `"visibility": "team"`）的 skills 整個 team 都看得到；私人 agent 的 skills 則不會分享給 team。
+
+在這條規則之前建立的 agent，會維持建立時的可見性，預設是 `team`。要把既有的個人 agent 改成私人的，由它的 owner 或系統管理者更新：
+
+```bash
+curl -X POST "$CORE/v3/meta/agent/update" \
+  -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
+  -H "x-memory-department-id: default" \
+  -H "x-memory-user-key: $USER_KEY" \
+  -H "content-type: application/json" \
+  -d '{"agent_id": "agt-…", "visibility": "private"}'
+```
 
 **D. 多個團隊**：每個小組或專案各自一個 team。同時在兩個 team 的人，每個 team 各設定一份 client（見第 6 節）。資料不會跨 team。
 
@@ -201,7 +212,11 @@ flowchart TD
   S -- yes --> OK["scope = team, agent,<br/>user_id or caller"]
   S -- no --> M{"active member<br/>of the team?"}
   M -- no --> E403b[403]
-  M -- yes --> O{"user_id omitted or<br/>equal to the caller?"}
+  M -- yes --> X{"agent active?"}
+  X -- no --> E403d[403]
+  X -- yes --> P{"agent private?"}
+  P -- "yes, and the caller is<br/>neither its owner nor a team admin" --> E403e[403]
+  P -- "no, or owner / team admin" --> O{"user_id omitted or<br/>equal to the caller?"}
   O -- no --> E403c[403]
   O -- yes --> OK2["scope = team, agent, caller"]
   OK --> W["body fields and x-memory-* headers<br/>are overwritten with the scope"]
@@ -213,6 +228,7 @@ flowchart TD
 
 - **預設拒絕**：只有路徑最後一段是已知的讀取字尾（`query`、`search`、`count`、`read`、`recall`、`list` 等），才算讀取，其餘一律視為寫入。
 - **Handler 只會看到已授權的範圍**：middleware 會改寫請求，新的 handler 不需要額外程式碼就有隔離。
+- **私人與已封存的 agent**：已封存的 agent 一律拒絕（系統管理者除外）。私人 agent 只有 owner、team 的管理者和系統管理者能使用；它的 skills 也一樣，因為 skill 的呼叫同樣經過這個 middleware。
 - **記憶 API 的角色是扁平的**：`role_allows` 讓每種角色都只能存取呼叫者自己的記憶，存取別人的記憶只保留給系統管理者。未來若要依角色細分，只需要改這一個函式。
 
 ## 10. 依範圍運作的管線與召回

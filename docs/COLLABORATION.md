@@ -80,7 +80,18 @@ Nothing is shared **between agents**, not even inside one team: every agent has 
 
 **B. A team that shares knowledge.** Every member uses the same agent, for example `team-assistant`. Scenes and the persona collect what the team works on together. Use this only when people are comfortable with their facts shaping a shared profile.
 
-**C. A team, private profiles.** Everyone is in the same team for administration, but each person gets their own agent (`alice-claude`, `bob-claude`). Nothing is distilled across people. Skills are still visible to the whole team.
+**C. A team, private profiles.** Everyone is in the same team for administration, but each person gets their own agent (`alice-claude`, `bob-claude`), created with `"visibility": "private"`. Nothing is distilled across people: only the agent's owner and the team's admins can use a private agent, so no other member can read its scenes, persona or skills, write to them, or feed it their conversations. Skills of team agents (the default `"visibility": "team"`) are visible to the whole team; skills of a private agent are not.
+
+An agent created before this rule keeps the visibility it was created with, `team` by default. To make an existing per-person agent private, its owner or a system admin updates it:
+
+```bash
+curl -X POST "$CORE/v3/meta/agent/update" \
+  -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
+  -H "x-memory-department-id: default" \
+  -H "x-memory-user-key: $USER_KEY" \
+  -H "content-type: application/json" \
+  -d '{"agent_id": "agt-…", "visibility": "private"}'
+```
 
 **D. Several teams.** Each group or project gets a team. A person in two teams configures a client per team (see §6). Data never crosses teams.
 
@@ -199,7 +210,11 @@ flowchart TD
   S -- yes --> OK["scope = team, agent,<br/>user_id or caller"]
   S -- no --> M{"active member<br/>of the team?"}
   M -- no --> E403b[403]
-  M -- yes --> O{"user_id omitted or<br/>equal to the caller?"}
+  M -- yes --> X{"agent active?"}
+  X -- no --> E403d[403]
+  X -- yes --> P{"agent private?"}
+  P -- "yes, and the caller is<br/>neither its owner nor a team admin" --> E403e[403]
+  P -- "no, or owner / team admin" --> O{"user_id omitted or<br/>equal to the caller?"}
   O -- no --> E403c[403]
   O -- yes --> OK2["scope = team, agent, caller"]
   OK --> W["body fields and x-memory-* headers<br/>are overwritten with the scope"]
@@ -211,6 +226,7 @@ Properties to rely on when extending the API:
 
 - **Fail closed.** A route counts as a read only if its last path segment is a known read suffix (`query`, `search`, `count`, `read`, `recall`, `list`, …). Anything else is a write.
 - **Handlers only see an authorized scope.** The middleware rewrites the request, so a new handler is isolated without extra code.
+- **Private and archived agents.** An archived agent is refused (system admins excepted). A private agent is usable by its owner, the team's admins and system admins only; its skills follow the same rule, since skill calls go through this middleware too.
 - **Roles are flat in the memory API.** `role_allows` grants every role access to the caller's own memory only. Reaching another user's memory is reserved for system admins. Finer per-role rules would go into that one function.
 
 ## 10. Pipeline and recall per scope

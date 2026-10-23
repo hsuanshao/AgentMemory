@@ -2,7 +2,7 @@
 //! read or write. Pure function of (request, caller, membership, agent); the
 //! application layer loads the inputs.
 
-use super::{Agent, TeamMember, TeamRole};
+use super::{Agent, AgentStatus, TeamMember, TeamRole, Visibility};
 use crate::error::{DomainError, DomainResult};
 use crate::scope::{MemoryScope, SegmentId};
 
@@ -39,7 +39,11 @@ fn role_allows(_role: TeamRole, _action: MemoryAction, on_self: bool) -> bool {
 }
 
 /// Evaluation order: team required → agent belongs to team → system admin →
-/// active membership → role rule. The returned scope is the only one the
+/// active membership → active agent → private agent → role rule.
+///
+/// A private agent (`visibility: private`) is its owner's: its shared
+/// layers (scenes, persona, skills) are distilled from the owner's facts,
+/// so only the owner and the team's admins may use it. The returned scope is the only one the
 /// handler sees; `user_id` defaults to the caller.
 pub fn authorize_memory_scope(
     req: &RequestedScope,
@@ -65,6 +69,18 @@ pub fn authorize_memory_scope(
             .membership
             .filter(|m| m.is_active() && m.team_id == team_id && m.user_id == facts.caller_user_id)
             .ok_or_else(|| DomainError::permission_denied("not an active member of the team"))?;
+        let agent = facts.agent.expect("checked above");
+        if agent.status != AgentStatus::Active {
+            return Err(DomainError::permission_denied("agent is archived"));
+        }
+        if agent.visibility == Visibility::Private
+            && agent.owner_user_id != facts.caller_user_id
+            && !member.is_admin()
+        {
+            return Err(DomainError::permission_denied(
+                "private agent: owner and team admins only",
+            ));
+        }
         if !role_allows(member.role, action, user_id == facts.caller_user_id) {
             return Err(DomainError::permission_denied(
                 "role does not allow this access",
@@ -89,7 +105,7 @@ fn non_empty(v: &Option<String>) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::error::ErrorKind;
-    use crate::meta::{AgentStatus, MemberStatus, Visibility};
+    use crate::meta::MemberStatus;
     use serde_json::json;
 
     fn agent(team: &str) -> Agent {
@@ -189,6 +205,69 @@ mod tests {
             &facts(None, None),
             MemoryAction::Read
         )));
+    }
+
+    fn private(owner: &str) -> Agent {
+        Agent {
+            owner_user_id: owner.into(),
+            visibility: Visibility::Private,
+            ..agent("team-1")
+        }
+    }
+
+    #[test]
+    fn a_private_agent_is_its_owners_and_team_admins() {
+        for action in [MemoryAction::Read, MemoryAction::Write] {
+            // Another member: denied.
+            let (a, m) = (private("bob"), member(TeamRole::Member));
+            assert!(denied(authorize_memory_scope(
+                &req(None),
+                &facts(Some(&m), Some(&a)),
+                action
+            )));
+            let leader = member(TeamRole::Leader);
+            assert!(denied(authorize_memory_scope(
+                &req(None),
+                &facts(Some(&leader), Some(&a)),
+                action
+            )));
+            // The owner, a team admin and a system admin: allowed.
+            let own = private("alice");
+            assert!(
+                authorize_memory_scope(&req(None), &facts(Some(&m), Some(&own)), action).is_ok()
+            );
+            let admin = member(TeamRole::Admin);
+            assert!(
+                authorize_memory_scope(&req(None), &facts(Some(&admin), Some(&a)), action).is_ok()
+            );
+            let mut sys = facts(None, Some(&a));
+            sys.is_system_admin = true;
+            assert!(authorize_memory_scope(&req(None), &sys, action).is_ok());
+        }
+        // A team agent stays open to every member.
+        let (a, m) = (agent("team-1"), member(TeamRole::Member));
+        assert!(authorize_memory_scope(
+            &req(None),
+            &facts(Some(&m), Some(&a)),
+            MemoryAction::Write
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn an_archived_agent_is_refused() {
+        let a = Agent {
+            status: AgentStatus::Inactive,
+            ..agent("team-1")
+        };
+        for role in [TeamRole::Member, TeamRole::Admin] {
+            let m = member(role);
+            assert!(denied(authorize_memory_scope(
+                &req(None),
+                &facts(Some(&m), Some(&a)),
+                MemoryAction::Read
+            )));
+        }
     }
 
     #[test]

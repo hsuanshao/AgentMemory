@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 
 use chrono::SecondsFormat;
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
-use memory_domain::meta::{TeamMember, User, UserType};
+use memory_domain::meta::{TeamMember, User, UserType, Visibility};
 use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +26,7 @@ pub use teams::*;
 pub use users::*;
 pub use visibility::DisplayNames;
 
-use crate::ports::meta::MetaStore;
+use crate::ports::meta::{AgentFilter, MetaStore};
 use crate::ports::system::{Clock, IdGenerator};
 
 /// The authenticated caller of a metadata request.
@@ -171,6 +171,48 @@ impl MetaService {
             Ok(member)
         } else {
             Err(denied("team admin required"))
+        }
+    }
+}
+
+impl MetaService {
+    /// Agents of `team_id` whose shared layers `user_id` may not see: other
+    /// members' private agents. Empty for the team's admins and system
+    /// admins, who may use every agent of the team.
+    pub(crate) async fn private_agents_hidden_from(
+        &self,
+        department: &DepartmentId,
+        team_id: &str,
+        user_id: &str,
+    ) -> DomainResult<Vec<String>> {
+        let user = self.store.get_user(department, user_id).await?;
+        if user.is_some_and(|u| u.user_type == UserType::SystemAdmin) {
+            return Ok(Vec::new());
+        }
+        let membership = self.active_membership(department, team_id, user_id).await?;
+        if membership.is_some_and(|m| m.is_admin()) {
+            return Ok(Vec::new());
+        }
+        let filter = AgentFilter {
+            team_id: Some(team_id.to_owned()),
+            ..AgentFilter::default()
+        };
+        let mut hidden = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = crate::common::Page { limit: 500, offset };
+            let (agents, total) = self.store.list_agents(department, &filter, page).await?;
+            let fetched = agents.len();
+            hidden.extend(
+                agents
+                    .into_iter()
+                    .filter(|a| a.visibility == Visibility::Private && a.owner_user_id != user_id)
+                    .map(|a| a.agent_id),
+            );
+            offset += fetched;
+            if fetched == 0 || offset >= total {
+                return Ok(hidden);
+            }
         }
     }
 }
