@@ -141,7 +141,7 @@ flowchart LR
 
 因此遠端 client 永遠不需要 伺服器 API key。User key 外洩時，影響範圍只有該使用者在其所屬 team 裡的記憶。
 
-部門的儲存空間是在第一次使用時建立的，所以兩個信任區都會先確認部門是否存在（`DepartmentDirectory`：SQLite 檔，或 Postgres 的登記資料列），確認時不會建立它。只有 `init-admin` 會建立部門。對不存在的部門，`auth/verify` 回 `valid: false`，資料面的回應和 user key 錯誤時相同，所以兩者都無法用來判斷某個部門名稱是否存在。
+部門的儲存空間是在第一次使用時建立的，所以兩個信任區都會先確認部門是否存在（`DepartmentDirectory`：SQLite 檔，或 Postgres 的登記資料列），確認時不會建立它。在 Postgres 上每個請求都會查登記表，所以一台機器刪除部門後，其他機器立刻就會把它當成不存在。只有 `init-admin` 會建立部門。對不存在的部門，`auth/verify` 回 `valid: false`，資料面的回應和 user key 錯誤時相同，所以回應內容看不出部門是否存在。回應時間則看得出來：不存在的部門查完登記表就被拒絕，存在的部門配上錯誤的 key 還要再查一次 key。部門名稱不視為機密，所以接受這一點。
 
 ### 資料平面授權
 

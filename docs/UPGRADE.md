@@ -4,6 +4,7 @@
 
 ## Contents
 
+- [After 0.4.1 (unreleased)](#after-041-unreleased)
 - [To 0.4.1](#to-041)
 - [To 0.4.0](#to-040)
 - [To 0.3.0](#to-030)
@@ -17,6 +18,13 @@
   - [D. Check the result](#d-check-the-result)
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
+
+## After 0.4.1 (unreleased)
+
+> [!IMPORTANT]
+> **A department must be created with `init-admin` before anything else uses it.** Until now a request naming a new department created it; now it is refused (a wrong-key 401 on the data plane, `valid: false` at Panel sign-in, 404 `unknown_department` elsewhere). Departments that already exist are not affected. If a Panel, script or client sends a department id that was never initialized, run `init-admin` for it after upgrading ([COLLABORATION §13](COLLABORATION.md#13-departments-and-storage)):
+>
+> `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <department>" -H "content-type: application/json" -d '{"username":"admin"}'`
 
 ## To 0.4.1
 

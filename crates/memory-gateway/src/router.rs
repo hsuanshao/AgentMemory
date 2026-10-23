@@ -62,14 +62,15 @@ async fn known_department(
     path: &str,
     unknown: fn(&Ctx) -> ApiError,
 ) -> Result<(), ApiError> {
-    if matches!(
+    let department = ctx.department()?;
+    // Asked even where it does not refuse: the answer also clears a stale
+    // view of a department another replica destroyed.
+    let exists = department_exists(s, ctx, &department).await?;
+    let exempt = matches!(
         path,
         "/v3/internal/meta/user/init-admin" | "/v3/meta/auth/verify"
-    ) {
-        return Ok(());
-    }
-    let department = ctx.department()?;
-    if department_exists(s, ctx, &department).await? {
+    );
+    if exists || exempt {
         Ok(())
     } else {
         Err(unknown(ctx))

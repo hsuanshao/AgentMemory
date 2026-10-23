@@ -4,6 +4,7 @@
 
 ## 目錄
 
+- [0.4.1 之後（尚未發布）](#041-之後尚未發布)
 - [升級到 0.4.1](#升級到-041)
 - [升級到 0.4.0](#升級到-040)
 - [升級到 0.3.0](#升級到-030)
@@ -17,6 +18,13 @@
   - [D. 確認結果](#d-確認結果)
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
+
+## 0.4.1 之後（尚未發布）
+
+> [!IMPORTANT]
+> **部門必須先用 `init-admin` 建立，之後才能使用。** 以前對新的部門名稱發請求就會建立它；現在會被拒絕（資料面回與 user key 錯誤相同的 401，Panel 登入回 `valid: false`，其他路由回 404 `unknown_department`）。已經存在的部門不受影響。如果 Panel、腳本或 client 送出的部門 ID 從沒初始化過，升級後請先對它執行 `init-admin`（[COLLABORATION §13](COLLABORATION.zh-tw.md#13-部門與儲存)）：
+>
+> `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <部門>" -H "content-type: application/json" -d '{"username":"admin"}'`
 
 ## 升級到 0.4.1
 
