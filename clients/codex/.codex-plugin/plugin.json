@@ -1,6 +1,6 @@
 {
   "name": "agent-memory",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Recall and capture for a self-hosted Agent Memory server (needs the `amem` binary on PATH and `amem login`).",
   "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json"

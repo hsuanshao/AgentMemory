@@ -95,7 +95,7 @@ Users who are not admins can sign in to the Panel with their own key and browse 
 `amem` is a single binary (`crates/memory-client`). Each [release](https://github.com/hsuanshao/AgentMemory/releases) from 0.2.0 on ships it prebuilt for Linux (x86_64 and arm64, statically linked) and macOS (Apple silicon and Intel):
 
 ```bash
-VERSION=0.4.0
+VERSION=0.4.1
 PLATFORM=linux-x86_64   # or linux-arm64, macos-arm64, macos-x86_64
 BASE=https://github.com/hsuanshao/AgentMemory/releases/download/v$VERSION
 curl -fsSLO "$BASE/amem-$VERSION-$PLATFORM.tar.gz"
@@ -114,7 +114,7 @@ Or build it with a Rust toolchain:
 cargo install --path crates/memory-client
 
 # or straight from git
-cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.4.0 memory-client
+cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.4.1 memory-client
 ```
 
 Make sure the directory holding `amem` (`~/.local/bin` above, `~/.cargo/bin` for `cargo install`) is on the `PATH` that your agent tools see. Desktop apps sometimes start with a shorter `PATH` than your shell. On macOS, a file downloaded with a browser rather than `curl` is quarantined; clear it with `xattr -d com.apple.quarantine ~/.local/bin/amem`.

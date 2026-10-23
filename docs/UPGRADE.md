@@ -4,7 +4,7 @@
 
 ## Contents
 
-- [After 0.4.0 (unreleased)](#after-040-unreleased)
+- [To 0.4.1](#to-041)
 - [To 0.4.0](#to-040)
 - [To 0.3.0](#to-030)
 - [Within 0.1.1 – 0.2.x](#within-011--02x)
@@ -18,9 +18,10 @@
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
 
-## After 0.4.0 (unreleased)
+## To 0.4.1
 
 ```bash
+git fetch --tags && git checkout v0.4.1
 ./upgrade.sh
 ```
 

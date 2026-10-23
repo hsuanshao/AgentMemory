@@ -6,8 +6,10 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-23
+
 ### Added
-- memory-core refuses to start on data written by a newer version (SQLite `user_version`, Postgres `schema_migrations`, Redis `schema_version`), with an error that says to run the newer version or restore the backup. Going back to 0.4.0 after this upgrade needs the backup restored ([UPGRADE](docs/UPGRADE.md#after-040-unreleased)).
+- memory-core refuses to start on data written by a newer version (SQLite `user_version`, Postgres `schema_migrations`, Redis `schema_version`), with an error that says to run the newer version or restore the backup. Going back to 0.4.0 after this upgrade needs the backup restored ([UPGRADE](docs/UPGRADE.md#to-041)).
 
 ### Changed
 - **Scenes (L2) and personas (L3) are stored as append-only versions** (`scenes`, `scene_versions`, `persona_versions`) instead of rewritten files. An L2 update, a merge or `/v3/scenario/rm` adds a version and never deletes one. Each scene has a fixed id; a merge records the scenes it absorbed and retires them, so merged and removed scenes stay readable with `version`. The key fields (name, summary, heat, how the version came to be, author) are columns, the body stays markdown, and other attributes are kept as they are. Schema migration 3 imports `profile_files` at startup and keeps the table.
@@ -101,7 +103,8 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 First public release: memory-core, the L0→L3 distillation pipeline, hybrid recall, the metadata plane, the Monitor Panel, `amem` with plugins for Claude Code, Codex, Antigravity and Hermes, and `install.sh`. Clients authenticate with per-user keys.
 
-[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
 [0.4.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.0
 [0.3.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.2
 [0.3.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.1

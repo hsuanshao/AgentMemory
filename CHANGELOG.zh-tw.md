@@ -6,8 +6,10 @@
 
 ## [未發布]
 
+## [0.4.1] - 2026-10-23
+
 ### 新增
-- memory-core 遇到由更新版本寫入的資料（SQLite `user_version`、Postgres `schema_migrations`、Redis `schema_version`）時拒絕啟動，錯誤訊息會提示改跑新版本或還原備份。這次升級後要退回 0.4.0，必須還原備份（[UPGRADE](docs/UPGRADE.zh-tw.md#040-之後未發布)）。
+- memory-core 遇到由更新版本寫入的資料（SQLite `user_version`、Postgres `schema_migrations`、Redis `schema_version`）時拒絕啟動，錯誤訊息會提示改跑新版本或還原備份。這次升級後要退回 0.4.0，必須還原備份（[UPGRADE](docs/UPGRADE.zh-tw.md#升級到-041)）。
 
 ### 變更
 - **場景（L2）和 persona（L3）改成只追加的版本儲存**（`scenes`、`scene_versions`、`persona_versions`），不再覆寫檔案。L2 更新、合併或 `/v3/scenario/rm` 都會新增一個版本，不會刪除任何版本。每個場景有固定的 id；合併會記錄它併入了哪些場景，並把那些場景標為退役，所以被合併或移除的場景仍可以用 `version` 讀取。關鍵欄位（名稱、摘要、熱度、版本的由來、作者）是資料表欄位，內文維持 markdown，其他屬性原樣保留。schema 遷移 3 會在啟動時匯入 `profile_files`，並保留這張表。
@@ -101,7 +103,8 @@
 
 第一個公開版本：memory-core、L0→L3 蒸餾管線、混合召回、metadata 平面、Monitor Panel、`amem` 以及 Claude Code、Codex、Antigravity、Hermes 的 plugin，還有 `install.sh`。client 使用每位使用者各自的 key 驗證。
 
-[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.0...HEAD
+[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
 [0.4.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.0
 [0.3.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.2
 [0.3.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.1
