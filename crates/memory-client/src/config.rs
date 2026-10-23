@@ -240,8 +240,12 @@ mod tests {
     }
 
     #[test]
-    fn system_context_every_parses_or_defaults_to_on_change() {
-        assert_eq!(Config::default().system_context_every(), 0);
+    fn system_context_every_parses_or_defaults_to_twenty() {
+        assert_eq!(Config::default().system_context_every(), 20);
+        let c = Config::merge(None, |k| {
+            (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| "0".into())
+        });
+        assert_eq!(c.system_context_every(), 0);
         let c = Config::merge(None, |k| {
             (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| " 3 ".into())
         });
@@ -249,7 +253,7 @@ mod tests {
         let c = Config::merge(None, |k| {
             (k == "AMEM_SYSTEM_CONTEXT_EVERY").then(|| "often".into())
         });
-        assert_eq!(c.system_context_every(), 0);
+        assert_eq!(c.system_context_every(), 20);
         assert!(!c.missing().contains(&"system_context_every"));
     }
 

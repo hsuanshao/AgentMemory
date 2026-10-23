@@ -244,11 +244,16 @@ pub fn claude_code_user_prompt_submit() {
         }
     }
     if let Some(c) = &cursor {
-        c.save();
+        save_system_context(c);
     }
     if !context.is_empty() {
         println!("{}", hook_context("UserPromptSubmit", &context));
     }
+}
+
+/// Writes the prompt's decision to the cursor file.
+fn save_system_context(decided: &Cursor) {
+    decided.save();
 }
 
 /// The memories, then the fixed part when it is due.
@@ -567,6 +572,24 @@ mod tests {
         let mut again = Cursor::at(path);
         assert!(!system_context_due(&mut again.state, "persona", 0));
         assert!(again.state["tail"].is_null());
+    }
+
+    #[test]
+    fn prompt_keeps_what_stop_recorded_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        let mut prompt = Cursor::at(path.clone());
+        assert!(system_context_due(&mut prompt.state, "persona", 0));
+        // Stop finishes while the prompt is still deciding.
+        let mut stop = Cursor::at(path.clone());
+        record_stop(&mut stop.state, 7, json!("done"));
+        stop.save();
+
+        save_system_context(&prompt);
+        let mut after = Cursor::at(path);
+        assert_eq!(after.state["line"], 7);
+        assert_eq!(after.state["tail"], "done");
+        assert!(!system_context_due(&mut after.state, "persona", 0));
     }
 
     #[test]
