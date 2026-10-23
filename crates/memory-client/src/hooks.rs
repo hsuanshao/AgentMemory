@@ -78,11 +78,18 @@ struct Cursor {
 }
 
 impl Cursor {
-    fn open(host: &str, session: &str) -> Self {
-        let path = data_dir()
+    fn path(host: &str, session: &str) -> PathBuf {
+        data_dir()
             .join("state")
             .join(host)
-            .join(format!("{}.json", safe_name(session)));
+            .join(format!("{}.json", safe_name(session)))
+    }
+
+    fn open(host: &str, session: &str) -> Self {
+        Self::at(Self::path(host, session))
+    }
+
+    fn at(path: PathBuf) -> Self {
         let state = std::fs::read(&path)
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
@@ -278,8 +285,16 @@ pub fn claude_code_stop() {
         log("claude-code stop: transcript not readable");
         return;
     };
-    let lines = complete_lines(&text);
-    let mut cursor = Cursor::open("claude-code", session);
+    let cursor = Cursor::path("claude-code", session);
+    claude_code_stop_at(&text, &input, cursor, |msgs| {
+        deliver("claude-code", session, msgs)
+    });
+}
+
+/// The Stop above, with the cursor file and the delivery pluggable.
+fn claude_code_stop_at(text: &str, input: &Value, cursor: PathBuf, deliver: impl FnOnce(Vec<Msg>)) {
+    let lines = complete_lines(text);
+    let mut cursor = Cursor::at(cursor);
     let mut from = cursor.state["line"].as_u64().unwrap_or(0) as usize;
     if from > lines.len() {
         from = 0;
@@ -330,13 +345,10 @@ pub fn claude_code_stop() {
         }
     }
 
-    deliver("claude-code", session, msgs);
-    // A UserPromptSubmit that ran during the capture may have written the
-    // system-context keys: keep theirs, not the ones read before.
-    let fresh = Cursor::open("claude-code", session);
-    for key in [SYSTEM_CONTEXT_HASH, SYSTEM_CONTEXT_AGE] {
-        cursor.state[key] = fresh.state[key].clone();
-    }
+    deliver(msgs);
+    // Re-read before writing: a UserPromptSubmit that ran during the
+    // capture may have changed the system-context keys, and Stop owns only
+    // `line` and `tail`.
     cursor.state = json!({"line": lines.len(), "tail": tail});
     cursor.save();
 }
@@ -500,6 +512,41 @@ mod tests {
         assert_eq!(compose_context("m", "s", false), "m");
         assert_eq!(compose_context("", "s", true), "s");
         assert_eq!(compose_context("", "s", false), "");
+    }
+
+    /// prompt → Stop → prompt: the Stop entry point must not forget what the
+    /// prompt sent, even when a prompt writes the cursor during the capture.
+    #[test]
+    fn stop_entry_point_keeps_what_the_prompt_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        let mut prompt = Cursor::at(path.clone());
+        assert!(system_context_due(&mut prompt.state, "persona", 0));
+        prompt.save();
+
+        let input = json!({"session_id": "s", "last_assistant_message": "done"});
+        let concurrent = path.clone();
+        claude_code_stop_at("", &input, path.clone(), move |msgs| {
+            assert_eq!(msgs.len(), 1);
+            // A UserPromptSubmit lands while the capture is in flight.
+            let mut c = Cursor::at(concurrent);
+            assert!(!system_context_due(&mut c.state, "persona", 0));
+            c.save();
+        });
+
+        let mut after = Cursor::at(path.clone());
+        assert_eq!(after.state["line"], 0);
+        assert_eq!(after.state["tail"], "done");
+        assert_eq!(after.state[SYSTEM_CONTEXT_AGE], 1);
+        assert!(!system_context_due(&mut after.state, "persona", 0));
+
+        // A second Stop with nothing new keeps them too.
+        claude_code_stop_at("", &json!({"session_id": "s"}), path.clone(), |msgs| {
+            assert!(msgs.is_empty());
+        });
+        let mut again = Cursor::at(path);
+        assert!(!system_context_due(&mut again.state, "persona", 0));
+        assert!(again.state["tail"].is_null());
     }
 
     #[test]
