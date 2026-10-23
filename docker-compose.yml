@@ -60,6 +60,10 @@ services:
       # only these) X-Forwarded-For names the client.
       AGENT_MEMORY_TRUSTED_PROXIES: ${AGENT_MEMORY_TRUSTED_PROXIES:-memory-panel,caddy}
       AGENT_MEMORY_AUDIT_RETENTION_DAYS: ${AGENT_MEMORY_AUDIT_RETENTION_DAYS:-}
+      # Refused-key limits (0 turns delays / locks off); empty keeps 5 / 20 / 15.
+      AGENT_MEMORY_THROTTLE_DELAY_AFTER: ${AGENT_MEMORY_THROTTLE_DELAY_AFTER:-}
+      AGENT_MEMORY_THROTTLE_LOCK_AFTER: ${AGENT_MEMORY_THROTTLE_LOCK_AFTER:-}
+      AGENT_MEMORY_THROTTLE_LOCK_MINUTES: ${AGENT_MEMORY_THROTTLE_LOCK_MINUTES:-}
     depends_on:
       # Each dependency only applies when its profile is enabled.
       postgres:

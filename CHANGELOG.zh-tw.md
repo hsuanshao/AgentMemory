@@ -10,7 +10,7 @@
 
 ### 安全性
 - **User key 改存 SHA-256 雜湊。** Schema 遷移 6 原地轉換已儲存的 key；現有的 key 照常可用，Panel 顯示最後四個字元。呼叫端自己指定的 key（`init-admin`、`user/create-with-key`）必須是 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`（[UPGRADE](docs/UPGRADE.zh-tw.md#user-key-改存雜湊)）。
-- **被拒絕的憑證依 client 位址節流**：15 分鐘內從第 5 次起，每次拒絕會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘（429 `too_many_failures`、`Retry-After`）。只採信 `server.trustedProxies`（`AGENT_MEMORY_TRUSTED_PROXIES`，新增；Compose 預設信任 Panel 與 Caddy）送來的 `X-Forwarded-For`。門檻：`server.throttle`。使用 Redis 協調時計數由所有 replica 共用（[UPGRADE](docs/UPGRADE.zh-tw.md#錯誤的-key-會被節流並記錄)）。
+- **被拒絕的憑證依 client 位址節流**：15 分鐘內從第 5 次起，每次拒絕會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘（429 `too_many_failures`、`Retry-After`）。只採信 `server.trustedProxies`（`AGENT_MEMORY_TRUSTED_PROXIES`，新增；Compose 預設信任 Panel 與 Caddy）送來的 `X-Forwarded-For`。門檻：`server.throttle` 或 `AGENT_MEMORY_THROTTLE_{DELAY_AFTER,LOCK_AFTER,LOCK_MINUTES}`（設 0 關閉，適用所有 client 都顯示同一個位址的部署）。使用 Redis 協調時計數由所有 replica 共用（[UPGRADE](docs/UPGRADE.zh-tw.md#錯誤的-key-會被節流並記錄)）。
 - **憑證稽核紀錄**：拒絕、封鎖、以及用伺服器 API key 發出的 key（`init-admin`、`internal/upgrade`），記錄時間、位址、轉送鏈、user agent、部門、路徑與 key 雜湊的開頭。跨部門保存（`audit.db` / `agent_memory.audit_events`），保留 90 天（`AGENT_MEMORY_AUDIT_RETENTION_DAYS`）。系統管理員在 Panel → Metadata → Audit（`/v3/audit/list`）看自己部門的；營運者用 `/v3/internal/audit/list` 看全部。
 - **`internal/upgrade` 只在有 legacy 資料要搬時才發 key**，或設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`（新增）以找回遺失的管理者 key。
 - **蒸餾模型的輸入改成 JSON 資料**：L1 萃取與去重、L2 場景、L3 persona 都和 skill 萃取一樣，對話內容無法結束資料、也無法假裝成指令（[UPGRADE](docs/UPGRADE.zh-tw.md#蒸餾模型的輸入改成-json-資料)）。

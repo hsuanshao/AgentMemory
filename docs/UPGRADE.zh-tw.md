@@ -36,7 +36,7 @@ git fetch --tags && git checkout v0.4.3
 | --- | --- |
 | 其他機器上的 client 會連 memory-core 或 Panel | 升級不會改變什麼（`.env` 會加上 `BIND_ADDR=0.0.0.0`）；建議改用 HTTPS（[網路](#連接埠聽在哪裡)） |
 | memory-core 前面除了內建的 Panel 和 Caddy 之外，還有別的反向代理 | 把它加進 `AGENT_MEMORY_TRUSTED_PROXIES`，否則所有 client 都會被當成那台代理的位址（[錯誤的 key](#錯誤的-key-會被節流並記錄)） |
-| 很多人共用同一個對外位址（NAT、VPN 閘道） | 要知道 15 分鐘內 20 次錯誤的 key 會讓這個位址被擋 15 分鐘；`server.throttle` 可以調整（[錯誤的 key](#錯誤的-key-會被節流並記錄)） |
+| 很多人共用同一個對外位址（NAT、VPN 閘道），或 Docker 讓所有 client 看起來是同一個位址（rootless Docker） | 15 分鐘內 20 次錯誤的 key 會讓這個位址、也就是它後面的所有人被擋 15 分鐘：升級後請檢查位址，並調高或關閉封鎖（`AGENT_MEMORY_THROTTLE_LOCK_AFTER`）（[錯誤的 key](#錯誤的-key-會被節流並記錄)） |
 | 有腳本用 `internal/upgrade` 加 `issue_key` 來拿新的管理者 key | 除非有 legacy 資料要搬，或設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`，否則會被拒絕（[key](#user-key-改存雜湊)） |
 | 有腳本用自己指定的 key（`user_key`）建立使用者或第一位管理者 | 改用 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`（[key](#user-key-改存雜湊)） |
 | 某個部門的自訂記憶 prompt（Panel → Prompts）提到輸入的舊標籤，例如 `[New messages to extract]` | 改成指稱 JSON 欄位（[蒸餾輸入](#蒸餾模型的輸入改成-json-資料)） |
@@ -51,7 +51,9 @@ Migration 6 把每一把儲存的 user key 換成它的 SHA-256 雜湊，並保�
 
 ### 錯誤的 key 會被節流並記錄
 
-memory-core 會依 client 位址計算被拒絕的憑證（錯誤或已撤銷的 user key、錯誤的伺服器 API key、回答 `valid: false` 的 `meta/auth/verify`）。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘：它的每個請求都會收到 429 `too_many_failures` 和 `Retry-After`。成功的請求不會變慢。門檻在設定檔的 `server.throttle`（[memory-core.example.yaml](../config/memory-core.example.yaml)）。使用 Redis 協調時，所有 replica 共用計數，刪除 `<key_prefix>:auth:locked:<位址>`（以及 `:auth:failures:<位址>`）可以提早解除封鎖；使用 local 協調時計數放在記憶體裡，重新啟動 memory-core 會解除所有封鎖。
+memory-core 會依 client 位址計算被拒絕的憑證（錯誤或已撤銷的 user key、錯誤的伺服器 API key、回答 `valid: false` 的 `meta/auth/verify`）。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘：它的每個請求都會收到 429 `too_many_failures` 和 `Retry-After`。成功的請求不會變慢。門檻在設定檔的 `server.throttle`（[memory-core.example.yaml](../config/memory-core.example.yaml)），或用 `AGENT_MEMORY_THROTTLE_DELAY_AFTER`、`AGENT_MEMORY_THROTTLE_LOCK_AFTER`、`AGENT_MEMORY_THROTTLE_LOCK_MINUTES` 設定；設 0 表示關閉延遲或封鎖。
+
+**確認 client 分得開。** 升級後到 Panel → Metadata → Audit 看位址（在 Panel 打錯一次 key 就會出現一筆）。如果所有 client 都顯示同一個內部位址，例如 Docker 網路的 gateway `172.x.0.1`，memory-core 就分不出誰是誰：rootless Docker 預設的連接埠轉送會藏起 client 的位址，前面的 NAT 也會。這時一個人打錯就會讓所有人被擋。請讓看得到真實位址的代理把位址轉送過來（主機上的反向代理，並列入 `AGENT_MEMORY_TRUSTED_PROXIES`；rootless Docker 改用 `slirp4netns` 連接埠驅動也能保留位址），或設 `AGENT_MEMORY_THROTTLE_LOCK_AFTER=0`，只靠延遲與稽核紀錄。使用 Redis 協調時，所有 replica 共用計數，刪除 `<key_prefix>:auth:locked:<位址>`（以及 `:auth:failures:<位址>`）可以提早解除封鎖；使用 local 協調時計數放在記憶體裡，重新啟動 memory-core 會解除所有封鎖。
 
 位址是連線本身的位址；如果連線來自可信任的代理，則是該代理在 `X-Forwarded-For` 裡指出的 client。Compose 預設信任 Panel 和 Caddy（`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`），所以在 Panel 打錯的 key 算在瀏覽器的位址上，而不是 Panel 的。**如果前面還有別的反向代理**（nginx、負載平衡器），請加上它的位址或網段，例如 `AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy,10.0.0.0/8`；否則所有 client 共用代理的位址，一個人打錯就會讓所有人被擋。絕對不要列入 client 能直接連過來的位址：從那裡連線的人可以冒稱任何 client。
 

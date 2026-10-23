@@ -205,7 +205,8 @@ impl Default for ServerConfig {
 
 /// From the `delayAfter`-th failure within `windowMinutes`, each refusal
 /// waits longer (250 ms, doubling up to 5 s); the `lockAfter`-th refuses
-/// the address outright for `lockMinutes`.
+/// the address outright for `lockMinutes`. 0 turns delays or locks off,
+/// e.g. where every client shows the same address.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ThrottleConfig {
@@ -708,6 +709,15 @@ impl Config {
         }
         if let Some(days) = env_number("AGENT_MEMORY_AUDIT_RETENTION_DAYS", &mut self.env_errors) {
             self.server.audit_retention_days = days;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_THROTTLE_DELAY_AFTER", &mut self.env_errors) {
+            self.server.throttle.delay_after = n;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_THROTTLE_LOCK_AFTER", &mut self.env_errors) {
+            self.server.throttle.lock_after = n;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_THROTTLE_LOCK_MINUTES", &mut self.env_errors) {
+            self.server.throttle.lock_minutes = n;
         }
         if let Some(allow) = env("AGENT_MEMORY_ALLOW_KEY_RECOVERY") {
             self.server.allow_key_recovery = matches!(allow.as_str(), "1" | "true" | "on" | "yes");

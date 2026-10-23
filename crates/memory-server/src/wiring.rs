@@ -439,11 +439,13 @@ pub async fn build(config: &Config) -> Result<App> {
     Ok(App { state, background })
 }
 
+/// 0 turns delays or locks off.
 fn throttle_policy(t: &ThrottleConfig) -> ThrottlePolicy {
+    let never = |n: u32| if n == 0 { u32::MAX } else { n };
     ThrottlePolicy {
         window: Duration::from_secs(t.window_minutes.max(1) * 60),
-        delay_after: t.delay_after.max(1),
-        lock_after: t.lock_after.max(1),
+        delay_after: never(t.delay_after),
+        lock_after: never(t.lock_after),
         lock_for: Duration::from_secs(t.lock_minutes.max(1) * 60),
         ..ThrottlePolicy::default()
     }
@@ -475,5 +477,23 @@ impl ConversationObserver for LateObserver {
             o.on_conversation(department, scope, session_id, rounds)
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_turns_throttling_off() {
+        let off = throttle_policy(&ThrottleConfig {
+            delay_after: 0,
+            lock_after: 0,
+            ..ThrottleConfig::default()
+        });
+        assert_eq!(off.delay(1_000_000), Duration::ZERO);
+        assert_eq!(off.lock_after, u32::MAX);
+        let on = throttle_policy(&ThrottleConfig::default());
+        assert_eq!((on.delay_after, on.lock_after), (5, 20));
     }
 }
