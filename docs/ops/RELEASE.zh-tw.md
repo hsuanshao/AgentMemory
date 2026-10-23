@@ -70,7 +70,7 @@
 | --- | --- |
 | fmt | `cargo fmt --all -- --check` |
 | clippy | `cargo clippy --workspace --all-targets --locked -- -D warnings` |
-| test | `cargo test --workspace --locked`，搭配 `pgvector/pgvector:pg16` 和 `redis:8.4.0` service 容器與 `AGENT_MEMORY_TEST_*_URL` 環境變數，所以 SQLite、Postgres、Redis 的測試都會跑 |
+| test | `cargo test --workspace --locked`，搭配 `pgvector/pgvector:pg17` 和 `redis:8.4.0` service 容器與 `AGENT_MEMORY_TEST_*_URL` 環境變數，所以 SQLite、Postgres、Redis 的測試都會跑 |
 | msrv | 用 Rust 1.88 執行 `cargo check --workspace --all-targets --locked` |
 | panel | Node 22：`npm ci`、typecheck、test、build |
 | scripts | 用 shellcheck v0.10.0 檢查每支腳本；確認 Hermes plugin 能編譯 |

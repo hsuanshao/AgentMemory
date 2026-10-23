@@ -102,7 +102,7 @@ Clients (agents on any machine) authenticate with their **user key only**; they 
 ```bash
 cargo test --workspace                 # unit + integration + end-to-end tests (Postgres/Redis tests skipped by default)
 # Run integration tests against real Postgres and Redis:
-docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg16
+docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg17
 docker run -d --rm --name amem-redis -p 26379:6379 redis:8.4.0
 AGENT_MEMORY_TEST_POSTGRES_URL=postgres://postgres:test@127.0.0.1:25432/postgres \
 AGENT_MEMORY_TEST_REDIS_URL=redis://127.0.0.1:26379 cargo test --workspace

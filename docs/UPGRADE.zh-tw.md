@@ -4,7 +4,7 @@
 
 ## 目錄
 
-- [0.4.1 之後（尚未發布）](#041-之後尚未發布)
+- [升級到 0.4.2](#升級到-042)
 - [升級到 0.4.1](#升級到-041)
 - [升級到 0.4.0](#升級到-040)
 - [升級到 0.3.0](#升級到-030)
@@ -19,16 +19,49 @@
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
 
-## 0.4.1 之後（尚未發布）
+## 升級到 0.4.2
 
-> [!IMPORTANT]
-> **部門必須先用 `init-admin` 建立，之後才能使用。** 以前對新的部門名稱發請求就會建立它；現在會被拒絕（資料面與部門路由回與 user key 錯誤相同的 401，Panel 登入回 `valid: false`，營運者路由回 404 `unknown_department`）。已經存在的部門不受影響。如果 Panel、腳本或 client 送出的部門 ID 從沒初始化過，升級後請先對它執行 `init-admin`（[COLLABORATION §13](COLLABORATION.zh-tw.md#13-部門與儲存)）：
->
-> `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <部門>" -H "content-type: application/json" -d '{"username":"admin"}'`
+```bash
+git fetch --tags && git checkout v0.4.2
+./upgrade.sh
+```
+
+`upgrade.sh` 會先備份，在替換任何東西之前檢查設定（`check-config`）；這套安裝若從沒建立過管理者，也會自動建立。
+
+> [!WARNING]
+> **退回 0.4.1 必須還原備份**（[E. 還原](#e-還原)）。memory-core 啟動時會執行 schema 遷移 4（沒有 embedding 的 atom 索引）與遷移 5（部門遮罩規則表）。0.4.1 會拒絕 schema 版本比它新的資料，而這一版寫入的內容也不會被帶回去。
+
+**升級前先確認。** 這一版收緊了存取權限，部分部署需要多做一步。每一列都連到下面對應的段落。
+
+| 如果… | 就要… |
+| --- | --- |
+| Panel、腳本或 client 送出的部門 ID 從沒執行過 `init-admin` | 升級後先對它執行 `init-admin`（[部門](#部門只由-init-admin-建立)） |
+| 腳本或監控只帶伺服器 API key 呼叫 `meta/*`、`pipeline/*`、`stats/overview` 等路由 | 改給它系統管理員的 user key，或改用 `internal/…` 路由（[伺服器 API key](#伺服器-api-key-不再能開啟部門路由)） |
+| Panel 不是用 Compose 執行，或 override 替它設定了 `CORE_API_KEY` | 移除 `CORE_API_KEY`（[伺服器 API key](#伺服器-api-key-不再能開啟部門路由)） |
+| 伺服器 API key 曾經交給部門管理員 | 升級後更換它（[伺服器 API key](#伺服器-api-key-不再能開啟部門路由)） |
+| 蒸餾用的 CLI 透過雲端供應商（Bedrock、Vertex AI、Azure）或 wrapper script 執行 | 把它需要的變數列在 `AGENT_MEMORY_LLM_CLI_PASS_ENV`（[CLI](#蒸餾用的-cli-不再繼承-memory-core-的環境變數)） |
+| 依賴萃取出的 skill 自動出現 | 到 Panel → Skills 核准，或設定 `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`（[skill](#萃取出的-skill-要先核准)） |
+| 每個人各有自己的 agent，但 agent 是 team 可見（預設） | 用 `/v3/meta/agent/update` 把每個 agent 設成 `"visibility": "private"`，只讓擁有者和 team admin 使用（[COLLABORATION §9](COLLABORATION.zh-tw.md#9-記憶請求的授權)） |
+| `.env` 裡有無法解析的數值型 `AGENT_MEMORY_*` 設定 | 修正它：memory-core 現在會因此停止啟動，`upgrade.sh` 會在替換任何東西之前回報 |
+
+### 部門只由 init-admin 建立
+
+對新的部門名稱發請求，不會再建立它，而是被拒絕：
+
+- 資料面與部門路由回 401，和 user key 錯誤時相同；
+- Panel 登入回 `valid: false`；
+- 營運者路由回 404 `unknown_department`。
+
+已經存在的部門不受影響。如果 Panel、腳本或 client 送出的部門 ID 從沒初始化過，升級後請先對它執行 `init-admin`（[COLLABORATION §13](COLLABORATION.zh-tw.md#13-部門與儲存)）：
+
+```bash
+curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
+  -H "x-memory-department-id: <部門>" -H "content-type: application/json" -d '{"username":"admin"}'
+```
+
 ### 伺服器 API key 不再能開啟部門路由
 
-> [!IMPORTANT]
-> **只帶 `Authorization: Bearer $AGENT_MEMORY_API_KEY` 呼叫 `meta/*`、`pipeline/*`、`stats/overview`、`memory-generation-log/*`、`memory-prompt/*`、`knowledge/*` 或 `chat-memory/clear` 的請求，升級後會得到 401。** 這些路由現在需要該部門使用者的 user key，伺服器 API key 不能代替使用者。這樣每個部門的管理只會留在該部門裡（[ARCHITECTURE](ARCHITECTURE.zh-tw.md#三個信任區)）。client（`amem` 與各 plugin）不受影響：它們本來就只用 user key。
+**只帶 `Authorization: Bearer $AGENT_MEMORY_API_KEY` 呼叫 `meta/*`、`pipeline/*`、`stats/overview`、`memory-generation-log/*`、`memory-prompt/*`、`knowledge/*` 或 `chat-memory/clear` 的請求，升級後會得到 401。** 這些路由現在需要該部門使用者的 user key，伺服器 API key 不能代替使用者。這樣每個部門的管理只會留在該部門裡（[ARCHITECTURE](ARCHITECTURE.zh-tw.md#三個信任區)）。client（`amem` 與各 plugin）不受影響：它們本來就只用 user key。
 
 | 路由 | 以前 | 從這一版起 |
 | --- | --- | --- |
@@ -61,13 +94,21 @@ curl -sS -X POST "$CORE/v3/pipeline/status" "${H_ADMIN[@]}" -d '{}'   # "code":0
 
 這項改動沒有寫入任何新資料，所以就這一點而言，退回前一版不需要還原備份。
 
+### 蒸餾用的 CLI 不再繼承 memory-core 的環境變數
+
+它只拿到 `PATH`、`HOME`、語系、憑證與 proxy 變數，以及自己的設定（claude 是 `ANTHROPIC_*`／`CLAUDE_*`，codex 是 `OPENAI_*`／`CODEX_*`，agy 是 `GEMINI_*`／`GOOGLE_*`）。依安裝說明登入的 claude、codex 和 agy 不受影響。若 CLI 會讀容器環境裡的其他變數，請把它列在 `AGENT_MEMORY_LLM_CLI_PASS_ENV`（[DISTILLATION §6](ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。**升級前請先確認**：CLI 若透過雲端供應商（claude 走 Bedrock：`AWS_*`；claude 走 Vertex AI：`CLOUD_ML_REGION`、`GOOGLE_APPLICATION_CREDENTIALS`；codex 走 Azure：`AZURE_OPENAI_*`），或 `llm.cli.command` 是 wrapper script，沒列出這些變數，升級後蒸餾就會失敗。
+
 ### 萃取出的 skill 要先核准
 
 skill 萃取不會再自己存下 skill。它建立或修改的內容會先成為提案，出現在 Panel 的 **Skills** 頁（以及 `skill/proposal/*`），等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效。不會遺失任何東西：升級後，新的萃取結果只是改成出現在那裡，而不是直接進入 skill 清單。但需要有人去看，否則不會有新的 skill。未決定的提案會在 30 天後過期（`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`，0 表示永不過期）。想維持舊行為的部署，請設定 `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`（`skill.extraction.requireApproval: false`）。不論是否需要核准，模型拿到的對話都是 JSON 資料，也只能修改提供給它看的、該 agent 的 skill（[ARCHITECTURE](ARCHITECTURE.zh-tw.md#4-記憶模型與蒸餾管線)）。
 
-### 其他改動
+### 這一版的其他改動
 
-**蒸餾用的 CLI 不再繼承 memory-core 的環境變數。** 它只拿到 `PATH`、`HOME`、語系、憑證與 proxy 變數，以及自己的設定（claude 是 `ANTHROPIC_*`／`CLAUDE_*`，codex 是 `OPENAI_*`／`CODEX_*`，agy 是 `GEMINI_*`／`GOOGLE_*`）。依安裝說明登入的 claude、codex 和 agy 不受影響。若 CLI 會讀容器環境裡的其他變數，請把它列在 `AGENT_MEMORY_LLM_CLI_PASS_ENV`（[DISTILLATION §6](ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。**升級前請先確認**：CLI 若透過雲端供應商（claude 走 Bedrock：`AWS_*`；claude 走 Vertex AI：`CLOUD_ML_REGION`、`GOOGLE_APPLICATION_CREDENTIALS`；codex 走 Azure：`AZURE_OPENAI_*`），或 `llm.cli.command` 是 wrapper script，沒列出這些變數，升級後蒸餾就會失敗。
+以下不需要額外處理，細節見 [CHANGELOG](../CHANGELOG.zh-tw.md#042---2026-10-24)。
+
+- **伺服器端會遮罩機密**，涵蓋每一條寫入路徑，支援多種語言，也依形狀判斷。升級前已存下的資料不會被改寫。部門的系統管理員可以加上自己的規則（Panel → Metadata → Redaction）。
+- **缺少的 embedding 會在之後補上。** 在 Postgres 上，遷移 4 會在每個部門升級後第一次使用時建立索引；`atoms` 表很大時，那第一個請求要等索引建好。
+- **召回輸出會把儲存的文字當作資料引用**；私人 agent 只有擁有者、team admin 和系統管理員能使用。
 
 ## 升級到 0.4.1
 

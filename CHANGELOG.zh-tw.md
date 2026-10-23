@@ -6,11 +6,15 @@
 
 ## [未發布]
 
+## [0.4.2] - 2026-10-24
+
+**升級前請先閱讀 [UPGRADE → 升級到 0.4.2](docs/UPGRADE.zh-tw.md#升級到-042)。** 這一版收緊了存取權限：部門只能由 `init-admin` 建立、伺服器 API key 不再能開啟部門路由、蒸餾用的 CLI 改用環境變數白名單、萃取出的 skill 要先核准。退回 0.4.1 必須還原備份（schema 遷移 4 與 5）。
+
 ### 安全性
 - **skill 萃取只提案，由人核准。** 模型拿到的封存對話是一個 JSON 陣列，裡面的文字（網頁、工具輸出）無法結束 transcript，也無法冒充指示；它只能修改提供給它看的、該 agent 的 skill；它建立或修改的內容會先成為提案，等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員在 Panel 的 Skills 頁或透過 `skill/proposal/{list,approve,reject}` 核准後才生效。核准時，若 skill 在提案之後已被修改，會拒絕套用。提案存下前會先遮罩，未決定的提案在 30 天後過期（`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`，新增）。`skill.extraction.requireApproval: false`（`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL`，新增）會像以前一樣直接套用（[UPGRADE](docs/UPGRADE.zh-tw.md#萃取出的-skill-要先核准)）。
 - **每個部門由自己的使用者管理；伺服器 API key 只給營運者。** `meta/*`、`pipeline/*`、`stats/overview` 與 `memory-generation-log/*` 需要該部門使用者的 user key，並依該使用者的角色判斷；`memory-prompt/*`、`knowledge/*` 與 `chat-memory/clear` 需要系統管理員的 user key。伺服器 API key 不再能開啟這些路由，只能用於 `internal/*` 與 `department/destroy`，以及新增的 `internal/pipeline/dead-letter/{list,redrive}`、`internal/memory-generation-log/{list,summary}`（`memory-server dead-letters`／`generations` 現在改用它們）。Panel 不再需要也不再送出 `CORE_API_KEY`（仍有設定時會記一則警告），`PANEL_REQUIRE_USER_KEY=false` 也不再能匿名存取，因為 Core 會要求 user key。**只帶伺服器 API key 呼叫這些路由的腳本會得到 401，需改用系統管理員的 user key**（[UPGRADE](docs/UPGRADE.zh-tw.md#伺服器-api-key-不再能開啟部門路由)、[ARCHITECTURE](docs/ARCHITECTURE.zh-tw.md#三個信任區)）。
-- **蒸餾用的 CLI 不再繼承 memory-core 的環境變數。** 它只拿到基本變數（`PATH`、`HOME`、語系、憑證、proxy）、正在使用的 CLI 自己的設定（`ANTHROPIC_*`／`CLAUDE_*`、`OPENAI_*`／`CODEX_*`、`GEMINI_*`／`GOOGLE_*`）、`llm.cli.env`，以及 `llm.cli.passEnv`（`AGENT_MEMORY_LLM_CLI_PASS_ENV`，新增）列出的變數。`AGENT_MEMORY_*`（API key、資料庫與 Redis 的 URL、LLM 與 embedding 的 key）永遠不會傳給它；`passEnv` 的項目若會比對到它們，memory-core 啟動時就會停止（[DISTILLATION §6](docs/ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。`llm.cli.env` 也不能設定 `AGENT_MEMORY_*`。若 CLI 依賴容器裡的其他變數，請把它列進去，特別是透過雲端供應商（Bedrock、Vertex AI、Azure）或經由 wrapper script 執行的 CLI（[UPGRADE](docs/UPGRADE.zh-tw.md#041-之後尚未發布)）。
-- **部門只由 `init-admin` 建立。** 對不存在的部門發出請求，不會再建立它的儲存空間（SQLite 資料庫或 Postgres schema）。資料面路由的回應和 user key 錯誤時相同，`meta/auth/verify` 回 `valid: false`，其他路由回 404 `unknown_department`（[COLLABORATION §13](docs/COLLABORATION.zh-tw.md#13-部門與儲存)）。安裝從未建立管理者時，`upgrade.sh` 和以前一樣會自動建立。**若部署會對從未初始化的部門發請求，升級後必須先對它執行 `init-admin`**（[UPGRADE](docs/UPGRADE.zh-tw.md#041-之後尚未發布)）。儲存層只開啟這樣建立的部門，背景工作也建不出部門：在 `department/destroy` 之前排入的 pipeline job，現在會被丟棄，不會再把部門重建成空的；`department/destroy` 也會刪除該部門的 dead letter；多台機器時，一台刪除的部門在其他台立刻就是不存在。
+- **蒸餾用的 CLI 不再繼承 memory-core 的環境變數。** 它只拿到基本變數（`PATH`、`HOME`、語系、憑證、proxy）、正在使用的 CLI 自己的設定（`ANTHROPIC_*`／`CLAUDE_*`、`OPENAI_*`／`CODEX_*`、`GEMINI_*`／`GOOGLE_*`）、`llm.cli.env`，以及 `llm.cli.passEnv`（`AGENT_MEMORY_LLM_CLI_PASS_ENV`，新增）列出的變數。`AGENT_MEMORY_*`（API key、資料庫與 Redis 的 URL、LLM 與 embedding 的 key）永遠不會傳給它；`passEnv` 的項目若會比對到它們，memory-core 啟動時就會停止（[DISTILLATION §6](docs/ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。`llm.cli.env` 也不能設定 `AGENT_MEMORY_*`。若 CLI 依賴容器裡的其他變數，請把它列進去，特別是透過雲端供應商（Bedrock、Vertex AI、Azure）或經由 wrapper script 執行的 CLI（[UPGRADE](docs/UPGRADE.zh-tw.md#蒸餾用的-cli-不再繼承-memory-core-的環境變數)）。
+- **部門只由 `init-admin` 建立。** 對不存在的部門發出請求，不會再建立它的儲存空間（SQLite 資料庫或 Postgres schema）。資料面與部門路由的回應和 user key 錯誤時相同，`meta/auth/verify` 回 `valid: false`，營運者路由回 404 `unknown_department`（[COLLABORATION §13](docs/COLLABORATION.zh-tw.md#13-部門與儲存)）。安裝從未建立管理者時，`upgrade.sh` 和以前一樣會自動建立。**若部署會對從未初始化的部門發請求，升級後必須先對它執行 `init-admin`**（[UPGRADE](docs/UPGRADE.zh-tw.md#部門只由-init-admin-建立)）。儲存層只開啟這樣建立的部門，背景工作也建不出部門：在 `department/destroy` 之前排入的 pipeline job，現在會被丟棄，不會再把部門重建成空的；`department/destroy` 也會刪除該部門的 dead letter；多台機器時，一台刪除的部門在其他台立刻就是不存在。
 - **召回輸出會引用儲存的內容，而不是原樣嵌入。** 各整合注入的 persona、scene 導覽和召回的記憶裡，可能開始一個標籤的 `<` 會寫成 `&lt;`，中間夾了空白或不可見格式字元也一樣（`x<1` 維持原樣），每個區塊也標明它是資料、不是指令。透過 API 新建的 scene 路徑限定為以 `/` 分隔、由字母、數字、`-`、`_`、`.` 組成的片段，summary 最多 500 字元；已經存在的 scene 保留原名稱，仍然可以更新（[ARCHITECTURE 第 5 節](docs/ARCHITECTURE.zh-tw.md#5-召回)）。
 - **私人 agent 只屬於它的 owner。** 記憶 API 現在會套用 agent 的可見性：私人 agent（它的記憶、場景、persona 和 skills，包括整個 team 範圍的 skill 列表與搜尋）只有 owner、team 的管理者和系統管理者能使用，已封存的 agent 一律拒絕。agent 會維持建立時的可見性（預設 `team`）：每人一個 agent 的團隊，應該用 `/v3/meta/agent/update` 把每個 agent 設成 `"visibility": "private"`（[COLLABORATION 第 9 節](docs/COLLABORATION.zh-tw.md#9-記憶請求的授權)）。
 - **memory-core 在每條寫入路徑上遮罩機密**，儲存或蒸餾前就先處理：對話、原始 session 紀錄、skill 緩衝與 skill、atom（含 L1 模型寫出的內容），以及場景和 persona。之前只有 `amem` client 會遮罩，直接寫進 HTTP API 的文字會原樣存下，模型也可能把機密帶進 L1 記憶（#57）。
@@ -26,6 +30,7 @@
 - embedding 逾時、同時進行的 embedding 請求數（`memory.embedding.maxConcurrency`，預設 4，新增）、worker 並行數和 CLI 模型並行數，都可以用環境變數設定：`AGENT_MEMORY_EMBEDDING_TIMEOUT_MS`、`AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY`、`AGENT_MEMORY_WORKER_CONCURRENCY`、`AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY`（#57）。
 
 ### 變更
+- CI 與測試說明改用 PostgreSQL 17（`pgvector/pgvector:pg17`）跑 Postgres 測試。
 - `amem` 對 Claude Code session 只在 persona 和 scene 導覽的內容和這個 session 上次收到的不同時才送，`SessionStart`（啟動、resume、`/clear`、fork、壓縮）之後再送一次；相關記憶仍然每個 prompt 都送。在一個約 20 個 agent 的部署裡，這部分占全部注入 context 的三分之二，而且每 4 個 prompt 有 3 個是原封不動重送。預設另外每 20 個 prompt 重送一次，以涵蓋沒有 `SessionStart` 的壓縮或 `/rewind`；`AMEM_SYSTEM_CONTEXT_EVERY`（或 `client.json` 的 `system_context_every`）可設成別的 `N`、`0` 只在變動時送、`1` 恢復原本行為。Claude Code plugin 為此多註冊一個 `SessionStart` hook；手寫的 `settings.json` 要自行加上 `amem hook claude-code session-start`。寫入 session 狀態的 hook 會對旁邊的 `.lock` 檔取得 `flock`，彼此不會互相覆蓋；hook 最多等一秒，拿不到就照樣寫入。Codex 和 Antigravity 不變（#39）。
 
 ### 修正
@@ -128,7 +133,8 @@
 
 第一個公開版本：memory-core、L0→L3 蒸餾管線、混合召回、metadata 平面、Monitor Panel、`amem` 以及 Claude Code、Codex、Antigravity、Hermes 的 plugin，還有 `install.sh`。client 使用每位使用者各自的 key 驗證。
 
-[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.1...HEAD
+[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
 [0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
 [0.4.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.0
 [0.3.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.2

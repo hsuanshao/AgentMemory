@@ -1,7 +1,7 @@
 {
   "name": "agent-memory",
   "displayName": "Agent Memory",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Long-term memory from a self-hosted Agent Memory server: recalls relevant memories before each prompt and captures each finished turn (tool calls included, secrets redacted).",
   "author": { "name": "William Chang" },
   "license": "MIT",

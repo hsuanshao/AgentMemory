@@ -31,7 +31,7 @@ cargo test --workspace --locked
 These run only when their URL is set, so a plain `cargo test` does **not** exercise PostgreSQL or Redis. Any change to `crates/memory-infrastructure/src/postgres/`, `src/redis/`, `src/sqlite_to_postgres.rs` or SQL in general needs this run:
 
 ```bash
-docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg16
+docker run -d --rm --name amem-pg -e POSTGRES_PASSWORD=test -p 25432:5432 pgvector/pgvector:pg17
 docker run -d --rm --name amem-redis -p 26379:6379 redis:8.4.0
 until docker exec amem-pg pg_isready -U postgres -q; do sleep 1; done
 
