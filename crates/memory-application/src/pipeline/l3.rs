@@ -116,6 +116,9 @@ fn clean_markdown(raw: &str) -> String {
 }
 
 /// Prevents the persona from closing or opening the recall wrapper tags.
+/// Recall escapes its output as well (`recall::escape_markup`); this keeps
+/// the stored persona itself clean for readers that do not go through
+/// recall, such as `core/read`.
 fn escape_injection_tags(text: &str) -> String {
     ["user-persona", "relevant-memories", "scene-navigation"]
         .iter()

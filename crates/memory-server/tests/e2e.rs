@@ -545,6 +545,47 @@ async fn stored_markup_reaches_recall_escaped() {
     );
     assert!(system.contains("&lt;system-reminder>"), "{system}");
 
+    // A scene created before the name rule (seeded here, as the API no
+    // longer creates one) can still be updated through the API.
+    let department =
+        memory_domain::scope::SegmentId::parse("department", &client.department).unwrap();
+    let profile = memory_domain::profile::ProfileScope {
+        team_id: memory_domain::scope::SegmentId::parse("team_id", &client.team_id).unwrap(),
+        agent_id: memory_domain::scope::SegmentId::parse("agent_id", &client.agent_id).unwrap(),
+    };
+    client
+        .state
+        .services
+        .memory
+        .append_scenes(
+            &department,
+            &profile,
+            vec![memory_domain::profile::NewSceneVersion {
+                scene_id: "scn-legacy".into(),
+                op: memory_domain::profile::SceneOp::Manual,
+                slug: "my notes.md".into(),
+                summary: String::new(),
+                heat: 1,
+                body: "old".into(),
+                attrs: Default::default(),
+                parents: Vec::new(),
+                author: None,
+                expected_version: None,
+            }],
+        )
+        .await
+        .unwrap();
+    let updated = client
+        .call(
+            "/v3/scenario/write",
+            client.scoped(json!({"path": "my notes.md", "content": "new"})),
+        )
+        .await;
+    assert_eq!(
+        updated["code"], 0,
+        "an existing scene keeps its name: {updated}"
+    );
+
     // Paths and summaries that would not stay plain are refused.
     for body in [
         json!({"path": "a b.md", "content": "x"}),

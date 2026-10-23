@@ -109,10 +109,11 @@ pub struct RedactionService {
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     cache: Mutex<HashMap<DepartmentId, (Arc<Redactor>, Instant)>>,
-    /// Bumped on every change here. A redactor built from rules read before
-    /// a change is not cached after it: a write running alongside the change
-    /// would otherwise put the old rules back for the whole TTL.
-    generation: std::sync::atomic::AtomicU64,
+    /// Per department, bumped on every change there. A redactor built from
+    /// rules read before a change is not cached after it: a write running
+    /// alongside the change would otherwise put the old rules back for the
+    /// whole TTL. Guarded by `cache`'s lock.
+    generations: Mutex<HashMap<DepartmentId, u64>>,
 }
 
 impl RedactionService {
@@ -128,7 +129,7 @@ impl RedactionService {
             clock,
             ids,
             cache: Mutex::new(HashMap::new()),
-            generation: std::sync::atomic::AtomicU64::new(0),
+            generations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -137,14 +138,13 @@ impl RedactionService {
         if let Some(r) = self.cached(department) {
             return Ok(r);
         }
-        use std::sync::atomic::Ordering;
-        let generation = self.generation.load(Ordering::Acquire);
+        let generation = self.generation(department);
         let rules = self.rules.list_redaction_rules(department).await?;
         let redactor = Arc::new(self.build(&rules, None)?);
         if let Ok(mut cache) = self.cache.lock() {
             // Checked under the lock `forget` takes, so a change cannot slip
             // in between the check and the insert.
-            if self.generation.load(Ordering::Acquire) == generation {
+            if self.generation(department) == generation {
                 cache.insert(department.clone(), (Arc::clone(&redactor), Instant::now()));
             }
         }
@@ -157,10 +157,18 @@ impl RedactionService {
         (at.elapsed() < CACHE_TTL).then(|| Arc::clone(redactor))
     }
 
+    fn generation(&self, department: &DepartmentId) -> u64 {
+        self.generations
+            .lock()
+            .map(|g| g.get(department).copied().unwrap_or(0))
+            .unwrap_or(0)
+    }
+
     fn forget(&self, department: &DepartmentId) {
         if let Ok(mut cache) = self.cache.lock() {
-            self.generation
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            if let Ok(mut generations) = self.generations.lock() {
+                *generations.entry(department.clone()).or_insert(0) += 1;
+            }
             cache.remove(department);
         }
     }

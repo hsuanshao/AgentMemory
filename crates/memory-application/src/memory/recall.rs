@@ -207,12 +207,27 @@ pub fn sanitize_query(query: &str) -> String {
     text.trim().to_owned()
 }
 
-/// Stored text as it goes into a recall block: `<` becomes `&lt;`, so
-/// nothing stored (a persona, a scene path or summary, an atom) can close
-/// the block it is in or open one that looks like system context.
-/// Applied here, at output, so what is stored stays as written.
+/// Stored text as it goes into a recall block: a `<` that could start a tag
+/// (followed by a letter, `/`, `!` or `?`) becomes `&lt;`, so nothing
+/// stored (a persona, a scene path or summary, an atom) can close the block
+/// it is in or open one that looks like system context. `a < b` and
+/// `x<1` stay as written. Applied here, at output, so what is stored stays
+/// as written.
 pub fn escape_markup(text: &str) -> String {
-    text.replace('<', "&lt;")
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let opens_tag = c == '<'
+            && chars
+                .peek()
+                .is_some_and(|n| n.is_alphabetic() || matches!(n, '/' | '!' | '?'));
+        if opens_tag {
+            out.push_str("&lt;");
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn format_atom(atom: &AtomicMemory) -> String {
@@ -326,6 +341,14 @@ mod tests {
         };
         let line = format_atom(&atom);
         assert!(!line.contains('<'), "{line}");
+
+        // Only a `<` that could start a tag is escaped.
+        assert_eq!(escape_markup("if a < b && x<1"), "if a < b && x<1");
+        assert_eq!(
+            escape_markup("<!-- c --><?x?></y><Z>"),
+            "&lt;!-- c -->&lt;?x?>&lt;/y>&lt;Z>"
+        );
+        assert_eq!(escape_markup("Vec<String>"), "Vec&lt;String>");
     }
 
     #[test]

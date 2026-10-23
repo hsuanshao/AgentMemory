@@ -398,7 +398,6 @@ impl MemoryService {
         author: Option<&str>,
     ) -> DomainResult<SceneVersion> {
         validate_scene_path(path)?;
-        validate_new_scene_name(path)?;
         if let Some(summary) = summary {
             if summary.chars().count() > MAX_SUMMARY_CHARS {
                 return Err(DomainError::invalid(format!(
@@ -411,6 +410,11 @@ impl MemoryService {
             .scene(department, profile, path, None)
             .await?
             .filter(SceneVersion::is_live);
+        // A new scene gets a plain name; one that exists keeps its name, so
+        // scenes created before the rule can still be updated.
+        if current.is_none() {
+            validate_new_scene_name(path)?;
+        }
         let (_, body) = parse_scene(content);
         let version = NewSceneVersion {
             scene_id: current
