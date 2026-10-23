@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+#[path = "support/embedding_backfill.rs"]
+mod embedding_backfill;
 #[path = "support/profile_versions.rs"]
 mod profile_versions;
 
@@ -388,4 +390,85 @@ async fn atoms_can_be_queried_by_session() {
     .unwrap();
     assert_eq!(total, 1);
     assert_eq!(found[0].id, "a1");
+}
+
+#[tokio::test]
+async fn atoms_without_an_embedding_get_one_later() {
+    // Brute-force cosine over the BLOBs, and the vec0 index when it loads.
+    let mut dims = vec![None];
+    if memory_infrastructure::sqlite::vec_index::available() {
+        dims.push(Some(2));
+    }
+    for dims in dims {
+        let (_dir, pool, department) = setup();
+        let store = SqliteMemoryStore::new(pool, dims);
+        let without = AtomicMemory {
+            updated_at: Utc::now() + Duration::milliseconds(1),
+            ..atom("a2", "deploys with a blue-green switch", "alice")
+        };
+        embedding_backfill::exercise(
+            &store,
+            &department,
+            atom("a1", "prefers Rust for backend services", "alice"),
+            without,
+        )
+        .await;
+    }
+}
+
+/// An embedding service that is down until `up` is set.
+struct FlakyEmbedder {
+    up: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl memory_application::ports::system::EmbeddingProvider for FlakyEmbedder {
+    fn dimensions(&self) -> Option<usize> {
+        Some(2)
+    }
+
+    async fn embed(&self, texts: &[String]) -> memory_domain::error::DomainResult<Vec<Vec<f32>>> {
+        if !self.up.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(memory_domain::error::DomainError::unavailable("timed out"));
+        }
+        Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+    }
+}
+
+#[tokio::test]
+async fn backfill_waits_out_a_failing_embedding_service() {
+    use memory_application::memory::backfill::{BackfillReport, EmbeddingBackfill};
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    for i in 0..3 {
+        store
+            .upsert(&department, &atom(&format!("a{i}"), "text", "alice"), None)
+            .await
+            .unwrap();
+    }
+    let embedder = Arc::new(FlakyEmbedder { up: false.into() });
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder.clone());
+
+    assert_eq!(
+        backfill.all(10).await.unwrap(),
+        BackfillReport {
+            missing: 3,
+            embedded: 0,
+            skipped: 3
+        }
+    );
+    embedder
+        .up
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        backfill.department(&department, 2).await.unwrap(),
+        BackfillReport {
+            missing: 2,
+            embedded: 2,
+            skipped: 0
+        }
+    );
+    assert_eq!(backfill.all(10).await.unwrap().embedded, 1);
+    assert_eq!(backfill.all(10).await.unwrap(), BackfillReport::default());
 }

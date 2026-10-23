@@ -651,6 +651,57 @@ impl AtomRepository for PostgresMemoryStore {
         profile_where(&mut w, profile);
         self.delete_from(department, "atoms", w).await
     }
+
+    async fn departments(&self) -> DomainResult<Vec<DepartmentId>> {
+        Ok(self
+            .db
+            .known_departments()
+            .await?
+            .iter()
+            .filter_map(|d| DepartmentId::parse("department", d).ok())
+            .collect())
+    }
+
+    async fn missing_embeddings(
+        &self,
+        department: &DepartmentId,
+        limit: usize,
+    ) -> DomainResult<Vec<AtomicMemory>> {
+        if self.db.dims().is_none() {
+            return Ok(Vec::new());
+        }
+        let s = self.db.schema(department).await?;
+        atoms_from_rows(
+            &fetch_all(
+                &mut *self.db.conn().await?,
+                &format!("SELECT {ATOM_COLUMNS} FROM {s}.atoms WHERE embedding IS NULL ORDER BY seq LIMIT ?"),
+                &args![limit as i64],
+            )
+            .await?,
+        )
+    }
+
+    async fn set_embedding(
+        &self,
+        department: &DepartmentId,
+        id: &str,
+        updated_at: DateTime<Utc>,
+        embedding: &[f32],
+    ) -> DomainResult<bool> {
+        let Some(vector) = self.storable_embedding(id, Some(embedding)) else {
+            return Ok(false);
+        };
+        let s = self.db.schema(department).await?;
+        let set = execute(
+            &mut *self.db.conn().await?,
+            &format!(
+                "UPDATE {s}.atoms SET embedding = ? WHERE id = ? AND embedding IS NULL AND updated_at_ms = ?"
+            ),
+            &[Arg::Vector(Some(vector)), Arg::from(id), Arg::from(to_ms(updated_at))],
+        )
+        .await?;
+        Ok(set == 1)
+    }
 }
 
 // ── L2 / L3 ─────────────────────────────────────────────────────────────

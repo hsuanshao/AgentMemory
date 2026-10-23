@@ -11,6 +11,10 @@
 - 遮罩規則能抓到用自然語言提到並寫出值的密碼，涵蓋英文和亞洲主要語言（中文、日文、韓文、越南文、泰文、印尼／馬來文、印地文、阿拉伯文），以及西班牙文、葡萄牙文、法文、德文、土耳其文和俄文，常見縮寫也包含在內（`pw`、`pwd`、`pass`、`mk`、`비번`、`パス` 等）；`token`、`pass` 這類有日常意思的字，值前面要有 `:`、`=` 或「是」才算。另外也會抓長得像密碼的字串（8 個以上字元，混合字母、數字和符號），網址、路徑、email、query string、程式運算子和模型名稱除外。原始 session 紀錄裡，機密類欄位（`password`、`access_token` 等）的值會整個遮掉；文字格式的 skill 檔案也會和 skill 一樣遮罩。L1 和 skill 的 prompt 也要求模型不得記錄任何憑證的值。`amem` 使用同一套規則（#57）。
 - `redaction.passwordShape`（`AGENT_MEMORY_REDACTION_PASSWORD_SHAPE`）可關閉形狀規則；`redaction.patterns`（`AGENT_MEMORY_REDACTION_PATTERNS`，JSON 陣列）可加入身分證字號、電話等規則。規則無法編譯時，memory-core 會在啟動時停止（[DISTILLATION §7](docs/ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。升級前已存入的資料不會被改寫。
 
+### 新增
+- 沒有向量就存進去的 atom（embedding 呼叫失敗或逾時）之後會補上：memory-core 每 10 分鐘重試一次（`memory.embedding.backfillIntervalSecs`），`memory-server reembed` 可以立刻執行。atom 本身不會被改寫，所以 L2 不會把它當成新的（[DISTILLATION §8](docs/ops/DISTILLATION.zh-tw.md#8-embedding-與負載)，#57）。
+- embedding 逾時、同時進行的 embedding 請求數（`memory.embedding.maxConcurrency`，預設 4，新增）、worker 並行數和 CLI 模型並行數，都可以用環境變數設定：`AGENT_MEMORY_EMBEDDING_TIMEOUT_MS`、`AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY`、`AGENT_MEMORY_WORKER_CONCURRENCY`、`AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY`（#57）。
+
 ### 變更
 - `amem` 對 Claude Code session 只在 persona 和 scene 導覽的內容和這個 session 上次收到的不同時才送，`SessionStart`（啟動、resume、`/clear`、fork、壓縮）之後再送一次；相關記憶仍然每個 prompt 都送。在一個約 20 個 agent 的部署裡，這部分占全部注入 context 的三分之二，而且每 4 個 prompt 有 3 個是原封不動重送。預設另外每 20 個 prompt 重送一次，以涵蓋沒有 `SessionStart` 的壓縮或 `/rewind`；`AMEM_SYSTEM_CONTEXT_EVERY`（或 `client.json` 的 `system_context_every`）可設成別的 `N`、`0` 只在變動時送、`1` 恢復原本行為。Claude Code plugin 為此多註冊一個 `SessionStart` hook；手寫的 `settings.json` 要自行加上 `amem hook claude-code session-start`。寫入 session 狀態的 hook 會對旁邊的 `.lock` 檔取得 `flock`，彼此不會互相覆蓋；hook 最多等一秒，拿不到就照樣寫入。Codex 和 Antigravity 不變（#39）。
 

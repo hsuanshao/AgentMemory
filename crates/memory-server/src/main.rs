@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
         Some("generations") => {
             return memory_server::ops_cli::generations(std::env::args().skip(2)).await
         }
+        Some("reembed") => return memory_server::reembed::run(std::env::args().skip(2)).await,
         Some("dead-letters") => {
             return memory_server::ops_cli::dead_letters(std::env::args().skip(2)).await
         }

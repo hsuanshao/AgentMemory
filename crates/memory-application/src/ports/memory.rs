@@ -1,6 +1,7 @@
 //! Storage ports for the four memory layers.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage};
 use memory_domain::profile::{
@@ -159,6 +160,26 @@ pub trait AtomRepository: Send + Sync {
         department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<usize>;
+    /// Departments that have stored data, for sweeps across all of them.
+    async fn departments(&self) -> DomainResult<Vec<DepartmentId>>;
+    /// Atoms stored without an embedding (the embedding call failed or
+    /// timed out), oldest first.
+    async fn missing_embeddings(
+        &self,
+        department: &DepartmentId,
+        limit: usize,
+    ) -> DomainResult<Vec<AtomicMemory>>;
+    /// Adds the embedding of an atom that has none, without rewriting the
+    /// atom: its seq stays, so L2 does not see it as new. Does nothing when
+    /// the atom changed since `updated_at` or got an embedding meanwhile;
+    /// returns whether it was set.
+    async fn set_embedding(
+        &self,
+        department: &DepartmentId,
+        id: &str,
+        updated_at: DateTime<Utc>,
+        embedding: &[f32],
+    ) -> DomainResult<bool>;
 }
 
 /// Append-only versions of the scenes (L2) and persona (L3) of a team +

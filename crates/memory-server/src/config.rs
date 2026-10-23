@@ -356,7 +356,15 @@ pub struct EmbeddingConfig {
     pub api_key: String,
     pub model: String,
     pub dimensions: usize,
+    /// Per request to the embedding service.
     pub timeout_ms: u64,
+    /// Requests to the embedding service in flight at once.
+    pub max_concurrency: usize,
+    /// How often atoms stored without an embedding get one (0 = never;
+    /// `memory-server reembed` still works).
+    pub backfill_interval_secs: u64,
+    /// Atoms embedded per department per backfill run, at most.
+    pub backfill_batch: usize,
 }
 
 impl Default for EmbeddingConfig {
@@ -368,6 +376,9 @@ impl Default for EmbeddingConfig {
             model: String::new(),
             dimensions: 0,
             timeout_ms: 10_000,
+            max_concurrency: 4,
+            backfill_interval_secs: 600,
+            backfill_batch: 200,
         }
     }
 }
@@ -643,6 +654,24 @@ impl Config {
         if let Some(d) = env("AGENT_MEMORY_EMBEDDING_DIMENSIONS").and_then(|d| d.parse().ok()) {
             e.dimensions = d;
         }
+        if let Some(ms) = env("AGENT_MEMORY_EMBEDDING_TIMEOUT_MS").and_then(|v| v.parse().ok()) {
+            e.timeout_ms = ms;
+        }
+        if let Some(n) = env("AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY").and_then(|v| v.parse().ok())
+        {
+            e.max_concurrency = n;
+        }
+        if let Some(secs) =
+            env("AGENT_MEMORY_EMBEDDING_BACKFILL_INTERVAL_SECS").and_then(|v| v.parse().ok())
+        {
+            e.backfill_interval_secs = secs;
+        }
+        if let Some(n) = env("AGENT_MEMORY_WORKER_CONCURRENCY").and_then(|v| v.parse().ok()) {
+            self.worker.concurrency = n;
+        }
+        if let Some(n) = env("AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY").and_then(|v| v.parse().ok()) {
+            self.llm.cli.max_concurrency = n;
+        }
         if let Some(on) = env("AGENT_MEMORY_REDACTION_PASSWORD_SHAPE") {
             self.redaction.password_shape = matches!(on.as_str(), "1" | "true" | "on" | "yes");
         }
@@ -779,6 +808,27 @@ mod tests {
         assert_eq!(c.llm.provider, "openai");
         assert_eq!(c.llm.cli.prompt_mode, "stdin");
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn embedding_limits_are_read_from_the_config_file() {
+        let d = EmbeddingConfig::default();
+        assert_eq!(
+            (d.timeout_ms, d.max_concurrency, d.backfill_interval_secs),
+            (10_000, 4, 600)
+        );
+        let yaml = "memory:\n  embedding:\n    timeoutMs: 30000\n    maxConcurrency: 2\n    backfillIntervalSecs: 0\n    backfillBatch: 50\n";
+        let c: Config = serde_yaml::from_str(yaml).unwrap();
+        let e = &c.memory.embedding;
+        assert_eq!(
+            (
+                e.timeout_ms,
+                e.max_concurrency,
+                e.backfill_interval_secs,
+                e.backfill_batch
+            ),
+            (30_000, 2, 0, 50)
+        );
     }
 
     #[test]

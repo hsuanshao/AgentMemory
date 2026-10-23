@@ -56,6 +56,10 @@ memory:
     # apiKey: "${AGENT_MEMORY_EMBEDDING_API_KEY}"
     # model: "text-embedding-3-small"
     # dimensions: 1536
+    timeoutMs: 10000          # per request
+    maxConcurrency: 4         # requests in flight; more wait their turn
+    backfillIntervalSecs: 600 # embed atoms stored without one (0 = off; see `memory-server reembed`)
+    backfillBatch: 200        # atoms per department per run
 
 # Secrets are redacted before anything is stored or distilled (#57); the
 # built-in rules always apply. See docs/ops/DISTILLATION.md §7.

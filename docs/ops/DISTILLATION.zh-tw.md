@@ -13,6 +13,7 @@ memory-core 會在背景蒸餾對話：L1 擷取記憶，L2 整理成 scene，L3
 - [5. Dead letter 與重跑](#5-dead-letter-與重跑)
 - [6. 工具與蒸餾](#6-工具與蒸餾)
 - [7. 機密與遮罩](#7-機密與遮罩)
+- [8. Embedding 與負載](#8-embedding-與負載)
 
 ## 1. 會記錄哪些資訊
 
@@ -217,3 +218,27 @@ redaction:
 - 規則是啟發式的，只是安全網，不是保證。
 - 升級前已經存進去的資料不會被改寫。
 - skill 的二進位資源檔（非 UTF-8）不會掃描。
+
+## 8. Embedding 與負載
+
+開啟 embedding 時，每個 atom 存入時都會算向量。這個呼叫失敗或逾時，atom 還是會存下來：在補上向量之前，recall 只能用關鍵字找到它，無法用語意找到。
+
+**補向量。** memory-core 每隔 `backfillIntervalSecs`（預設 600 秒；啟動後先等一個間隔才跑第一次）會替沒有向量的 atom 補算，每個部門每次最多 `backfillBatch` 個，從最舊的開始。某個部門的 embedding 呼叫失敗時，這一輪就停在那裡，下次再試。atom 本身不會被改寫，所以 L2 不會把它當成新的。要立刻執行並看結果：
+
+```bash
+docker compose exec memory-core memory-server reembed
+docker compose exec memory-core memory-server reembed --department default --limit 500 --json
+```
+
+**設定。**
+
+| 設定 | 環境變數 | 預設 | |
+| --- | --- | --- | --- |
+| `memory.embedding.timeoutMs` | `AGENT_MEMORY_EMBEDDING_TIMEOUT_MS` | 10000 | 每次呼叫 embedding 服務的逾時 |
+| `memory.embedding.maxConcurrency` | `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY` | 4 | 同時進行的請求數，超過的排隊等候 |
+| `memory.embedding.backfillIntervalSecs` | `AGENT_MEMORY_EMBEDDING_BACKFILL_INTERVAL_SECS` | 600 | `0` 關閉背景補向量；`reembed` 仍可使用 |
+| `memory.embedding.backfillBatch` | | 200 | 每個部門每次背景補算的 atom 數 |
+| `worker.concurrency` | `AGENT_MEMORY_WORKER_CONCURRENCY` | 8 | 同時執行的 pipeline 工作（L1/L2/L3/skill） |
+| `llm.cli.maxConcurrency` | `AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY` | 2 | 同時執行的 CLI 模型程序 |
+
+embedding 伺服器規格小或與其他服務共用、負載高時會逾時：先調低 `maxConcurrency`，再調高 `timeoutMs`。服務中斷後有大量 atom 沒有向量：等服務恢復後跑一次 `reembed`。

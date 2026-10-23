@@ -644,6 +644,61 @@ impl AtomRepository for SqliteMemoryStore {
         profile_where(&mut w, profile);
         delete_atoms(&self.pool, self.vec, department, w).await
     }
+
+    async fn departments(&self) -> DomainResult<Vec<DepartmentId>> {
+        Ok(self
+            .pool
+            .known_departments()
+            .iter()
+            .filter_map(|d| DepartmentId::parse("department", d).ok())
+            .collect())
+    }
+
+    async fn missing_embeddings(
+        &self,
+        department: &DepartmentId,
+        limit: usize,
+    ) -> DomainResult<Vec<AtomicMemory>> {
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {ATOM_COLUMNS} FROM atoms WHERE embedding IS NULL ORDER BY seq LIMIT ?"
+                ))?;
+                let atoms = stmt
+                    .query_map([limit as i64], atom_from_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(atoms)
+            })
+            .await
+    }
+
+    async fn set_embedding(
+        &self,
+        department: &DepartmentId,
+        id: &str,
+        updated_at: DateTime<Utc>,
+        embedding: &[f32],
+    ) -> DomainResult<bool> {
+        let (id, blob, vec) = (id.to_owned(), embedding_to_blob(embedding), self.vec);
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                prepare_index(&tx, vec)?;
+                let set = tx.execute(
+                    "UPDATE atoms SET embedding = ? WHERE id = ? AND embedding IS NULL AND updated_at_ms = ?",
+                    params![blob, id, to_ms(updated_at)],
+                )? == 1;
+                if let (true, Some(v)) = (set, vec) {
+                    let seq: i64 = tx.query_row("SELECT seq FROM atoms WHERE id = ?", [&id], |r| r.get(0))?;
+                    v.insert(&tx, seq)?;
+                }
+                tx.commit()?;
+                Ok(set)
+            })
+            .await
+    }
 }
 
 impl SqliteMemoryStore {

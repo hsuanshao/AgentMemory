@@ -177,7 +177,12 @@ pub struct EmbeddingSettings {
     pub api_key: String,
     pub model: String,
     pub dimensions: usize,
+    /// Per request.
     pub timeout: Duration,
+    /// Requests in flight at once; more wait their turn. A burst of L1
+    /// writes then queues here instead of overloading the service and
+    /// timing out.
+    pub max_concurrency: usize,
 }
 
 const MAX_BATCH: usize = 256;
@@ -185,6 +190,7 @@ const MAX_INPUT_CHARS: usize = 5000;
 
 pub struct OpenAiEmbedding {
     http: reqwest::Client,
+    permits: tokio::sync::Semaphore,
     settings: EmbeddingSettings,
 }
 
@@ -194,7 +200,12 @@ impl OpenAiEmbedding {
             .timeout(settings.timeout)
             .build()
             .expect("reqwest client");
-        Self { http, settings }
+        let permits = tokio::sync::Semaphore::new(settings.max_concurrency.max(1));
+        Self {
+            http,
+            permits,
+            settings,
+        }
     }
 
     async fn embed_batch(&self, batch: &[String]) -> DomainResult<Vec<Vec<f32>>> {
@@ -265,6 +276,8 @@ impl EmbeddingProvider for OpenAiEmbedding {
     async fn embed(&self, texts: &[String]) -> DomainResult<Vec<Vec<f32>>> {
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(MAX_BATCH) {
+            // The semaphore is never closed.
+            let _permit = self.permits.acquire().await.expect("open semaphore");
             out.extend(self.embed_batch(batch).await?);
         }
         Ok(out)
