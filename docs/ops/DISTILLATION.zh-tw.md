@@ -190,7 +190,7 @@ L1 和 skill 的 prompt 也要求模型不得記錄任何憑證的值。
 | Kind | 抓什麼 |
 | --- | --- |
 | `private-key`、`jwt`、`openai-key`、`github-token` 等 | 已知的 token 和金鑰格式 |
-| `secret-assignment` | 英文鍵名的 `password=…`、`api_key: …`。鍵名含機密字詞即算（`DB_PASSWORD=`、`SECRET_KEY_BASE=`、`GITHUB_TOKEN_RO=`）；鍵名裡有 `tokens`、`count`、`limit`、`max`、`length` 這類片段的是設定值，所以 `max_tokens=`、`token_count:` 不算 |
+| `secret-assignment` | 英文鍵名的 `password=…`、`api_key: …`。鍵名含機密字詞即算（`DB_PASSWORD=`、`SECRET_KEY_BASE=`、`GITHUB_TOKEN_RO=`）；鍵名以設定類字詞結尾（`count`、`limit`、`length`、`type` 等）或是在數 `tokens` 的，才是設定值，所以 `max_tokens=`、`token_count:` 不算，`RATE_LIMIT_TOKEN=`、`MAX_API_KEY=` 仍會被遮 |
 | `secret-phrase` | 用自然語言提到密碼，後面接著值。關鍵字含常見縮寫：英文（`password`、`pw`、`pwd`、`pass`、`psw` 等）、中文（`密碼`、`密码`、`口令`、`金鑰` 等）、日文（`パスワード`、`パス` 等）、韓文（`비밀번호`、`비번` 等）、越南文（`mật khẩu`、`mk`）、泰文、印尼／馬來文、印地文、阿拉伯文、西班牙文、葡萄牙文、法文、德文、土耳其文和俄文。接在 `:`、`=`、`：` 之後的值一律遮掉；接在「是」這類字（`是`、`là`、`は`、`는`、`es` 等）或空白之後的，只遮看起來像機密的值（含數字、符號或大小寫混合）。有日常意思的字（`token`、`pass`、`mk`、`clave`、`パス`、`トークン`、`รหัส` 等）必須接 `:`、`=` 或「是」這類字才算，所以 `token 4096`、`tests pass 100ms` 不會被遮 |
 | `password-shape` | 不需要關鍵字：8 個以上的 ASCII 字元，同時包含字母、數字，以及夾在中間的 `!@#$%^&+=?~\|` 其中之一。不會遮掉的有：網址、路徑、`x=1` 這類設定值、email、query string（`?page=2&sort=asc1`）、程式碼（以 `&&`、`\|\|`、`!=`、`==` 連接識別字或數字，例如 `cmd1&&cmd2`），以及整串都是模型名稱的寫法（`4@qwen3-8b`、`Claude@Opus-5.5`）。字串裡只是含有模型名稱還不夠，`Falcon#2024x` 仍會被遮 |
 

@@ -490,9 +490,9 @@ const SECRET_KEYS: &[&str] = &[
     "cookie",
 ];
 
-/// Parts of a key that make it a setting about a secret rather than the
-/// secret itself: `max_tokens`, `token_count`, `password_min_length`,
-/// `pass_rate`.
+/// Last parts of a key that make it a setting about a secret rather than
+/// the secret itself: `token_count`, `password_min_length`, `pass_rate`,
+/// `api_key_type` (see [`names_a_setting`]).
 const NON_SECRET_PARTS: &[&str] = &[
     "tokens", "count", "limit", "budget", "usage", "size", "max", "min", "length", "len", "rate",
     "ratio", "total", "ttl", "timeout", "expiry", "expires", "type",
@@ -520,10 +520,24 @@ fn key_parts(name: &str) -> Vec<String> {
         .collect()
 }
 
+/// A key is a setting when its last part says so (`token_count`,
+/// `api_key_type`), or when it counts tokens (`max_tokens`,
+/// `max_tokens_per_request`) and names no secret. Anywhere else a setting
+/// word is just part of the name: `RATE_LIMIT_TOKEN` and `MAX_API_KEY` are
+/// secrets.
 fn names_a_setting(key: &str) -> bool {
-    key_parts(key)
-        .iter()
-        .any(|p| NON_SECRET_PARTS.contains(&p.as_str()))
+    setting_parts(&key_parts(key))
+}
+
+fn setting_parts(parts: &[String]) -> bool {
+    let last = parts
+        .last()
+        .is_some_and(|p| NON_SECRET_PARTS.contains(&p.as_str()));
+    let counts_tokens = parts.iter().any(|p| p == "tokens")
+        && !parts
+            .iter()
+            .any(|p| SECRET_KEYS.contains(&p.as_str()) || p.starts_with("password"));
+    last || counts_tokens
 }
 
 /// Whether a structured field (a JSON key, a tool argument) holds a secret
@@ -533,7 +547,7 @@ fn names_a_setting(key: &str) -> bool {
 /// `token_count` are settings, not secrets.
 pub fn is_secret_key(name: &str) -> bool {
     let parts = key_parts(name);
-    if parts.iter().any(|p| NON_SECRET_PARTS.contains(&p.as_str())) {
+    if setting_parts(&parts) {
         return false;
     }
     SECRET_KEYS.iter().any(|k| {
@@ -604,6 +618,19 @@ mod tests {
             ),
             (format!("api_key_v2={}", fake("abc", '1', 9)), "api_key_v2="),
             (format!("password1={}", fake("abc", '1', 8)), "password1="),
+            // A setting word elsewhere in the name does not make it a setting.
+            (
+                format!("RATE_LIMIT_TOKEN={}", fake("abc", '1', 9)),
+                "RATE_LIMIT_TOKEN=",
+            ),
+            (
+                format!("MAX_API_KEY={}", fake("abc", '1', 9)),
+                "MAX_API_KEY=",
+            ),
+            (
+                format!("TOKEN_TYPE_SECRET={}", fake("abc", '1', 9)),
+                "TOKEN_TYPE_SECRET=",
+            ),
         ] {
             assert_eq!(
                 redact(&text),
@@ -746,6 +773,9 @@ mod tests {
             "pass",
             "pin",
             "otp",
+            "RATE_LIMIT_TOKEN",
+            "MAX_API_KEY",
+            "TOKEN_TYPE_SECRET",
         ] {
             assert!(is_secret_key(key), "{key}");
         }
@@ -760,6 +790,8 @@ mod tests {
             "pass_rate",
             "password_min_length",
             "spinner",
+            "api_key_type",
+            "max_tokens_per_request",
         ] {
             assert!(!is_secret_key(key), "{key}");
         }
