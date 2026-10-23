@@ -112,7 +112,8 @@ pub struct RedactionService {
     /// Per department, bumped on every change there. A redactor built from
     /// rules read before a change is not cached after it: a write running
     /// alongside the change would otherwise put the old rules back for the
-    /// whole TTL. Guarded by `cache`'s lock.
+    /// whole TTL. Its own lock, taken inside `cache`'s lock when both are
+    /// needed (never the other way round).
     generations: Mutex<HashMap<DepartmentId, u64>>,
 }
 

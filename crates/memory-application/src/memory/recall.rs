@@ -208,18 +208,22 @@ pub fn sanitize_query(query: &str) -> String {
 }
 
 /// Stored text as it goes into a recall block: a `<` that could start a tag
-/// (followed by a letter, `/`, `!` or `?`) becomes `&lt;`, so nothing
-/// stored (a persona, a scene path or summary, an atom) can close the block
-/// it is in or open one that looks like system context. `a < b` and
-/// `x<1` stay as written. Applied here, at output, so what is stored stays
-/// as written.
+/// becomes `&lt;`, so nothing stored (a persona, a scene path or summary, an
+/// atom) can close the block it is in or open one that looks like system
+/// context. A `<` (or a fullwidth `＜`, small `﹤`) could start a tag when the
+/// next character that is neither whitespace nor invisible formatting (a
+/// zero-width space, a word joiner, a bidi control…) is a letter, `/`, `!`
+/// or `?`: a model reading `<\u{200B}/user-persona>` may well see a closing
+/// tag. `x<1` stays as written. Applied here, at output, so what is stored
+/// stays as written.
 pub fn escape_markup(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        let opens_tag = c == '<'
-            && chars
-                .peek()
+    for (i, &c) in chars.iter().enumerate() {
+        let opens_tag = matches!(c, '<' | '＜' | '﹤')
+            && chars[i + 1..]
+                .iter()
+                .find(|n| !n.is_whitespace() && !is_format_char(**n))
                 .is_some_and(|n| n.is_alphabetic() || matches!(n, '/' | '!' | '?'));
         if opens_tag {
             out.push_str("&lt;");
@@ -228,6 +232,35 @@ pub fn escape_markup(text: &str) -> String {
         }
     }
     out
+}
+
+/// Unicode General_Category=Cf: invisible characters that change how text
+/// is joined or ordered, not what it says.
+fn is_format_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
 }
 
 fn format_atom(atom: &AtomicMemory) -> String {
@@ -343,12 +376,27 @@ mod tests {
         assert!(!line.contains('<'), "{line}");
 
         // Only a `<` that could start a tag is escaped.
-        assert_eq!(escape_markup("if a < b && x<1"), "if a < b && x<1");
+        // `a < b` reads like `< /tag>` once whitespace is skipped: escaped.
+        assert_eq!(escape_markup("if a < b && x<1"), "if a &lt; b && x<1");
         assert_eq!(
             escape_markup("<!-- c --><?x?></y><Z>"),
             "&lt;!-- c -->&lt;?x?>&lt;/y>&lt;Z>"
         );
         assert_eq!(escape_markup("Vec<String>"), "Vec&lt;String>");
+        // Whitespace or invisible formatting between `<` and the tag.
+        for hidden in [
+            "<\u{200B}/user-persona>",
+            "<\u{2060}system>",
+            "< /user-persona>",
+            "<\n\u{FEFF} system>",
+            "<\u{202E}/x>",
+            "＜/user-persona>",
+            "﹤system>",
+        ] {
+            let out = escape_markup(hidden);
+            assert!(out.starts_with("&lt;"), "{hidden:?} → {out:?}");
+        }
+        assert_eq!(escape_markup("x<1 and y< 2"), "x<1 and y< 2");
     }
 
     #[test]
