@@ -349,8 +349,15 @@ fn claude_code_stop_at(text: &str, input: &Value, cursor: PathBuf, deliver: impl
     // Re-read before writing: a UserPromptSubmit that ran during the
     // capture may have changed the system-context keys, and Stop owns only
     // `line` and `tail`.
-    cursor.state = json!({"line": lines.len(), "tail": tail});
+    cursor = Cursor::at(cursor.path);
+    record_stop(&mut cursor.state, lines.len(), tail);
     cursor.save();
+}
+
+/// Stop's part of the cursor; every other key is left as it is.
+fn record_stop(state: &mut Value, line: usize, tail: Value) {
+    state["line"] = json!(line);
+    state["tail"] = tail;
 }
 
 // ── Antigravity ─────────────────────────────────────────────────────────
@@ -512,6 +519,19 @@ mod tests {
         assert_eq!(compose_context("m", "s", false), "m");
         assert_eq!(compose_context("", "s", true), "s");
         assert_eq!(compose_context("", "s", false), "");
+    }
+
+    #[test]
+    fn stop_keeps_the_system_context_keys() {
+        let mut state = json!({});
+        assert!(system_context_due(&mut state, "p", 0));
+        record_stop(&mut state, 7, json!("t"));
+        assert_eq!(state["line"], 7);
+        assert_eq!(state["tail"], "t");
+        assert!(!system_context_due(&mut state, "p", 0));
+        record_stop(&mut state, 9, Value::Null);
+        assert!(state["tail"].is_null());
+        assert!(!system_context_due(&mut state, "p", 0));
     }
 
     /// prompt → Stop → prompt: the Stop entry point must not forget what the
