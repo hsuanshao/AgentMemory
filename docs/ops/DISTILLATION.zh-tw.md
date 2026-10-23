@@ -154,6 +154,16 @@ docker compose exec -T memory-core sh -c 'echo "How many tools do you have? Repl
 
 **`hardening: off`** 會照原樣傳入參數，並記錄一則警告。只在 CLI 新版改了參數名稱、memory-core 還沒跟上時暫時使用。會被拒絕的參數照樣會被拒絕。
 
+### CLI 繼承哪些環境變數
+
+CLI 會讀到不可信的對話內容，所以它拿不到 memory-core 的環境變數，只會繼承：
+
+- 任何程式都需要的：`PATH`、`HOME`、`USER`、`LOGNAME`、`SHELL`、`LANG`、`LANGUAGE`、`LC_*`、`TZ`、`TMPDIR`、`TERM`、`XDG_*_HOME`、`XDG_RUNTIME_DIR`、`SSL_CERT_FILE`、`SSL_CERT_DIR`、`NODE_EXTRA_CA_CERTS`，以及 proxy 變數（`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`、`ALL_PROXY`，大小寫皆可）；
+- 正在使用的 CLI 自己的設定：`claude` 是 `ANTHROPIC_*` 與 `CLAUDE_*`，`codex` 是 `OPENAI_*` 與 `CODEX_*`，`agy` 與 `gemini` 是 `GEMINI_*` 與 `GOOGLE_*`；
+- `llm.cli.passEnv`（`AGENT_MEMORY_LLM_CLI_PASS_ENV`，以逗號或空白分隔）列出的：完整名稱，或 `PREFIX_*`。
+
+`llm.cli.env` 會在上面再設定變數。`AGENT_MEMORY_*`（API key、資料庫與 Redis 的 URL、LLM 與 embedding 的 key）永遠不會傳給 CLI；`passEnv` 的項目若會比對到它們，memory-core 啟動時就會停止。其他 CLI 若需要某個 key，例如 `MY_LLM_TOKEN`，用 `AGENT_MEMORY_LLM_CLI_PASS_ENV=MY_LLM_TOKEN` 傳給它。使用 Docker Compose 時，這個變數也必須先進到 memory-core 容器：`docker-compose.yml` 只傳它列出的變數，所以請在 `docker-compose.override.yml` 裡加上它。
+
 ### 會被拒絕的參數
 
 memory-core 啟動時、以及執行 `memory-server check-config` 時，會檢查 `AGENT_MEMORY_LLM_CLI_ARGS`，並拒絕：

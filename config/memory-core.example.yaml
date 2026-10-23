@@ -27,7 +27,8 @@ llm:
     promptMode: "stdin"       # "stdin", or "arg" to substitute {prompt} in args
     # workingDir: "~/projects/my-app"   # project base path the tool runs in
     maxConcurrency: 2
-    env: {}                   # extra environment for the tool
+    env: {}                   # set for the tool (it inherits only PATH, HOME, locale, proxies and its own settings)
+    passEnv: []               # more variables it may inherit, e.g. ["MY_LLM_TOKEN", "MY_LLM_*"]; never AGENT_MEMORY_*
     hardening: "auto"         # "auto" turns off the tools of claude and codex; "off" passes args as given
 
 memory:

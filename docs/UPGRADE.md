@@ -26,6 +26,8 @@
 >
 > `curl -sS -X POST "$CORE/v3/internal/meta/user/init-admin" -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" -H "x-memory-department-id: <department>" -H "content-type: application/json" -d '{"username":"admin"}'`
 
+**The distillation CLI no longer inherits memory-core's environment.** It gets `PATH`, `HOME`, locale, certificate and proxy variables and its own settings (`ANTHROPIC_*`/`CLAUDE_*` for claude, `OPENAI_*`/`CODEX_*` for codex, `GEMINI_*`/`GOOGLE_*` for agy). claude, codex and agy logged in as the install describes keep working. A CLI that read some other variable from the container's environment needs it listed in `AGENT_MEMORY_LLM_CLI_PASS_ENV` ([DISTILLATION §6](ops/DISTILLATION.md#what-the-cli-inherits)).
+
 ## To 0.4.1
 
 ```bash

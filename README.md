@@ -220,9 +220,10 @@ llm:
     maxConcurrency: 2
 ```
 
-Equivalent environment variables: `AGENT_MEMORY_LLM_PROVIDER=cli`, `AGENT_MEMORY_LLM_CLI_COMMAND`, `AGENT_MEMORY_LLM_CLI_ARGS` (JSON array or whitespace-separated), `AGENT_MEMORY_LLM_CLI_PROMPT_MODE`, `AGENT_MEMORY_LLM_CLI_WORKDIR`.
+Equivalent environment variables: `AGENT_MEMORY_LLM_PROVIDER=cli`, `AGENT_MEMORY_LLM_CLI_COMMAND`, `AGENT_MEMORY_LLM_CLI_ARGS` (JSON array or whitespace-separated), `AGENT_MEMORY_LLM_CLI_PROMPT_MODE`, `AGENT_MEMORY_LLM_CLI_WORKDIR`, `AGENT_MEMORY_LLM_CLI_PASS_ENV`.
 
 - No shell is involved: the child process is spawned directly with an argument array; the prompt goes through stdin by default and never shows up in the process list.
+- The tool does not inherit memory-core's environment: it gets `PATH`, `HOME`, locale, certificate and proxy variables, its own settings (`ANTHROPIC_*`/`CLAUDE_*` for claude, `OPENAI_*`/`CODEX_*` for codex, `GEMINI_*`/`GOOGLE_*` for agy), `llm.cli.env`, and what `llm.cli.passEnv` names; never `AGENT_MEMORY_*` ([DISTILLATION §6](docs/ops/DISTILLATION.md#what-the-cli-inherits)).
 - Each call is bounded by `timeoutMs`, and the child process is killed on timeout; a non-zero exit code or empty output is treated as the LLM being unavailable and left to the pipeline to retry.
 - Refer to each tool's own documentation for its flags; the tool must print the complete answer to stdout.
 

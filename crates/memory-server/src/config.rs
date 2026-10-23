@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use memory_infrastructure::cli_llm::{codex_without_exec, granting_arg};
+use memory_infrastructure::cli_llm::{codex_without_exec, granting_arg, refused_pass_env};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -241,7 +241,12 @@ pub struct CliLlmConfig {
     pub prompt_mode: String,
     /// Project base path used as the tool's working directory.
     pub working_dir: Option<String>,
+    /// Set for the tool. It inherits only the basics (PATH, HOME, locale,
+    /// certificates, proxies) and a known CLI's own settings.
     pub env: std::collections::BTreeMap<String, String>,
+    /// More variables of memory-core's environment the tool may inherit:
+    /// names, or `PREFIX_*`. Never `AGENT_MEMORY_*`.
+    pub pass_env: Vec<String>,
     pub max_concurrency: usize,
     /// `auto` (default) turns off a known CLI's own tools before it sees
     /// conversation text; `off` passes `args` unchanged (#37).
@@ -256,6 +261,7 @@ impl Default for CliLlmConfig {
             prompt_mode: "stdin".into(),
             working_dir: None,
             env: Default::default(),
+            pass_env: Vec::new(),
             max_concurrency: 2,
             hardening: "auto".into(),
         }
@@ -675,6 +681,13 @@ impl Config {
         if let Some(dir) = env("AGENT_MEMORY_LLM_CLI_WORKDIR") {
             self.llm.cli.working_dir = Some(dir);
         }
+        if let Some(names) = env("AGENT_MEMORY_LLM_CLI_PASS_ENV") {
+            self.llm.cli.pass_env = names
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|n| !n.is_empty())
+                .map(str::to_owned)
+                .collect();
+        }
         let e = &mut self.memory.embedding;
         set(&mut e.provider, "AGENT_MEMORY_EMBEDDING_PROVIDER");
         set(&mut e.base_url, "AGENT_MEMORY_EMBEDDING_BASE_URL");
@@ -790,6 +803,17 @@ impl Config {
                     bail!(
                         "llm.cli.args for codex must run `exec`: only `codex exec --ignore-user-config` keeps \
                          config.toml (MCP servers, profiles) away from distillation (#37)"
+                    );
+                }
+                if let Some((entry, why)) = cli
+                    .pass_env
+                    .iter()
+                    .find_map(|e| refused_pass_env(e).map(|why| (e, why)))
+                {
+                    bail!(
+                        "llm.cli.passEnv (AGENT_MEMORY_LLM_CLI_PASS_ENV) must not list `{entry}`: {why}. \
+                         Distillation reads untrusted conversation text, so the tool never sees \
+                         memory-core's own settings"
                     );
                 }
                 if let Some(dir) = &cli.working_dir {
@@ -999,6 +1023,20 @@ mod tests {
         c.llm.cli.hardening = "sometimes".into();
         c.llm.cli.args.clear();
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn pass_env_never_reaches_memory_cores_own_variables() {
+        let mut c = Config::default();
+        c.llm.provider = "cli".into();
+        c.llm.cli.command = "my-llm".into();
+        c.llm.cli.pass_env = vec!["MY_LLM_TOKEN".into(), "MY_LLM_*".into()];
+        assert!(c.validate().is_ok());
+        for entry in ["AGENT_MEMORY_API_KEY", "AGENT_*", "*"] {
+            c.llm.cli.pass_env = vec![entry.into()];
+            let err = c.validate().unwrap_err().to_string();
+            assert!(err.contains("llm.cli.passEnv"), "{entry}: {err}");
+        }
     }
 
     #[test]

@@ -222,9 +222,10 @@ llm:
     maxConcurrency: 2
 ```
 
-等價的環境變數：`AGENT_MEMORY_LLM_PROVIDER=cli`、`AGENT_MEMORY_LLM_CLI_COMMAND`、`AGENT_MEMORY_LLM_CLI_ARGS`（JSON 陣列或以空白分隔）、`AGENT_MEMORY_LLM_CLI_PROMPT_MODE`、`AGENT_MEMORY_LLM_CLI_WORKDIR`。
+等價的環境變數：`AGENT_MEMORY_LLM_PROVIDER=cli`、`AGENT_MEMORY_LLM_CLI_COMMAND`、`AGENT_MEMORY_LLM_CLI_ARGS`（JSON 陣列或以空白分隔）、`AGENT_MEMORY_LLM_CLI_PROMPT_MODE`、`AGENT_MEMORY_LLM_CLI_WORKDIR`、`AGENT_MEMORY_LLM_CLI_PASS_ENV`。
 
 - 不經過 shell，直接以參數陣列啟動子行程；prompt 預設經 stdin 傳入，不會出現在行程列表。
+- 工具不會繼承 memory-core 的環境變數：它只拿到 `PATH`、`HOME`、語系、憑證與 proxy 變數、自己的設定（claude 是 `ANTHROPIC_*`／`CLAUDE_*`，codex 是 `OPENAI_*`／`CODEX_*`，agy 是 `GEMINI_*`／`GOOGLE_*`）、`llm.cli.env`，以及 `llm.cli.passEnv` 列出的變數；`AGENT_MEMORY_*` 一律不會傳（[DISTILLATION §6](docs/ops/DISTILLATION.zh-tw.md#cli-繼承哪些環境變數)）。
 - 每次呼叫受 `timeoutMs` 限制，逾時即終止子行程；非 0 結束碼或空輸出都視為 LLM 不可用，交由管線重試。
 - 各工具的旗標請以該工具文件為準；工具需能把完整答案印到 stdout。
 
