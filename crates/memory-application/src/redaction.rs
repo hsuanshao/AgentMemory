@@ -109,6 +109,10 @@ pub struct RedactionService {
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     cache: Mutex<HashMap<DepartmentId, (Arc<Redactor>, Instant)>>,
+    /// Bumped on every change here. A redactor built from rules read before
+    /// a change is not cached after it: a write running alongside the change
+    /// would otherwise put the old rules back for the whole TTL.
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl RedactionService {
@@ -124,6 +128,7 @@ impl RedactionService {
             clock,
             ids,
             cache: Mutex::new(HashMap::new()),
+            generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -132,10 +137,16 @@ impl RedactionService {
         if let Some(r) = self.cached(department) {
             return Ok(r);
         }
+        use std::sync::atomic::Ordering;
+        let generation = self.generation.load(Ordering::Acquire);
         let rules = self.rules.list_redaction_rules(department).await?;
         let redactor = Arc::new(self.build(&rules, None)?);
         if let Ok(mut cache) = self.cache.lock() {
-            cache.insert(department.clone(), (Arc::clone(&redactor), Instant::now()));
+            // Checked under the lock `forget` takes, so a change cannot slip
+            // in between the check and the insert.
+            if self.generation.load(Ordering::Acquire) == generation {
+                cache.insert(department.clone(), (Arc::clone(&redactor), Instant::now()));
+            }
         }
         Ok(redactor)
     }
@@ -148,6 +159,8 @@ impl RedactionService {
 
     fn forget(&self, department: &DepartmentId) {
         if let Ok(mut cache) = self.cache.lock() {
+            self.generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             cache.remove(department);
         }
     }
@@ -518,6 +531,82 @@ mod tests {
             .create(&department, &admin, create("emp-id", r"\bEMP-\d{6}\b"))
             .await
             .is_ok());
+    }
+
+    /// Rules whose next read takes a snapshot, then waits until released.
+    struct SlowRules {
+        rules: Mutex<Vec<RedactionRule>>,
+        hold: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RedactionRuleRepository for SlowRules {
+        async fn list_redaction_rules(&self, _: &DepartmentId) -> DomainResult<Vec<RedactionRule>> {
+            let snapshot = self.rules.lock().unwrap().clone();
+            // Taken out first: the lock is not held while waiting.
+            let release = self.hold.lock().await.take();
+            if let Some(release) = release {
+                let _ = release.await;
+            }
+            Ok(snapshot)
+        }
+        async fn put_redaction_rule(
+            &self,
+            _: &DepartmentId,
+            rule: &RedactionRule,
+        ) -> DomainResult<()> {
+            self.rules.lock().unwrap().push(rule.clone());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_write_racing_a_change_does_not_cache_the_old_rules() {
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let repo = Arc::new(SlowRules {
+            rules: Mutex::new(Vec::new()),
+            hold: tokio::sync::Mutex::new(Some(wait)),
+        });
+        let service = Arc::new(RedactionService::new(
+            DeploymentRules::default(),
+            repo,
+            Arc::new(Fixed),
+            Arc::new(Fixed),
+        ));
+        let department = DepartmentId::parse("department", "d").unwrap();
+        // A write reads the rules (none yet) and is held there.
+        let racing = {
+            let (service, department) = (Arc::clone(&service), department.clone());
+            tokio::spawn(async move { service.redactor(&department).await.unwrap() })
+        };
+        tokio::task::yield_now().await;
+        // Meanwhile an admin adds a rule.
+        let admin = Caller {
+            user_id: "usr-admin".into(),
+            is_system_admin: true,
+        };
+        service
+            .create(
+                &department,
+                &admin,
+                CreateRedactionRuleInput {
+                    kind: "emp-id".into(),
+                    pattern: r"\bEMP-\d{6}\b".into(),
+                    description: String::new(),
+                },
+            )
+            .await
+            .unwrap();
+        release.send(()).unwrap();
+        let old = racing.await.unwrap();
+        assert_eq!(
+            old.redact("EMP-123456"),
+            "EMP-123456",
+            "built before the change"
+        );
+        // The next write gets the new rule, not the racing write's redactor.
+        let next = service.redactor(&department).await.unwrap();
+        assert_eq!(next.redact("EMP-123456"), "[REDACTED:emp-id]");
     }
 
     #[test]
