@@ -63,7 +63,7 @@ This change stores nothing new, so going back to the previous version needs no r
 
 ### Extracted skills wait for approval
 
-Skill extraction no longer saves skills by itself. What it creates or changes waits as a proposal on the Panel's **Skills** page (and `skill/proposal/*`) until the conversation's user (on an agent they may use), an admin of the team, or a system admin approves it. Nothing is lost: after the upgrade, new extractions simply show up there instead of in the skill list. Someone has to look at them, or no new skills appear. A deployment that wants the old behaviour sets `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false` (`skill.extraction.requireApproval: false`). The model also gets the conversation as JSON data and may change only the agent's skills it was shown, with or without approval ([ARCHITECTURE](ARCHITECTURE.md#4-memory-model-and-pipeline)).
+Skill extraction no longer saves skills by itself. What it creates or changes waits as a proposal on the Panel's **Skills** page (and `skill/proposal/*`) until the conversation's user (on an agent they may use), an admin of the team, or a system admin approves it. Nothing is lost: after the upgrade, new extractions simply show up there instead of in the skill list. Someone has to look at them, or no new skills appear. Proposals left undecided expire after 30 days (`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`, 0 for never). A deployment that wants the old behaviour sets `AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false` (`skill.extraction.requireApproval: false`). The model also gets the conversation as JSON data and may change only the agent's skills it was shown, with or without approval ([ARCHITECTURE](ARCHITECTURE.md#4-memory-model-and-pipeline)).
 
 ### Other changes
 

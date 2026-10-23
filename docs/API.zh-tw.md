@@ -123,7 +123,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 
 Skill 萃取只提案，在有人核准之前什麼都不會存下：
 
-* `skill/proposal/list` `{team_id, agent_id?}` → `{items: [{task_id, team_id, agent_id, user_id, session_id, archived_at_ms, reason, proposals: [{index, change, base_version?, state}]}]}`，最新的在前。`change` 是 `{action: "create", name, content}`、`{action: "update", skill_id, content}` 或 `{action: "patch", skill_id, old_string, new_string}`。列出呼叫者可以審核的待核准提案，依記憶的規則判斷（提案是從某人的對話萃取出來的）：自己能使用的 agent 上、自己對話的提案（私人 agent 只屬於它的擁有者），自己擔任 admin 的 team 裡的所有提案，系統管理員則是全部。team leader 能看營運狀態，但不是審核者。已封存的 agent 一律不列出、也不能決定。
+* `skill/proposal/list` `{team_id, agent_id?}` → `{items: [{task_id, team_id, agent_id, user_id, session_id, archived_at_ms, reason, proposals: [{index, change, base_version?, state}]}]}`，最新的在前。`change` 是 `{action: "create", name, content}`、`{action: "update", skill_id, content}` 或 `{action: "patch", skill_id, old_string, new_string}`。列出呼叫者可以審核的待核准提案，依記憶的規則判斷（提案是從某人的對話萃取出來的）：自己能使用的 agent 上、自己對話的提案（私人 agent 只屬於它的擁有者），自己擔任 admin 的 team 裡的所有提案，系統管理員則是全部。team leader 能看營運狀態，但不是審核者。已封存的 agent 一律不列出、也不能決定。提案存下前已經過遮罩；未決定的提案會在 `skill.extraction.proposalTtlDays`（預設 30 天）之後過期，不再列出（`state: "expired"`；決定它會得到 404 `skill_proposal_expired`）。
 * `skill/proposal/approve` `{team_id, agent_id, task_id, index}` → `state: "applied"` 的提案，附 `result {action, skill_id, version}`。修改以該對話的 agent 與使用者身分進行。規則依 agent 現在的狀態判斷（之後被封存或改成私人的也算）。skill 在 `base_version` 之後被改過時回 409 `skill_changed`；其他人回 403；已決定過的回 404。同一個 task 的決定一次只處理一個。
 * `skill/proposal/reject` `{team_id, agent_id, task_id, index}` → `state: "rejected"` 的提案。
 

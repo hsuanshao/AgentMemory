@@ -299,6 +299,7 @@ pub async fn build(config: &Config) -> Result<App> {
             archive_bytes: config.skill.extraction.archive_bytes,
             tool_call_threshold: config.skill.extraction.tool_call_threshold,
             require_approval: config.skill.extraction.require_approval,
+            proposal_ttl_days: config.skill.extraction.proposal_ttl_days,
             ..Default::default()
         },
     ));

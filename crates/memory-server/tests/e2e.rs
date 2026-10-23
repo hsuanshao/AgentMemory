@@ -1172,9 +1172,8 @@ async fn wait_for_proposal(client: &Client) -> Value {
     panic!("no skill proposal appeared");
 }
 
-/// Answers skill reviews with two new skills; everything else as `fake_llm`.
-async fn spawn_two_skill_llm() -> String {
-    const TWO: &str = r###"{"actions":[{"action":"create","name":"deploy-steps","content":"---\nname: deploy-steps\ndescription: How to deploy\n---\n1. Build\n2. Ship"},{"action":"create","name":"rollback-steps","content":"---\nname: rollback-steps\ndescription: How to roll back\n---\n1. Restore"}],"summary":"two skills"}"###;
+/// Answers skill reviews with `reply`; everything else as `fake_llm`.
+async fn spawn_skill_llm(reply: &'static str) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -1182,10 +1181,10 @@ async fn spawn_two_skill_llm() -> String {
             listener,
             Router::new().route(
                 "/v1/chat/completions",
-                post(|Json(req): Json<Value>| async move {
+                post(move |Json(req): Json<Value>| async move {
                     let system = req["messages"][0]["content"].as_str().unwrap_or_default();
                     if system.starts_with("You review a finished agent conversation") {
-                        return Json(json!({"choices": [{"message": {"role": "assistant", "content": TWO}}]}));
+                        return Json(json!({"choices": [{"message": {"role": "assistant", "content": reply}}]}));
                     }
                     fake_llm(Json(req)).await
                 }),
@@ -1195,6 +1194,32 @@ async fn spawn_two_skill_llm() -> String {
         .unwrap()
     });
     format!("http://{addr}/v1")
+}
+
+async fn spawn_two_skill_llm() -> String {
+    spawn_skill_llm(r###"{"actions":[{"action":"create","name":"deploy-steps","content":"---\nname: deploy-steps\ndescription: How to deploy\n---\n1. Build\n2. Ship"},{"action":"create","name":"rollback-steps","content":"---\nname: rollback-steps\ndescription: How to roll back\n---\n1. Restore"}],"summary":"two skills"}"###).await
+}
+
+/// A proposal is stored redacted, like any other write: a credential the
+/// model copied from the conversation never reaches the review list.
+#[tokio::test(flavor = "multi_thread")]
+async fn skill_proposals_are_stored_redacted() {
+    let base_url = spawn_skill_llm(r###"{"actions":[{"action":"create","name":"db-login","content":"---\nname: db-login\ndescription: Log in to the database\n---\n資料庫密碼是 Hunter2xyz99"}],"summary":"db"}"###).await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+    })
+    .await;
+    archive_tool_turns(
+        &client,
+        &client.member_key,
+        client.scoped_for(json!({}), None),
+    )
+    .await;
+    let task = wait_for_proposal(&client).await;
+    let content = task["proposals"][0]["change"]["content"].as_str().unwrap();
+    assert!(!content.contains("Hunter2xyz99"), "{content}");
+    assert!(content.contains("[REDACTED:"), "{content}");
 }
 
 /// A tool-heavy turn on `body`'s agent, as `key`.

@@ -72,4 +72,48 @@ impl MetaService {
             author,
         )
     }
+
+    /// `authorize_proposal_review` for several `(agent_id, author)` pairs of
+    /// one team: the caller's membership is read once, each agent once.
+    pub async fn authorize_proposal_reviews(
+        &self,
+        department: &DepartmentId,
+        caller: &Caller,
+        team_id: &str,
+        pairs: &[(String, String)],
+    ) -> DomainResult<Vec<bool>> {
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let membership = self
+            .active_membership(department, team_id, &caller.user_id)
+            .await?;
+        let mut agents = std::collections::HashMap::new();
+        for (agent_id, _) in pairs {
+            if !agents.contains_key(agent_id) {
+                let agent = self
+                    .store
+                    .get_agent(department, agent_id)
+                    .await?
+                    .filter(|a| a.team_id == team_id);
+                agents.insert(agent_id.clone(), agent);
+            }
+        }
+        Ok(pairs
+            .iter()
+            .map(|(agent_id, author)| {
+                authorize_proposal_review(
+                    &ScopeFacts {
+                        caller_user_id: &caller.user_id,
+                        is_system_admin: caller.is_system_admin,
+                        membership: membership.as_ref(),
+                        agent: agents.get(agent_id).and_then(Option::as_ref),
+                    },
+                    team_id,
+                    author,
+                )
+                .is_ok()
+            })
+            .collect())
+    }
 }

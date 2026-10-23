@@ -203,7 +203,7 @@ flowchart LR
   J3 -- LLM --> L3[(L3 persona)]
 ```
 
-**Skill 萃取只提案，由人決定。** 大量使用工具的回合裡有網頁、檔案和指令輸出，任何人都能在裡面寫指令。所以模型看到的封存對話是一個 JSON 陣列（裡面的內容無法結束 transcript，也無法冒充指示），只能修改提供給它看的、該 agent 的 skill，而且它建立或修改的內容都會先成為提案（`skill/proposal/*`、Panel 的 Skills 頁），等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效。誰能審核依記憶的規則判斷（`authorize_proposal_review`，與 `authorize_memory_scope` 放在一起），因為提案是從某人的對話萃取出來的：能看營運狀態的 team leader 不是審核者，私人 agent 的提案只屬於它的擁有者與 team admin。規則依審核當下的 agent 狀態判斷，所以已封存的 agent 沒有人能決定。同一個 task 的決定會持有一把鎖（`skill-proposal:<部門>:<task>`），兩個決定同時進來也不會互相覆蓋。核准時會確認 skill 在提案之後沒有被改過。`skill.extraction.requireApproval: false`（`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`）會像 0.4.2 之前一樣直接套用，另外兩項檢查仍然有效。
+**Skill 萃取只提案，由人決定。** 大量使用工具的回合裡有網頁、檔案和指令輸出，任何人都能在裡面寫指令。所以模型拿到的是一份 JSON 物件（它可以修改的該 agent 的 skill、主 agent 的 hint，以及封存的對話；裡面的內容無法結束資料區，也無法冒充指示），只能修改提供給它看的、該 agent 的 skill（最多 20 個：超過時，先挑搜尋結果中與這段對話最相關的，再補上最近的），而且它建立或修改的內容都會先成為提案（`skill/proposal/*`、Panel 的 Skills 頁），等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效。誰能審核依記憶的規則判斷（`authorize_proposal_review`，與 `authorize_memory_scope` 放在一起），因為提案是從某人的對話萃取出來的：能看營運狀態的 team leader 不是審核者，私人 agent 的提案只屬於它的擁有者與 team admin。規則依審核當下的 agent 狀態判斷，所以已封存的 agent 沒有人能決定。同一個 task 的決定會持有一把鎖（`skill-proposal:<部門>:<task>`），兩個決定同時進來也不會互相覆蓋。核准時會確認 skill 在提案之後沒有被改過。提案和其他寫入一樣，存下前會先遮罩；未決定的提案會在 `skill.extraction.proposalTtlDays`（預設 30 天，`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`，0 表示永不過期）之後過期。`skill.extraction.requireApproval: false`（`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`）會像 0.4.2 之前一樣直接套用，另外兩項檢查仍然有效。
 
 觸發參數來自 `config/memory-core.example.yaml`（`memory.pipeline.*`、`memory.persona.triggerEveryN`）。
 
