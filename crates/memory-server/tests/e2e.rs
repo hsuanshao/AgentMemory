@@ -569,6 +569,9 @@ async fn admins_add_redaction_rules_that_writes_follow() {
         json!({"kind": "all", "pattern": "a*"}),
         json!({"kind": "jwt", "pattern": r"\bJWT\d+\b"}),
         json!({"kind": "emp-id", "pattern": "("}),
+        // Too broad: it would wipe every write.
+        json!({"kind": "words", "pattern": r"\w+"}),
+        json!({"kind": "any", "pattern": "."}),
     ] {
         let refused = admin("/v3/meta/redaction-rule/create", body.clone()).await;
         assert_ne!(refused["code"], 0, "{body}: {refused}");
@@ -592,6 +595,25 @@ async fn admins_add_redaction_rules_that_writes_follow() {
         stored("one EMP-111111").await,
         "one EMP-111111",
         "not saved yet"
+    );
+
+    // A broad pattern can be previewed, and says it would be refused.
+    let broad = admin(
+        "/v3/meta/redaction-rule/test",
+        json!({"text": "We release v2 next Monday", "kind": "words", "pattern": r"\S+"}),
+    )
+    .await;
+    assert_eq!(broad["code"], 0, "{broad}");
+    assert!(
+        broad["data"]["pattern_share"].as_f64().unwrap() > 0.5,
+        "{broad}"
+    );
+    assert!(
+        broad["data"]["refused"]
+            .as_str()
+            .unwrap()
+            .contains("too broad"),
+        "{broad}"
     );
 
     // Saved: the next write follows it.

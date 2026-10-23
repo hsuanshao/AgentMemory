@@ -97,6 +97,10 @@ pub struct RedactionHit {
 pub struct TestRedactionResult {
     pub redacted: String,
     pub hits: Vec<RedactionHit>,
+    /// With a pattern: the share of the sample it matches, from 0 to 1.
+    pub pattern_share: Option<f64>,
+    /// With a pattern: why it could not be saved (too broad), if so.
+    pub refused: Option<String>,
 }
 
 pub struct RedactionService {
@@ -200,7 +204,7 @@ impl RedactionService {
         input: CreateRedactionRuleInput,
     ) -> DomainResult<RedactionRule> {
         require_system_admin(caller)?;
-        check_rule(&input.kind, &input.pattern, &input.description)?;
+        self.check(&input.kind, &input.pattern, &input.description)?;
         let rules = self.rules.list_redaction_rules(department).await?;
         check_room(&rules, None)?;
         let now = self.now();
@@ -236,7 +240,7 @@ impl RedactionService {
         if let Some(description) = input.description {
             rule.description = description;
         }
-        check_rule(&rule.kind, &rule.pattern, &rule.description)?;
+        self.check(&rule.kind, &rule.pattern, &rule.description)?;
         self.touch(&mut rule, caller);
         self.save(department, &rule).await?;
         Ok(rule)
@@ -260,8 +264,8 @@ impl RedactionService {
                 &self.rules.list_redaction_rules(department).await?,
                 Some(rule_id),
             )?;
-            // Checked again: the regex crate may have changed since.
-            check_rule(&rule.kind, &rule.pattern, &rule.description)?;
+            // Checked again: the rules may have changed since.
+            self.check(&rule.kind, &rule.pattern, &rule.description)?;
         }
         rule.enabled = enabled;
         self.touch(&mut rule, caller);
@@ -283,10 +287,17 @@ impl RedactionService {
                 "text is limited to {MAX_TEXT_CHARS} characters"
             )));
         }
+        // A broad pattern is still previewed, so its effect is visible;
+        // `refused` says it would not be saved.
+        let (mut pattern_share, mut refused) = (None, None);
         let extra = match input.pattern {
             Some(pattern) => {
                 let kind = input.kind.unwrap_or_else(|| "preview".into());
                 check_rule(&kind, &pattern, "")?;
+                pattern_share = Some(
+                    memory_redact::coverage(&pattern, &input.text).map_err(DomainError::invalid)?,
+                );
+                refused = self.check(&kind, &pattern, "").err().map(|e| e.detail);
                 Some((kind, pattern))
             }
             None => None,
@@ -299,7 +310,22 @@ impl RedactionService {
                 .into_iter()
                 .map(|(kind, count)| RedactionHit { kind, count })
                 .collect(),
+            pattern_share,
+            refused,
         })
+    }
+
+    /// What a saved rule must pass: [`check_rule`], a kind that is not the
+    /// deployment's either, and a pattern that is not too broad.
+    fn check(&self, kind: &str, pattern: &str, description: &str) -> DomainResult<()> {
+        check_rule(kind, pattern, description)?;
+        if self.deployment.patterns.iter().any(|(k, _)| k == kind) {
+            return Err(DomainError::invalid(format!(
+                "{kind} is a kind of the deployment's redaction.patterns"
+            )));
+        }
+        memory_redact::check_pattern_breadth(pattern)
+            .map_err(|e| DomainError::invalid(format!("pattern is too broad: {e}")))
     }
 
     async fn find(&self, department: &DepartmentId, rule_id: &str) -> DomainResult<RedactionRule> {
@@ -330,7 +356,9 @@ impl RedactionService {
 }
 
 /// A kind is what `[REDACTED:<kind>]` shows: short, lowercase, and not one
-/// of the built-in ones, so a marker always says which layer caught it.
+/// of the built-in ones (nor the deployment's, see
+/// [`RedactionService::check`]), so a marker always says which layer caught
+/// it.
 fn check_rule(kind: &str, pattern: &str, description: &str) -> DomainResult<()> {
     let valid_kind = (1..=40).contains(&kind.len())
         && kind
@@ -409,6 +437,88 @@ mod tests {
         let long = "x".repeat(MAX_PATTERN_CHARS + 1);
         assert!(check_rule("emp", &long, "").is_err());
         assert!(check_rule("emp", r"x\d", &"d".repeat(201)).is_err());
+    }
+
+    struct Rules(Mutex<Vec<RedactionRule>>);
+
+    #[async_trait::async_trait]
+    impl RedactionRuleRepository for Rules {
+        async fn list_redaction_rules(&self, _: &DepartmentId) -> DomainResult<Vec<RedactionRule>> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        async fn put_redaction_rule(
+            &self,
+            _: &DepartmentId,
+            rule: &RedactionRule,
+        ) -> DomainResult<()> {
+            let mut rules = self.0.lock().unwrap();
+            rules.retain(|r| r.rule_id != rule.rule_id);
+            rules.push(rule.clone());
+            Ok(())
+        }
+    }
+
+    struct Fixed;
+    impl Clock for Fixed {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::DateTime::from_timestamp(0, 0).unwrap()
+        }
+    }
+    impl IdGenerator for Fixed {
+        fn next(&self, prefix: &str) -> String {
+            format!("{prefix}1")
+        }
+        fn hex(&self, n: usize) -> String {
+            "a".repeat(n)
+        }
+        fn secret(&self, bytes: usize) -> String {
+            "s".repeat(bytes)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_kind_of_the_deployment_or_a_broad_pattern_is_refused() {
+        let service = RedactionService::new(
+            DeploymentRules {
+                password_shape: true,
+                patterns: vec![("tw-national-id".into(), r"\b[A-Z][12]\d{8}\b".into())],
+            },
+            Arc::new(Rules(Mutex::new(Vec::new()))),
+            Arc::new(Fixed),
+            Arc::new(Fixed),
+        );
+        let department = DepartmentId::parse("department", "d").unwrap();
+        let admin = Caller {
+            user_id: "usr-admin".into(),
+            is_system_admin: true,
+        };
+        let create = |kind: &str, pattern: &str| CreateRedactionRuleInput {
+            kind: kind.into(),
+            pattern: pattern.into(),
+            description: String::new(),
+        };
+        let err = service
+            .create(&department, &admin, create("tw-national-id", r"\bX\d{9}\b"))
+            .await
+            .unwrap_err();
+        assert!(err.detail.contains("deployment"), "{err:?}");
+        let err = service
+            .create(&department, &admin, create("words", r"\w+"))
+            .await
+            .unwrap_err();
+        assert!(err.detail.contains("too broad"), "{err:?}");
+        let member = Caller {
+            user_id: "usr-m".into(),
+            is_system_admin: false,
+        };
+        assert!(service
+            .create(&department, &member, create("emp-id", r"\bEMP-\d{6}\b"))
+            .await
+            .is_err());
+        assert!(service
+            .create(&department, &admin, create("emp-id", r"\bEMP-\d{6}\b"))
+            .await
+            .is_ok());
     }
 
     #[test]

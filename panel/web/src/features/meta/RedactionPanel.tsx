@@ -117,6 +117,21 @@ export function RedactionPanel() {
           </div>
           {preview && (
             <>
+              {preview.refused ? (
+                <div role="alert" className="rounded-sm border border-err/40 bg-err/10 px-3 py-2 text-xs text-err">
+                  This pattern would not be saved: {preview.refused}. Rules apply before anything is stored, so a broad one would erase every write.
+                </div>
+              ) : (
+                preview.pattern_share != null &&
+                preview.pattern_share > 0.2 && (
+                  <div role="alert" className="rounded-sm border border-warn/40 bg-warn/10 px-3 py-2 text-xs">
+                    The pattern matches {Math.round(preview.pattern_share * 100)}% of this sample. Check it is meant to.
+                  </div>
+                )
+              )}
+              {preview.pattern_share != null && (
+                <span className="text-xxs text-muted">Pattern matches {Math.round(preview.pattern_share * 100)}% of the sample.</span>
+              )}
               <CodeBlock>{preview.redacted}</CodeBlock>
               <div className="flex flex-wrap gap-1">
                 {preview.hits.length === 0 ? (

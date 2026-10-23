@@ -361,6 +361,10 @@ export interface RedactionRuleListing {
 export interface RedactionTestResult {
   redacted: string;
   hits: { kind: string; count: number }[];
+  /** With a pattern: the share of the sample it matches, 0 to 1. */
+  pattern_share?: number | null;
+  /** With a pattern: why it would not be saved (too broad), if so. */
+  refused?: string | null;
 }
 
 export interface UserKeyInfo {

@@ -373,6 +373,78 @@ pub fn check_pattern(pattern: &str) -> Result<(), String> {
     compile_extra(pattern).map(|_| ())
 }
 
+/// A marker left by a rule, here or in the client.
+fn marker() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[REDACTED:[^\]\s]*\]").expect("valid marker pattern"))
+}
+
+/// `f` applied to the text between markers; the markers are kept as they are.
+fn outside_markers(text: &str, mut f: impl FnMut(&str) -> String) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for m in marker().find_iter(text) {
+        out.push_str(&f(&text[last..m.start()]));
+        out.push_str(m.as_str());
+        last = m.end();
+    }
+    out.push_str(&f(&text[last..]));
+    out
+}
+
+/// Everyday text, English and Chinese, prose and a little code, with no
+/// secret in it: what a pattern an administrator adds must leave mostly
+/// alone (see [`check_pattern_breadth`]).
+const ORDINARY_TEXT: &[&str] = &[
+    "We release v2 next Monday; I always run the integration tests first.",
+    "The API returns 404 when the user is missing, so check the SQL query.",
+    "Please review the pull request before the meeting at 3 pm.",
+    "下週一發布第二版，我會先跑整合測試，再請大家看過 PR。",
+    "資料庫連線失敗時，先確認服務有沒有啟動，再看日誌。",
+    "fn main() { let total = items.iter().map(|x| x.price).sum::<u32>(); }",
+    "會議改到星期三下午兩點，地點在三樓會議室。",
+];
+
+/// Share of [`ORDINARY_TEXT`] a pattern may match, at most.
+pub const MAX_ORDINARY_SHARE: f64 = 0.2;
+
+/// Share of `text`'s characters that `pattern` matches, from 0 to 1.
+pub fn coverage(pattern: &str, text: &str) -> Result<f64, String> {
+    let re = compile_extra(pattern)?;
+    let total = text.chars().count();
+    if total == 0 {
+        return Ok(0.0);
+    }
+    let matched: usize = re.find_iter(text).map(|m| m.as_str().chars().count()).sum();
+    Ok(matched as f64 / total as f64)
+}
+
+/// Refuses a pattern so broad that it would wipe ordinary text: one that
+/// matches a single letter, digit or CJK character on its own (`.`, `\w`,
+/// `\d`, `e`), or more than [`MAX_ORDINARY_SHARE`] of everyday sentences
+/// (`\S+`, `\w+`). Redaction happens before anything is stored, so such a
+/// rule would destroy every write until it is noticed.
+pub fn check_pattern_breadth(pattern: &str) -> Result<(), String> {
+    let re = compile_extra(pattern)?;
+    if let Some(c) = ["a", "e", "Z", "7", "中", "あ"]
+        .into_iter()
+        .find(|c| re.is_match(c))
+    {
+        return Err(format!(
+            "it matches the single character {c:?}; make it specific"
+        ));
+    }
+    let share = coverage(pattern, &ORDINARY_TEXT.join("\n"))?;
+    if share > MAX_ORDINARY_SHARE {
+        return Err(format!(
+            "it matches {:.0}% of ordinary text (at most {:.0}%); make it specific",
+            share * 100.0,
+            MAX_ORDINARY_SHARE * 100.0
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Check {
     /// The pattern alone decides.
@@ -466,6 +538,9 @@ impl Redactor {
 
     /// Like [`Redactor::redact`], also returning how many secrets each kind
     /// replaced (kinds that replaced none are left out), in rule order.
+    /// Text already redacted (`[REDACTED:…]`, from the client or an earlier
+    /// rule) is left as it is: rules only see the text between markers, so
+    /// redacting twice changes nothing and a marker always names its rule.
     pub fn redact_counted(&self, text: &str) -> (String, Vec<(String, usize)>) {
         let mut out = text.to_owned();
         let mut hits = Vec::new();
@@ -474,37 +549,41 @@ impl Redactor {
                 continue;
             }
             let mut n = 0;
-            out = rule
-                .re
-                .replace_all(&out, |c: &Captures| match rule.check {
-                    // A zero-width match (`\b`) has nothing to hide.
-                    _ if c[0].is_empty() => String::new(),
-                    Check::Phrase
-                        if c.name("strong").is_none()
-                            && c.name("strong2").is_none()
-                            && !looks_like_secret(&c["value"]) =>
-                    {
-                        c[0].to_owned()
-                    }
-                    Check::Assignment if names_a_setting(&c["key"]) => c[0].to_owned(),
-                    Check::Shape => {
-                        let run = &c[0];
-                        let core = run.trim_matches(WRAPPING);
-                        if !looks_like_password(core) {
-                            return run.to_owned();
+            out = outside_markers(&out, |gap| {
+                if !rule.re.is_match(gap) {
+                    return gap.to_owned();
+                }
+                rule.re
+                    .replace_all(gap, |c: &Captures| match rule.check {
+                        // A zero-width match (`\b`) has nothing to hide.
+                        _ if c[0].is_empty() => String::new(),
+                        Check::Phrase
+                            if c.name("strong").is_none()
+                                && c.name("strong2").is_none()
+                                && !looks_like_secret(&c["value"]) =>
+                        {
+                            c[0].to_owned()
                         }
-                        n += 1;
-                        let start = run.len() - run.trim_start_matches(WRAPPING).len();
-                        let end = start + core.len();
-                        format!("{}[REDACTED:{}]{}", &run[..start], rule.kind, &run[end..])
-                    }
-                    _ => {
-                        n += 1;
-                        let keep = c.name("keep").map_or("", |m| m.as_str());
-                        format!("{keep}[REDACTED:{}]", rule.kind)
-                    }
-                })
-                .into_owned();
+                        Check::Assignment if names_a_setting(&c["key"]) => c[0].to_owned(),
+                        Check::Shape => {
+                            let run = &c[0];
+                            let core = run.trim_matches(WRAPPING);
+                            if !looks_like_password(core) {
+                                return run.to_owned();
+                            }
+                            n += 1;
+                            let start = run.len() - run.trim_start_matches(WRAPPING).len();
+                            let end = start + core.len();
+                            format!("{}[REDACTED:{}]{}", &run[..start], rule.kind, &run[end..])
+                        }
+                        _ => {
+                            n += 1;
+                            let keep = c.name("keep").map_or("", |m| m.as_str());
+                            format!("{keep}[REDACTED:{}]", rule.kind)
+                        }
+                    })
+                    .into_owned()
+            });
             if n > 0 {
                 hits.push((rule.kind.clone(), n));
             }
@@ -613,7 +692,10 @@ pub fn redact(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{builtin_kinds, check_pattern, is_secret_key, redact, Redactor};
+    use super::{
+        builtin_kinds, check_pattern, check_pattern_breadth, coverage, is_secret_key, redact,
+        Redactor,
+    };
 
     /// `prefix` followed by `len` filler characters. Fixtures are built at
     /// runtime so the source holds no token-shaped literal for a secret
@@ -877,6 +959,44 @@ mod tests {
         // Zero-width elsewhere: allowed, but never inserts a marker.
         let r = Redactor::with_extra(&[("edge".into(), r"\b".into())]).unwrap();
         assert_eq!(r.redact("two words"), "two words");
+    }
+
+    #[test]
+    fn existing_markers_are_left_alone() {
+        let r = Redactor::with_extra(&[("x".into(), "[A-Z]{3,}".into())]).unwrap();
+        assert_eq!(
+            r.redact("pw: Hunter2xyz99 and ABC"),
+            "pw: [REDACTED:secret-phrase] and [REDACTED:x]"
+        );
+        // A marker the client already wrote stays as it is.
+        assert_eq!(
+            r.redact("[REDACTED:openai-key] then ABC"),
+            "[REDACTED:openai-key] then [REDACTED:x]"
+        );
+        // Redacting again changes nothing.
+        let once = r.redact("pw: Hunter2xyz99 and ABC");
+        assert_eq!(r.redact(&once), once);
+    }
+
+    #[test]
+    fn broad_patterns_are_refused_specific_ones_kept() {
+        for broad in [".", r"\w", r"\d", "e", r"\S+", r"[\s\S]+", r"\w+", "[a-z]+"] {
+            assert!(check_pattern_breadth(broad).is_err(), "{broad}");
+        }
+        for specific in [
+            r"\bEMP-\d{6}\b",
+            r"\w+@corp\.com",
+            r"\b[A-Z][12]\d{8}\b",
+            "[A-Z]{3,}",
+            r"(?P<keep>\btel:\s*)\+?\d[\d -]{7,}\d",
+        ] {
+            assert!(
+                check_pattern_breadth(specific).is_ok(),
+                "{specific}: {:?}",
+                check_pattern_breadth(specific)
+            );
+        }
+        assert!((coverage("ab", "abab").unwrap() - 1.0).abs() < 1e-9);
     }
 
     #[test]
