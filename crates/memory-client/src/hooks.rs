@@ -102,6 +102,98 @@ impl Cursor {
             log(&format!("cursor save failed: {e}"));
         }
     }
+
+    /// Reads the cursor at `path`, lets `change` edit it and writes it back.
+    /// Every writer of a Claude Code cursor goes through here, so no write
+    /// lands between another writer's read and its write.
+    fn update<R>(path: PathBuf, change: impl FnOnce(&mut Value) -> R) -> R {
+        let _lock = CursorLock::acquire(&path);
+        let mut cursor = Self::at(path);
+        let out = change(&mut cursor.state);
+        cursor.save();
+        out
+    }
+}
+
+/// An exclusive `flock` on `<cursor>.lock`, held for one read-change-write.
+/// The lock file lives as long as the cursor; whoever cleans up old session
+/// state removes both.
+/// The cursor itself is replaced by rename on every save, so a lock on it
+/// would be on a file that is already gone. The kernel drops the lock when
+/// the process exits, so a crash leaves nothing to clean up.
+struct CursorLock(#[allow(dead_code)] Option<std::fs::File>);
+
+impl CursorLock {
+    fn acquire(cursor: &Path) -> Self {
+        let mut path = cursor.as_os_str().to_owned();
+        path.push(".lock");
+        let file = Self::open(Path::new(&path)).and_then(|file| {
+            Self::lock(&file)?;
+            Ok(file)
+        });
+        match file {
+            Ok(file) => Self(Some(file)),
+            Err(e) => {
+                // Better an unlocked write than a hook that fails.
+                log(&format!("cursor lock failed: {e}"));
+                Self(None)
+            }
+        }
+    }
+
+    fn open(path: &Path) -> std::io::Result<std::fs::File> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).truncate(false).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(path)
+    }
+
+    /// How long a hook waits for the lock. A holder only reads and writes
+    /// a small local file; one that has not let go in this time is stopped
+    /// or stuck, and the hook writes without the lock rather than hang.
+    const WAIT: Duration = Duration::from_secs(1);
+
+    #[cfg(unix)]
+    fn lock(file: &std::fs::File) -> std::io::Result<()> {
+        use std::io::ErrorKind;
+        use std::os::unix::io::AsRawFd;
+        let deadline = std::time::Instant::now() + Self::WAIT;
+        loop {
+            // SAFETY: flock on a descriptor this File owns; it is released
+            // when the File is closed.
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                return Ok(());
+            }
+            let e = std::io::Error::last_os_error();
+            match e.kind() {
+                ErrorKind::Interrupted => {}
+                ErrorKind::WouldBlock if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                ErrorKind::WouldBlock => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::TimedOut,
+                        format!("held by another process for {:?}", Self::WAIT),
+                    ));
+                }
+                _ => return Err(e),
+            }
+        }
+    }
+
+    /// Releases ship for Linux and macOS only; elsewhere writes stay
+    /// unlocked, as before.
+    #[cfg(not(unix))]
+    fn lock(_file: &std::fs::File) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn read_transcript(path: &str) -> Option<String> {
@@ -228,46 +320,32 @@ pub fn claude_code_user_prompt_submit() {
         .unwrap_or_default()
         .trim();
     let every = api.config().system_context_every();
-    let mut cursor = input["session_id"]
+    let decide = |state: &mut Value| prompt_context(state, memories, system, every);
+    // The recall is done: nothing below waits on the network.
+    let context = match input["session_id"]
         .as_str()
         .filter(|s| !s.is_empty() && every != 1)
-        .map(|session| Cursor::open("claude-code", session));
-    let send_system = match cursor.as_mut() {
-        Some(c) => system_context_due(&mut c.state, system, every),
-        None => true,
+    {
+        Some(session) => Cursor::update(Cursor::path("claude-code", session), decide),
+        // Nothing to compare against: a fresh state sends everything.
+        None => decide(&mut json!({})),
     };
-    let full = compose_context(memories, system, send_system);
-    let context = clip(&full, MAX_CONTEXT_CHARS);
-    if send_system && context.len() < full.len() {
-        // The host got a cut persona: try again next prompt.
-        if let Some(c) = cursor.as_mut() {
-            forget_system_context(&mut c.state);
-        }
-    }
-    if let Some(c) = &cursor {
-        save_system_context(c);
-    }
     if !context.is_empty() {
         println!("{}", hook_context("UserPromptSubmit", &context));
     }
 }
 
-/// Writes the prompt's decision to the cursor file. Re-reads first: a Stop
-/// that finished meanwhile owns `line` and `tail`, and the prompt owns only
-/// the system-context keys.
-fn save_system_context(decided: &Cursor) {
-    let mut cursor = Cursor::at(decided.path.clone());
-    for key in [SYSTEM_CONTEXT_HASH, SYSTEM_CONTEXT_AGE] {
-        match decided.state.get(key) {
-            Some(v) => cursor.state[key] = v.clone(),
-            None => {
-                if let Some(map) = cursor.state.as_object_mut() {
-                    map.remove(key);
-                }
-            }
-        }
+/// Decides on the fixed part for this prompt, records it in `state` and
+/// returns the context to inject.
+fn prompt_context(state: &mut Value, memories: &str, system: &str, every: u64) -> String {
+    let send_system = system_context_due(state, system, every);
+    let full = compose_context(memories, system, send_system);
+    let context = clip(&full, MAX_CONTEXT_CHARS);
+    if send_system && context.len() < full.len() {
+        // The host got a cut persona: try again next prompt.
+        forget_system_context(state);
     }
-    cursor.save();
+    context.to_owned()
 }
 
 /// The memories, then the fixed part when it is due.
@@ -289,9 +367,7 @@ pub fn claude_code_session_start() {
     let Some(session) = input["session_id"].as_str().filter(|s| !s.is_empty()) else {
         return;
     };
-    let mut cursor = Cursor::open("claude-code", session);
-    forget_system_context(&mut cursor.state);
-    cursor.save();
+    Cursor::update(Cursor::path("claude-code", session), forget_system_context);
 }
 
 /// Sends the transcript lines added since the last Stop. The transcript can
@@ -313,7 +389,7 @@ pub fn claude_code_stop() {
 /// The Stop above, with the cursor file and the delivery pluggable.
 fn claude_code_stop_at(text: &str, input: &Value, cursor: PathBuf, deliver: impl FnOnce(Vec<Msg>)) {
     let lines = complete_lines(text);
-    let mut cursor = Cursor::at(cursor);
+    let cursor = Cursor::at(cursor);
     let mut from = cursor.state["line"].as_u64().unwrap_or(0) as usize;
     if from > lines.len() {
         from = 0;
@@ -365,12 +441,10 @@ fn claude_code_stop_at(text: &str, input: &Value, cursor: PathBuf, deliver: impl
     }
 
     deliver(msgs);
-    // Re-read before writing: a UserPromptSubmit that ran during the
-    // capture may have changed the system-context keys, and Stop owns only
-    // `line` and `tail`.
-    cursor = Cursor::at(cursor.path);
-    record_stop(&mut cursor.state, lines.len(), tail);
-    cursor.save();
+    // Read again, not across the delivery: a UserPromptSubmit that ran
+    // during the capture may have changed the system-context keys, and
+    // Stop owns only `line` and `tail`.
+    Cursor::update(cursor.path, |state| record_stop(state, lines.len(), tail));
 }
 
 /// Stop's part of the cursor; every other key is left as it is.
@@ -592,18 +666,71 @@ mod tests {
     fn prompt_keeps_what_stop_recorded_meanwhile() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.json");
-        let mut prompt = Cursor::at(path.clone());
-        assert!(system_context_due(&mut prompt.state, "persona", 0));
-        // Stop finishes while the prompt is still deciding.
-        let mut stop = Cursor::at(path.clone());
-        record_stop(&mut stop.state, 7, json!("done"));
-        stop.save();
+        let (inside, entered) = std::sync::mpsc::channel();
+        let prompt_path = path.clone();
+        let prompt = std::thread::spawn(move || {
+            Cursor::update(prompt_path, |state| {
+                inside.send(()).unwrap();
+                // Stop tries to record while the prompt is deciding.
+                std::thread::sleep(Duration::from_millis(200));
+                prompt_context(state, "memories", "persona", 0)
+            })
+        });
+        entered.recv().unwrap();
+        Cursor::update(path.clone(), |state| record_stop(state, 7, json!("done")));
+        assert!(prompt.join().unwrap().contains("persona"));
 
-        save_system_context(&prompt);
         let mut after = Cursor::at(path);
         assert_eq!(after.state["line"], 7);
         assert_eq!(after.state["tail"], "done");
         assert!(!system_context_due(&mut after.state, "persona", 0));
+    }
+
+    #[test]
+    fn cursor_updates_from_two_writers_are_not_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        let writers: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|key| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..20 {
+                        Cursor::update(path.clone(), |state| {
+                            let n = state[key].as_u64().unwrap_or(0);
+                            // Widen the read-to-write window.
+                            std::thread::sleep(Duration::from_millis(1));
+                            state[key] = json!(n + 1);
+                        });
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let after = Cursor::at(path);
+        assert_eq!(after.state["a"], 20);
+        assert_eq!(after.state["b"], 20);
+    }
+
+    #[test]
+    fn a_held_lock_delays_a_writer_by_about_a_second_not_forever() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        // Another process stopped while holding the lock.
+        let held = CursorLock::acquire(&path);
+        let (done, finished) = std::sync::mpsc::channel();
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            Cursor::update(writer_path, |state| state["x"] = json!(1));
+            done.send(()).unwrap();
+        });
+        let result = finished.recv_timeout(Duration::from_secs(3));
+        drop(held);
+        writer.join().unwrap();
+        assert!(result.is_ok(), "the writer waited for the lock past 3 s");
+        assert_eq!(Cursor::at(path).state["x"], 1);
     }
 
     #[test]
