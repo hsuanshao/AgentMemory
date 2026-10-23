@@ -26,6 +26,11 @@ pub struct Config {
     /// only when they change, `1` on every prompt, `N` every N prompts.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub system_context_every: String,
+    /// A PEM file of a CA to trust besides the built-in ones, for a server
+    /// whose certificate comes from a private CA (Caddy's own for an IP
+    /// address). Empty by default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ca_cert: String,
 }
 
 fn default_department_id() -> String {
@@ -41,7 +46,7 @@ const FIELDS: [&str; 5] = [
 ];
 
 /// Settings that may stay empty, overridable like `FIELDS`.
-const OPTIONAL_FIELDS: [&str; 2] = ["skip_prompt_prefixes", "system_context_every"];
+const OPTIONAL_FIELDS: [&str; 3] = ["skip_prompt_prefixes", "system_context_every", "ca_cert"];
 
 impl Config {
     /// File (if any) plus environment overrides.
@@ -76,6 +81,7 @@ impl Config {
             "team_id" => &mut self.team_id,
             "skip_prompt_prefixes" => &mut self.skip_prompt_prefixes,
             "system_context_every" => &mut self.system_context_every,
+            "ca_cert" => &mut self.ca_cert,
             _ => &mut self.agent_id,
         }
     }

@@ -12,6 +12,10 @@
 #   INSTALL_COORDINATION   local | redis-docker | redis-url          (default local)
 #   INSTALL_LLM            openai | claude | antigravity | codex     (default openai)
 #   INSTALL_ADMIN_NAME     first administrator's username            (default admin)
+#   INSTALL_NETWORK        local | lan | tls                          (default local)
+#                          local: ports on 127.0.0.1 only; lan: on every network
+#                          (plain HTTP); tls: HTTPS with Caddy on TLS_SITE
+#   TLS_SITE               domain or IP address for INSTALL_NETWORK=tls
 #   AGENT_MEMORY_POSTGRES_URL, AGENT_MEMORY_REDIS_URL, AGENT_MEMORY_LLM_BASE_URL,
 #   AGENT_MEMORY_LLM_API_KEY, AGENT_MEMORY_LLM_MODEL, ANTHROPIC_API_KEY,
 #   PROJECT_DIR, CORE_PORT, PANEL_PORT, MEMORY_IMAGE_TAG
@@ -279,6 +283,24 @@ configure_ports() {
   ask_port PANEL_PORT "Monitor Panel port" "${PANEL_PORT:-8125}"
 }
 
+configure_network() {
+  choose INSTALL_NETWORK "Who reaches memory-core and the Panel" local \
+    "local|Only this machine (default; ports on 127.0.0.1)" \
+    "lan|Other machines over plain HTTP (ports on every network; keys travel unencrypted)" \
+    "tls|Other machines over HTTPS (Caddy on ports 80/443; memory-core and the Panel stay on 127.0.0.1)"
+  case $INSTALL_NETWORK in
+    local) BIND_ADDR=127.0.0.1 ;;
+    lan) BIND_ADDR=0.0.0.0 ;;
+    tls)
+      BIND_ADDR=127.0.0.1
+      ask TLS_SITE "Domain name or IP address clients will use" "${TLS_SITE:-localhost}"
+      [[ -n $TLS_SITE ]] || fail "TLS_SITE is empty."
+      PROFILES+=(tls)
+      ;;
+    *) fail "Unknown INSTALL_NETWORK: $INSTALL_NETWORK" ;;
+  esac
+}
+
 # ── outputs ──────────────────────────────────────────────────────────
 
 write_env() {
@@ -298,6 +320,8 @@ COMPOSE_PROFILES=$profiles
 AGENT_MEMORY_API_KEY=$AGENT_MEMORY_API_KEY
 CORE_PORT=$CORE_PORT
 PANEL_PORT=$PANEL_PORT
+BIND_ADDR=${BIND_ADDR:-127.0.0.1}
+TLS_SITE=${TLS_SITE:-}
 CORE_DEPARTMENT_ID=default
 MEMORY_IMAGE_TAG=${MEMORY_IMAGE_TAG:-local}
 
@@ -346,10 +370,11 @@ start_services() {
 create_admin() {
   ask INSTALL_ADMIN_NAME "First administrator's username" "${INSTALL_ADMIN_NAME:-admin}"
   local response
+  # The key goes in on stdin (-H @-), not on the command line, where other
+  # users of this machine could read it.
   response=$(curl -sS -X POST "http://127.0.0.1:$CORE_PORT/v3/internal/meta/user/init-admin" \
-    -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
-    -H "x-memory-department-id: default" -H "content-type: application/json" \
-    -d "{\"username\":\"$INSTALL_ADMIN_NAME\"}")
+    -H @- -H "x-memory-department-id: default" -H "content-type: application/json" \
+    -d "{\"username\":\"$INSTALL_ADMIN_NAME\"}" <<<"Authorization: Bearer $AGENT_MEMORY_API_KEY")
   if [[ $response == *'"code":0'* ]]; then
     ADMIN_KEY=$(sed -n 's/.*"user_key":"\([^"]*\)".*/\1/p' <<<"$response")
   elif [[ $response == *already_initialized* ]]; then
@@ -362,8 +387,15 @@ create_admin() {
 print_summary() {
   echo
   bold "Agent Memory is running"
-  info "Monitor Panel : http://localhost:$PANEL_PORT"
-  info "memory-core   : http://localhost:$CORE_PORT  (Bearer token in $ENV_FILE)"
+  if [[ ${BIND_ADDR:-} == 127.0.0.1 && -n ${TLS_SITE:-} ]]; then
+    info "Monitor Panel : https://$TLS_SITE"
+    info "memory-core   : https://$TLS_SITE  (clients: amem login --server-url https://$TLS_SITE)"
+  else
+    info "Monitor Panel : http://localhost:$PANEL_PORT"
+    info "memory-core   : http://localhost:$CORE_PORT  (Bearer token in $ENV_FILE)"
+  fi
+  [[ ${BIND_ADDR:-} == 127.0.0.1 && -z ${TLS_SITE:-} ]] &&
+    info "Reachable from this machine only (BIND_ADDR=127.0.0.1); docs/ops/TLS.md opens it to others over HTTPS."
   info "Storage       : $STORAGE_BACKEND    Coordination: $COORDINATION_BACKEND    LLM: $INSTALL_LLM"
   if [[ -n ${ADMIN_KEY:-} ]]; then
     echo
@@ -424,6 +456,7 @@ main() {
   configure_coordination
   configure_llm
   configure_ports
+  configure_network
   write_env
   start_services
   create_admin

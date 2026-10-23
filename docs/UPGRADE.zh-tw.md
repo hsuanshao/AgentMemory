@@ -4,6 +4,7 @@
 
 ## 目錄
 
+- [升級到 0.4.3](#升級到-043)
 - [升級到 0.4.2](#升級到-042)
 - [升級到 0.4.1](#升級到-041)
 - [升級到 0.4.0](#升級到-040)
@@ -18,6 +19,60 @@
   - [D. 確認結果](#d-確認結果)
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
+
+## 升級到 0.4.3
+
+```bash
+git fetch --tags && git checkout v0.4.3
+./upgrade.sh
+```
+
+> [!WARNING]
+> **升級後要回到 0.4.2，必須還原備份**（[E. 還原](#e-還原)）。memory-core 啟動時會執行 schema migration 6：每一把儲存的 user key 都換成它的 SHA-256 雜湊。現有的 key 照常可用，但 0.4.2 會拒絕 schema 版本 6 的資料，而且它本來也無法比對雜湊。
+
+**升級前請先檢查。** 每一列都連到下方對應的段落。
+
+| 如果… | 那麼… |
+| --- | --- |
+| 其他機器上的 client 會連 memory-core 或 Panel | 升級不會改變什麼（`.env` 會加上 `BIND_ADDR=0.0.0.0`）；建議改用 HTTPS（[網路](#連接埠聽在哪裡)） |
+| memory-core 前面除了內建的 Panel 和 Caddy 之外，還有別的反向代理 | 把它加進 `AGENT_MEMORY_TRUSTED_PROXIES`，否則所有 client 都會被當成那台代理的位址（[錯誤的 key](#錯誤的-key-會被節流並記錄)） |
+| 很多人共用同一個對外位址（NAT、VPN 閘道） | 要知道 15 分鐘內 20 次錯誤的 key 會讓這個位址被擋 15 分鐘；`server.throttle` 可以調整（[錯誤的 key](#錯誤的-key-會被節流並記錄)） |
+| 有腳本用 `internal/upgrade` 加 `issue_key` 來拿新的管理者 key | 除非有 legacy 資料要搬，或設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`，否則會被拒絕（[key](#user-key-改存雜湊)） |
+| 有腳本用自己指定的 key（`user_key`）建立使用者或第一位管理者 | 改用 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`（[key](#user-key-改存雜湊)） |
+| 某個部門的自訂記憶 prompt（Panel → Prompts）提到輸入的舊標籤，例如 `[New messages to extract]` | 改成指稱 JSON 欄位（[蒸餾輸入](#蒸餾模型的輸入改成-json-資料)） |
+
+### User key 改存雜湊
+
+Migration 6 把每一把儲存的 user key 換成它的 SHA-256 雜湊，並保留最後四個字元給 Panel 顯示。不需要換新 key：比對時用的是雜湊。改變的地方：
+
+- **遺失的 key 無法從資料庫讀回**（本來就不該讀得回）。由系統管理員在 Panel（Metadata → Users → Keys）發一把新的。如果唯一的系統管理員弄丟了自己的 key，營運者可以在 `.env` 設 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`、重新啟動、用 `internal/upgrade` 加 `issue_key`（[B5](#b5-搬移資料並取得-key)）取得新 key，之後再把這個設定拿掉。
+- **`internal/upgrade` 只在有 legacy 資料要搬時才會發 key**（0.1.1 之前的安裝），或設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`。否則光憑伺服器 API key 就能替任何部門生出一把系統管理員的 key。用這種方式發出的 key，以及 `init-admin` 建立的每一位第一位管理者，都會寫進稽核紀錄。
+- **呼叫端自己指定的 key**（`init-admin` 或 `user/create-with-key` 帶 `user_key`）必須是 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`，和系統產生的一樣難猜。既有的 key 不受影響。
+
+### 錯誤的 key 會被節流並記錄
+
+memory-core 會依 client 位址計算被拒絕的憑證（錯誤或已撤銷的 user key、錯誤的伺服器 API key、回答 `valid: false` 的 `meta/auth/verify`）。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘：它的每個請求都會收到 429 `too_many_failures` 和 `Retry-After`。成功的請求不會變慢。門檻在設定檔的 `server.throttle`（[memory-core.example.yaml](../config/memory-core.example.yaml)）。使用 Redis 協調時，所有 replica 共用計數；使用 local 協調時計數放在記憶體裡，重新啟動 memory-core 會解除所有封鎖。
+
+位址是連線本身的位址；如果連線來自可信任的代理，則是該代理在 `X-Forwarded-For` 裡指出的 client。Compose 預設信任 Panel 和 Caddy（`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`），所以在 Panel 打錯的 key 算在瀏覽器的位址上，而不是 Panel 的。**如果前面還有別的反向代理**（nginx、負載平衡器），請加上它的位址或網段，例如 `AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy,10.0.0.0/8`；否則所有 client 共用代理的位址，一個人打錯就會讓所有人被擋。絕對不要列入 client 能直接連過來的位址：從那裡連線的人可以冒稱任何 client。
+
+每一次拒絕、每一次封鎖、每一把用伺服器 API key 發出的 key，都會寫進稽核紀錄：時間、位址、`X-Forwarded-For` 鏈、user agent、部門、路徑，以及 user key 雜湊的前 8 個字元（絕不是 key 本身）。紀錄放在部門之外（SQLite 是資料目錄裡的 `audit.db`，Postgres 是 `agent_memory.audit_events`），保留 90 天（`AGENT_MEMORY_AUDIT_RETENTION_DAYS`），`department/destroy` 也不會刪除。部門的系統管理員在 Panel → Metadata → Audit（`/v3/audit/list`）看自己部門的事件；營運者用伺服器 API key 呼叫 `/v3/internal/audit/list` 看所有部門的事件，包括不存在的部門名稱（[API](API.zh-tw.md#憑證稽核紀錄)）。
+
+### 連接埠聽在哪裡
+
+`install.sh` 現在會問誰要連 memory-core 和 Panel：只有這台機器（連接埠聽在 `127.0.0.1`，預設）、其他機器透過一般 HTTP（`0.0.0.0`），或其他機器透過 Caddy 的 HTTPS（profile `tls`，見 [TLS](ops/TLS.zh-tw.md)）。`docker-compose.yml` 從 `BIND_ADDR` 讀取。**`upgrade.sh` 會在既有的 `.env` 加上 `BIND_ADDR=0.0.0.0`，連接埠照舊聽在原來的地方。** 走 HTTP 時 user key 以明文在網路上傳送；要避免的話，設 `BIND_ADDR=127.0.0.1` 並照 [TLS](ops/TLS.zh-tw.md) 設定，再用 `amem login` 把 client 指向 `https://` 位址。
+
+### 蒸餾模型的輸入改成 JSON 資料
+
+L1 萃取與去重、L2 場景、L3 persona 現在都把輸入交給模型成一個 JSON 物件，和 0.4.2 的 skill 萃取一樣：儲存的文字是 JSON 字串，對話內容無法結束資料、也無法假裝成指令。每個內建 prompt 都說明欄位（`new_messages`、`session_memories`、`candidate_pool`、`new_memories`、`existing_scenes`、`changed_scenes`、`existing_persona`…），並說明其中一切都是資料。自訂記憶 prompt 如果提到舊的文字標籤（`[Previous scene]`、`[New messages to extract]`、`### 1. New memories`、`## Changed scenes`），請改成指稱 JSON 欄位；只說明要記什麼的 prompt 不必改。
+
+### 這一版的其他改動
+
+以下不需要做任何事。細節見 [CHANGELOG](../CHANGELOG.zh-tw.md#未發布)。
+
+- **Panel：** 登入的 key 只留在這個瀏覽器分頁（關掉分頁就登出；舊版存下的 key 會被移除），撤銷的 key 在 Panel 裡 10 秒內失效，Panel 會送出 Content-Security-Policy。
+- **`amem`** 不跟隨轉址，key 不會被送到別的位址：伺服器改用 HTTPS 時，用新位址執行 `amem login`。它建立的檔案只有擁有者能讀。`--` 之後的查詢字串不會被當成選項。
+- **錯誤訊息：** 內部錯誤或依賴服務無法使用時，只回應錯誤代碼和 request id；細節（路徑、主機）只寫在 memory-core 的 log。
+- 已離開 team 的 agent 擁有者不能再修改這個 agent；binding 記錄的是實際設定它的人；同時呼叫兩次 `init-admin` 也只會建立一位第一位管理者；名稱篩選把 `%` 和 `_` 當成一般字元；所有提案都已過期的 skill 萃取任務每小時關閉一次。
 
 ## 升級到 0.4.2
 
@@ -345,7 +400,7 @@ curl -sS -X POST "$CORE/v3/internal/upgrade" "${H[@]}" \
   -d '{"agent_name": "hermes", "issue_key": true}'
 ```
 
-記下回應中的 `team_id`、`agent_id` 和 `user_key`。Key 只會顯示這一次，也可以用來登入 Panel。重複執行這個指令不會有副作用：已經沒有資料可搬，也會沿用既有的 team 與 agent。不過每次帶 `issue_key` 都會多發一把 key，用不到的可以在 Panel 撤銷。
+記下回應中的 `team_id`、`agent_id` 和 `user_key`。Key 只會顯示這一次，也可以用來登入 Panel。重複執行這個指令不會有副作用：已經沒有資料可搬，也會沿用既有的 team 與 agent。從 0.4.3 起，沒有資料可搬時 `issue_key` 會被拒絕，除非設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`（[升級到 0.4.3](#user-key-改存雜湊)）；用不到的 key 可以在 Panel 撤銷。
 
 你也可以自己指定確切的目標：先在 Panel 建好 team、使用者和 agent，再呼叫：
 

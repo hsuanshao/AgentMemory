@@ -6,6 +6,27 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+**Read [UPGRADE → To 0.4.3](docs/UPGRADE.md#to-043) before upgrading.** Going back to 0.4.2 needs the backup restored (schema migration 6).
+
+### Security
+- **User keys are stored as SHA-256 digests.** Schema migration 6 converts the stored keys in place; existing keys keep working, and the Panel shows their last four characters. A key chosen by the caller (`init-admin`, `user/create-with-key`) must be `sk-mem-` and at least 32 letters, digits, `-` or `_` ([UPGRADE](docs/UPGRADE.md#user-keys-are-stored-as-digests)).
+- **Refused credentials are throttled per client address**: from the 5th in 15 minutes each refusal waits longer (250 ms, doubling up to 5 s), and the 20th locks the address out for 15 minutes (429 `too_many_failures`, `Retry-After`). `X-Forwarded-For` counts only from `server.trustedProxies` (`AGENT_MEMORY_TRUSTED_PROXIES`, new; Compose trusts the Panel and Caddy). Limits: `server.throttle`. Counts are shared through Redis when coordination is Redis ([UPGRADE](docs/UPGRADE.md#refused-keys-are-throttled-and-audited)).
+- **Credential audit log**: refusals, lockouts and keys issued with the server API key (`init-admin`, `internal/upgrade`), with time, address, forwarding chain, user agent, department, path and the start of the key's digest. Kept 90 days (`AGENT_MEMORY_AUDIT_RETENTION_DAYS`), across departments (`audit.db` / `agent_memory.audit_events`). System admins see their department's on Panel → Metadata → Audit (`/v3/audit/list`); the operator sees all with `/v3/internal/audit/list`.
+- **`internal/upgrade` issues a key only with legacy data to move**, or with `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true` (new) to recover a lost administrator key.
+- **The distillation model gets its input as JSON data** in L1 extraction and deduplication, L2 scenes and L3 persona, as skill extraction already did: a conversation cannot end the data or pose as the instructions ([UPGRADE](docs/UPGRADE.md#the-distillation-model-gets-its-input-as-json-data)).
+- **New installs keep the ports on this machine**: `install.sh` asks, defaulting to `127.0.0.1` (`BIND_ADDR`, new); `upgrade.sh` adds `BIND_ADDR=0.0.0.0` so an existing install keeps listening where it did. An optional Compose profile `tls` puts Caddy with HTTPS in front of memory-core and the Panel ([TLS](docs/ops/TLS.md)).
+- Panel: the session key is kept per browser tab (sessionStorage, not localStorage), a revoked key stops working within 10 s (was 60 s), verdicts are cached by digest, and a Content-Security-Policy is sent. The Panel forwards the browser's address to Core.
+- `amem` and the operator commands (`memory-server generations`, `dead-letters`) do not follow redirects, so a key never goes to another address. `amem` creates its files readable by the owner only from the start. `install.sh` and `upgrade.sh` pass the server API key to curl on stdin, not on the command line.
+- A recalled context `amem` cuts to the host's limit closes the blocks it opened.
+- An internal or unavailable error answers with its code and the request id; the detail (paths, hosts, queries) is only in memory-core's log.
+- An agent's owner who left its team can no longer change the agent or its bindings; a binding records the caller who set it (a `created_by` in the request is ignored).
+- `init-admin` is serialised per department, so two calls at once create one first admin.
+- User, team and asset name filters match `%` and `_` literally.
+
+### Fixed
+- `amem recall` takes every word after `--` as the query; the Hermes plugin passes it that way, so a query starting with `-` is not read as an option.
+- Tasks whose skill proposals all expired undecided are closed hourly instead of being read on every list.
+
 ## [0.4.2] - 2026-10-24
 
 **Read [UPGRADE → To 0.4.2](docs/UPGRADE.md#to-042) before upgrading.** This release tightens access: departments are created only by `init-admin`, the server API key no longer opens department routes, the distillation CLI gets an allowlisted environment, and extracted skills wait for approval. Going back to 0.4.1 needs the backup restored (schema migrations 4 and 5).

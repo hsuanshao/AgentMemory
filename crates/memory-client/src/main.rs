@@ -12,7 +12,7 @@ use serde_json::Value;
 const USAGE: &str = "amem — Agent Memory client
 
 USAGE:
-  amem login --server-url URL --user-key KEY|- --team-id ID --agent-id ID [--department-id ID] [--no-verify]
+  amem login --server-url URL --user-key KEY|- --team-id ID --agent-id ID [--department-id ID] [--ca-cert PEM] [--no-verify]
   amem status                      Show configuration (key masked) and queue size
   amem recall [--json] QUERY...    Recall memories for QUERY
   amem capture --format openai --session ID < messages.json
@@ -74,6 +74,7 @@ fn login(args: &[String]) -> Result<(), String> {
         agent_id: pick("--agent-id", &existing.agent_id),
         skip_prompt_prefixes: existing.skip_prompt_prefixes.clone(),
         system_context_every: existing.system_context_every.clone(),
+        ca_cert: pick("--ca-cert", &existing.ca_cert),
     };
     if let Some(missing) = cfg.missing().first() {
         return Err(format!("missing --{}", missing.replace('_', "-")));

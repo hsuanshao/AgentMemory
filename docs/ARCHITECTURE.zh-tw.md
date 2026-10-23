@@ -142,7 +142,9 @@ flowchart LR
 
 因此遠端 client、部門管理員和 Panel 都不需要伺服器 API key。它只能開啟營運者路由：初始化（`init-admin`）、升級、`department/destroy`，以及 `memory-server generations`／`dead-letters` 看整個部門的檢視。user key 只在自己的部門有效，所以一個部門的管理員管不到另一個部門。
 
-**請把伺服器 API key 當成 root 憑證保管。** 持有它的人可以替新部門建立第一位管理員（`init-admin`）、替任何部門的系統管理員發一把新 key（`internal/upgrade` 加上 `issue_key`）、列出部門的使用者、讀取每個部門的 dead letter 與生成紀錄，以及刪除部門。它只該留在營運者手上，不要放進部門管理員執行的腳本；如果曾經交給別人，請更換。
+**請把伺服器 API key 當成 root 憑證保管。** 持有它的人可以替新部門建立第一位管理員（`init-admin`）、替部門的系統管理員發一把新 key（`internal/upgrade` 加上 `issue_key`，限於還有 legacy 資料、或設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true` 時）、列出部門的使用者、讀取每個部門的 dead letter、生成紀錄與憑證稽核紀錄，以及刪除部門。它只該留在營運者手上，不要放進部門管理員執行的腳本；如果曾經交給別人，請更換。
+
+**憑證會被檢查、計數並記錄。** User key 以 SHA-256 雜湊儲存。每一次被拒絕的憑證都依 client 位址計算（只採信 `AGENT_MEMORY_TRUSTED_PROXIES` 送來的 `X-Forwarded-For`）：15 分鐘內從第 5 次起延後回應，第 20 次讓這個位址被擋 15 分鐘（429）。拒絕、封鎖以及用伺服器 API key 發出的 key 都寫進部門之外的稽核紀錄；系統管理員看自己部門的，營運者看全部（[API](API.zh-tw.md#憑證稽核紀錄)）。
 
 User key 外洩時，影響範圍只有該使用者在其部門裡能做的事。
 

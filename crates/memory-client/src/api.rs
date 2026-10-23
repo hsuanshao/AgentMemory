@@ -38,11 +38,17 @@ impl Api {
         }
         // A redirect is not followed: it would take the user key along to
         // wherever it points.
-        let http = reqwest::blocking::Client::builder()
+        let mut builder = reqwest::blocking::Client::builder()
             .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| e.to_string())?;
+            .redirect(reqwest::redirect::Policy::none());
+        if !cfg.ca_cert.is_empty() {
+            let pem =
+                std::fs::read(&cfg.ca_cert).map_err(|e| format!("ca_cert {}: {e}", cfg.ca_cert))?;
+            let ca = reqwest::Certificate::from_pem(&pem)
+                .map_err(|e| format!("ca_cert {}: {e}", cfg.ca_cert))?;
+            builder = builder.add_root_certificate(ca);
+        }
+        let http = builder.build().map_err(|e| e.to_string())?;
         Ok(Self { cfg, http })
     }
 

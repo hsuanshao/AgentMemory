@@ -6,6 +6,27 @@
 
 ## [未發布]
 
+**升級前請先閱讀 [UPGRADE → 升級到 0.4.3](docs/UPGRADE.zh-tw.md#升級到-043)。** 退回 0.4.2 必須還原備份（schema 遷移 6）。
+
+### 安全性
+- **User key 改存 SHA-256 雜湊。** Schema 遷移 6 原地轉換已儲存的 key；現有的 key 照常可用，Panel 顯示最後四個字元。呼叫端自己指定的 key（`init-admin`、`user/create-with-key`）必須是 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`（[UPGRADE](docs/UPGRADE.zh-tw.md#user-key-改存雜湊)）。
+- **被拒絕的憑證依 client 位址節流**：15 分鐘內從第 5 次起，每次拒絕會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘（429 `too_many_failures`、`Retry-After`）。只採信 `server.trustedProxies`（`AGENT_MEMORY_TRUSTED_PROXIES`，新增；Compose 預設信任 Panel 與 Caddy）送來的 `X-Forwarded-For`。門檻：`server.throttle`。使用 Redis 協調時計數由所有 replica 共用（[UPGRADE](docs/UPGRADE.zh-tw.md#錯誤的-key-會被節流並記錄)）。
+- **憑證稽核紀錄**：拒絕、封鎖、以及用伺服器 API key 發出的 key（`init-admin`、`internal/upgrade`），記錄時間、位址、轉送鏈、user agent、部門、路徑與 key 雜湊的開頭。跨部門保存（`audit.db` / `agent_memory.audit_events`），保留 90 天（`AGENT_MEMORY_AUDIT_RETENTION_DAYS`）。系統管理員在 Panel → Metadata → Audit（`/v3/audit/list`）看自己部門的；營運者用 `/v3/internal/audit/list` 看全部。
+- **`internal/upgrade` 只在有 legacy 資料要搬時才發 key**，或設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`（新增）以找回遺失的管理者 key。
+- **蒸餾模型的輸入改成 JSON 資料**：L1 萃取與去重、L2 場景、L3 persona 都和 skill 萃取一樣，對話內容無法結束資料、也無法假裝成指令（[UPGRADE](docs/UPGRADE.zh-tw.md#蒸餾模型的輸入改成-json-資料)）。
+- **新安裝的連接埠只聽在本機**：`install.sh` 會詢問，預設 `127.0.0.1`（`BIND_ADDR`，新增）；`upgrade.sh` 加上 `BIND_ADDR=0.0.0.0`，既有安裝照舊。可選的 Compose profile `tls` 在 memory-core 與 Panel 前面放一個提供 HTTPS 的 Caddy（[TLS](docs/ops/TLS.zh-tw.md)）。
+- Panel：登入的 key 只留在這個瀏覽器分頁（sessionStorage，不再用 localStorage），撤銷的 key 10 秒內失效（原本 60 秒），驗證結果以雜湊快取，並送出 Content-Security-Policy。Panel 會把瀏覽器的位址轉給 Core。
+- `amem` 與營運指令（`memory-server generations`、`dead-letters`）不跟隨轉址，key 不會被送到別的位址。`amem` 建立的檔案一開始就只有擁有者能讀。`install.sh` 與 `upgrade.sh` 經由 stdin 把伺服器 API key 交給 curl，不再放在命令列上。
+- `amem` 依主程式上限截斷召回內容時，會關閉已開啟的區塊。
+- 內部錯誤或依賴服務無法使用時只回應錯誤代碼與 request id；細節（路徑、主機、查詢）只寫在 memory-core 的 log。
+- 已離開 team 的 agent 擁有者不能再修改這個 agent 或它的 binding；binding 記錄實際設定它的呼叫者（請求裡的 `created_by` 會被忽略）。
+- `init-admin` 依部門序列化，同時呼叫兩次只會建立一位第一位管理者。
+- 使用者、team、asset 的名稱篩選把 `%` 和 `_` 當成一般字元。
+
+### 修正
+- `amem recall` 把 `--` 之後的每個字都當成查詢；Hermes 外掛也這樣傳，以 `-` 開頭的查詢不會被當成選項。
+- 所有提案都過期未決的 skill 萃取任務每小時關閉一次，不再於每次列表時讀取。
+
 ## [0.4.2] - 2026-10-24
 
 **升級前請先閱讀 [UPGRADE → 升級到 0.4.2](docs/UPGRADE.zh-tw.md#升級到-042)。** 這一版收緊了存取權限：部門只能由 `init-admin` 建立、伺服器 API key 不再能開啟部門路由、蒸餾用的 CLI 改用環境變數白名單、萃取出的 skill 要先核准。退回 0.4.1 必須還原備份（schema 遷移 4 與 5）。

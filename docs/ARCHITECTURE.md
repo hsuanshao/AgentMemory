@@ -135,7 +135,9 @@ flowchart LR
 
 Remote clients, department admins and the Panel therefore never need the server API key. It opens only the operator routes: bootstrap (`init-admin`), upgrades, `department/destroy` and the whole-department views of `memory-server generations` / `dead-letters`. A user key works only in its own department, so an admin of one department has no say in another.
 
-**Treat the server API key as a root credential.** Whoever holds it can create the first admin of a new department (`init-admin`), issue a new key for any department's system admin (`internal/upgrade` with `issue_key`), list a department's users, read every department's dead letters and generation logs, and destroy departments. Keep it with the operator, out of scripts that department admins run, and change it if it was ever handed out.
+**Treat the server API key as a root credential.** Whoever holds it can create the first admin of a new department (`init-admin`), issue a new key for a department's system admin (`internal/upgrade` with `issue_key`, while legacy data remains or with `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`), list a department's users, read every department's dead letters, generation logs and credential audit log, and destroy departments. Keep it with the operator, out of scripts that department admins run, and change it if it was ever handed out.
+
+**Credentials are checked, counted and recorded.** User keys are stored as SHA-256 digests. Every refused credential is counted per client address (`X-Forwarded-For` only from `AGENT_MEMORY_TRUSTED_PROXIES`): from the 5th in 15 minutes refusals are answered later, and the 20th locks the address out for 15 minutes (429). Refusals, lockouts and keys issued with the server API key go to an audit log beside the departments; system admins read their department's, the operator all ([API](API.md#credential-audit-log)).
 
 Leaking a user key exposes only what that user may do, in their department.
 

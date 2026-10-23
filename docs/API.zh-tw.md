@@ -35,8 +35,9 @@ HTTP 狀態碼等於 envelope 中的 `code`，`message` 說明原因。
 | 404 | 路由或資料不存在；營運者路由上部門不存在時回 `unknown_department`（先對它執行 `init-admin`） |
 | 409 | 衝突，例如 `already_initialized`、`target_has_profile` |
 | 413 | Body 超過 `max_body_bytes`（`session/add` 為 `max_session_body_bytes`） |
-| 429 | 超過配額 |
-| 503 | 相依服務（LLM、資料庫）無法使用 |
+| 429 | 超過配額；client 位址因太多次被拒絕的憑證而被擋時，回 `too_many_failures` 並附 `Retry-After`（[憑證稽核紀錄](#憑證稽核紀錄)） |
+| 500 | 伺服器內部錯誤；`message` 只有錯誤代碼與 request id，細節在 memory-core 的 log |
+| 503 | 相依服務（LLM、資料庫）無法使用；`message` 只有代碼（例如 `LLM_UNAVAILABLE`）與 request id，細節在 log |
 
 Skill 錯誤使用五位數代碼，HTTP 狀態碼為對應的三位數，例如 `40301` 非擁有者、`40401` 不存在、`40901` 版本過舊、`41301` 太大。
 
@@ -153,18 +154,27 @@ Skill 萃取只提案，在有人核准之前什麼都不會存下：
 
 Meta 的列表回應格式：`{items, total, limit, offset}`；`redaction-rule/list` 例外，回傳 `{builtin, deployment_password_shape, deployment, department}`。
 
+呼叫端自己指定的 user key（`user/create-with-key`、`init-admin` 的 `user_key`）必須是 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`。`agent-fixed-asset/set` 以呼叫者作為每個 binding 的 `created_by`。Agent 的擁有者只有在仍是該 team 的有效成員時，才能管理它（`agent/update`、`agent/delete`、`agent-fixed-asset/set`）。
+
+### 憑證稽核紀錄
+
+memory-core 依 client 位址計算被拒絕的憑證：錯誤、已撤銷或已過期的 user key、錯誤的伺服器 API key，以及回答 `valid: false` 的 `meta/auth/verify`。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘，期間它的每個請求都回 429 `too_many_failures` 並附 `Retry-After`（秒）。位址是連線本身的位址，或是 `AGENT_MEMORY_TRUSTED_PROXIES` 列出的代理在 `X-Forwarded-For` 指出的 client。
+
+`/v3/audit/list` `{kind?, since_ms?, limit?, offset?}` → `{items}`（部門的系統管理者；只有自己部門的事件，新的在前；`limit` 預設 50，最大 500）。`kind` 為 `credential_rejected`、`source_locked` 或 `key_issued`。每一筆：`{event_id, at_ms, kind, department, source, forwarded_for, user_agent, path, credential, request_id, detail}`；`credential` 是 `user key sha256:<雜湊前 8 個 hex>` 或 `server API key`，絕不是 key 本身。
+
 ### 內部與維運（只接受伺服器 API key）
 
 * `/v3/internal/pipeline/dead-letter/{list,redrive}`、`/v3/internal/memory-generation-log/{list,summary}`：與去掉 `internal/` 的路由相同，涵蓋整個部門；`memory-server dead-letters` 與 `memory-server generations` 呼叫的就是這些。
+* `/v3/internal/audit/list` `{department_id?, kind?, since_ms?, limit?, offset?}`：所有部門的憑證稽核紀錄，或只看 `department_id` 的（不存在的部門也可以）；不需要 `x-memory-department-id`。
 
-* `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`：第一次啟動時的初始化，建立一位系統管理者，以及 `default-team` 與 `default-agent-<username>`。只要已有任何使用者，就回 409 `already_initialized`。這是唯一會建立部門的路由：對不存在的部門，其他路由一律拒絕（資料面與部門路由回與 user key 錯誤相同的 401，`meta/auth/verify` 回 `valid: false`，營運者路由回 404 `unknown_department`）。
+* `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`：第一次啟動時的初始化，建立一位系統管理者，以及 `default-team` 與 `default-agent-<username>`。只要已有任何使用者，就回 409 `already_initialized`；同時呼叫也只會建立一位管理者；會寫進稽核紀錄。這是唯一會建立部門的路由：對不存在的部門，其他路由一律拒絕（資料面與部門路由回與 user key 錯誤相同的 401，`meta/auth/verify` 回 `valid: false`，營運者路由回 404 `unknown_department`）。
 * `/v3/internal/meta/user/list-by-department`。
 * `/v3/internal/migrate/default-scope` `{team_id, agent_id, user_id, from_team_id?, from_agent_id?, from_user_id?, dry_run?}` → `{dry_run, to, moved: {conversations, atoms, profile_files, skill_versions}, session_states, profile_states}`：升級輔助工具，把寫在舊 `default` 桶的資料（`default/default/default` 的 L0/L1，以及 `default/default` 的 L2/L3 和 skills）連同管線游標搬到真正的範圍。0.1.1 之前若 client 有指定 agent 或使用者，資料會寫在 `default/<agent>/<user>`；這時用 `from_team_id`／`from_agent_id`／`from_user_id` 指定來源桶（未填的部分都是 `default`）。條件：agent 必須屬於該 team、使用者必須是有效成員，而且 agent 還不能有 L2/L3（否則回 409 `target_has_profile`）。這項檢查只在仍有舊資料時進行，所以搬移成功後重跑不會有任何動作。`dry_run: true` 會 rollback，只回報筆數。
 * `/v3/internal/upgrade` `{admin_username?, team_name?, agent_name?, issue_key?, dry_run?}` → `{dry_run, user_id, username, team_id, team_name, team_created, agent_id, agent_name, agent_created, moved, session_states, profile_states, user_key?}`：`upgrade.sh` 呼叫的就是這個。它會：
   * 選定系統管理者（預設是最早建立的那位）；
   * 以完全相同的名稱找 team（預設 `default-team`）和 agent（預設 `default-agent-<admin>`），找不到就建立；
   * 以該管理者身分執行 default-scope 遷移；
-  * 帶 `issue_key` 時，另外發一把新的 user key，只回傳這一次。
+  * 帶 `issue_key` 時，另外發一把新的 user key，只回傳這一次，並寫進稽核紀錄。沒有 legacy 資料要搬時 `issue_key` 會被拒絕（403），除非設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`。
 
   Dry run 不會建立任何東西；將會新建的 team 或 agent，其 `team_id`/`agent_id` 回傳 `null`。可以安全地重複執行。
 * `/v3/department/destroy` `{department_id}` → `{department_id, cleaned: {storage, state, dead_letters}}`；不需要 `x-memory-department-id`。

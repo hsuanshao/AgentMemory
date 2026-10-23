@@ -27,7 +27,9 @@ source ./install.sh
 BACKUP_ROOT="backups"
 # Settings added since the first release, with the value an old install
 # implicitly used (an exported value wins). Missing ones are appended to .env.
-NEW_SETTINGS=("MEMORY_IMAGE_TAG=${MEMORY_IMAGE_TAG:-local}")
+# BIND_ADDR=0.0.0.0 keeps an existing install listening where it did; new
+# installs default to 127.0.0.1.
+NEW_SETTINGS=("MEMORY_IMAGE_TAG=${MEMORY_IMAGE_TAG:-local}" "BIND_ADDR=${BIND_ADDR:-0.0.0.0}")
 # Settings renamed since, OLD=NEW.
 RENAMED_SETTINGS=("CORE_INSTANCE_ID=CORE_DEPARTMENT_ID")
 
@@ -240,10 +242,10 @@ json_field() {
 }
 
 core_upgrade() {
+  # The key on stdin, off the command line (see create_admin).
   curl -sS -X POST "http://127.0.0.1:$CORE_PORT/v3/internal/upgrade" \
-    -H "Authorization: Bearer $AGENT_MEMORY_API_KEY" \
-    -H "x-memory-department-id: $DEPARTMENT" -H "content-type: application/json" \
-    -d "$1"
+    -H @- -H "x-memory-department-id: $DEPARTMENT" -H "content-type: application/json" \
+    -d "$1" <<<"Authorization: Bearer $AGENT_MEMORY_API_KEY"
 }
 
 upgrade_body() {
@@ -341,6 +343,10 @@ EOF
 print_upgrade_summary() {
   echo
   bold "Upgrade complete"
+  if [[ ${BIND_ADDR:-0.0.0.0} == 0.0.0.0 && ! ${COMPOSE_PROFILES:-} =~ tls ]]; then
+    info "Ports listen on every network over plain HTTP, as before (BIND_ADDR=0.0.0.0 in $ENV_FILE)."
+    info "To keep them on this machine set BIND_ADDR=127.0.0.1; for HTTPS to other machines see docs/ops/TLS.md."
+  fi
   if [[ ${LEGACY_MOVED:-false} != true ]]; then
     info "Monitor Panel : http://localhost:$PANEL_PORT"
     [[ -n ${BACKUP_DIR:-} ]] && info "Backup        : $BACKUP_DIR  (restore steps: docs/UPGRADE.md)"

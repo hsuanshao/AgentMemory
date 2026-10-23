@@ -60,17 +60,9 @@ client 和部門管理員都不需要伺服器 API key；它只留在架設伺�
 
 依 [README](../README.zh-tw.md#快速開始) 安裝（`./install.sh`）。要讓遠端 client 使用，必須能從 client 機器連到 core API。
 
-1. **在 8420 前面加上 TLS。** user key 放在 header 中傳送，在受信任網路以外請勿使用明文 HTTP。最精簡的 [Caddy](https://caddyserver.com/) 設定：
+1. **在 8420 前面加上 TLS。** user key 放在 header 中傳送，在受信任網路以外請勿使用明文 HTTP。Compose 的 `tls` profile 會為此啟動 Caddy（`BIND_ADDR=127.0.0.1`、`TLS_SITE=memory.example.com`、`COMPOSE_PROFILES=tls`；見 [TLS](ops/TLS.zh-tw.md)，也說明了 IP 位址與其他反向代理的情況）。或者把伺服器放在私有網路（VPN、Tailscale、WireGuard）中，使用內部位址。
 
-   ```caddyfile
-   memory.example.com {
-       reverse_proxy 127.0.0.1:8420
-   }
-   ```
-
-   或者把伺服器放在私有網路（VPN、Tailscale、WireGuard）中，使用內部位址。
-
-2. **綁定位址。** 使用 `docker compose` 時 port 已經對外公開。若直接執行執行檔，請設定 `AGENT_MEMORY_HOST=0.0.0.0`；沒有設定 `AGENT_MEMORY_API_KEY` 時，伺服器會拒絕綁定非 loopback 位址。
+2. **綁定位址。** 使用 `docker compose` 時，`.env` 的 `BIND_ADDR` 決定 8420 與 8125 port 聽在哪裡：`127.0.0.1`（只有這台機器，新安裝的預設；其他機器透過 `tls` profile 連入）或 `0.0.0.0`（所有網路）。若直接執行執行檔，請設定 `AGENT_MEMORY_HOST=0.0.0.0`；沒有設定 `AGENT_MEMORY_API_KEY` 時，伺服器會拒絕綁定非 loopback 位址。
 
 3. **Panel 不要對外公開。** 只有管理者需要用到 Panel（port 8125），請放在內部位址或 SSO／VPN 後面，不要直接開放在網際網路上。
 
@@ -275,6 +267,9 @@ Hermes 會讀取 `amem login` 的設定。Provider 的行為：
 | 症狀 | 原因／解法 |
 | --- | --- |
 | `amem login` → `HTTP 401` | user key 錯誤或已撤銷。請到 Panel（Users → Keys）重新發一把。 |
+| `HTTP 429 too_many_failures` | 這個位址（或同一個 NAT 後面的其他人）太多次用錯 key，被擋最多 15 分鐘。修正 key 後等 `Retry-After` 過去。管理員可以在 Panel → Metadata → Audit 看到這些嘗試。 |
+| `the server redirects to https://…` | 伺服器改用 HTTPS 了。`amem` 不跟隨轉址（key 會被一起帶走）；請用 `amem login --server-url https://…` 重新登入。 |
+| `amem login` 出現憑證錯誤 | 伺服器的憑證來自私有 CA（IP 位址時是 Caddy 自己的 CA）。登入時加上 `--ca-cert caddy-root.crt`（[TLS §3](ops/TLS.zh-tw.md#3-信任-caddy-的-caip-位址或內部名稱)）。 |
 | `HTTP 403 agent does not belong to the team` | `agent_id` 屬於其他 team。請確認你所屬 team 的 Agents 表格。 |
 | `HTTP 403 not an active member of the team` | 請管理者把你加入該 team。 |
 | `HTTP 400 team_id is required` | client 沒有設定 team／agent。請執行 `amem login` 或填寫 plugin 設定。 |

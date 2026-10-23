@@ -47,6 +47,7 @@ The installer asks, in order:
 2. **Coordination backend**: single node (default) / existing Redis / start Redis for me with Docker
 3. **LLM**: OpenAI-compatible API / Claude Code CLI / Antigravity CLI / Codex CLI
 4. Project directory for the CLI and the exposed ports
+5. **Who reaches it**: this machine only (default, ports on `127.0.0.1`) / other machines over plain HTTP / other machines over HTTPS with Caddy ([TLS](docs/ops/TLS.md))
 
 It then generates a Gateway API key and database password, writes `.env` with mode 600 (including `COMPOSE_PROFILES`), starts the services and waits for the health checks, and finally creates the first admin and shows a one-time login user key.
 
@@ -173,6 +174,10 @@ Config file keys (`server`, `data`, `llm`, `memory.pipeline`, `memory.recall`, `
 | `AGENT_MEMORY_LLM_CLI_*` | Unset | Used when provider=cli; see "Using a Local CLI as the LLM" |
 | `AGENT_MEMORY_EMBEDDING_PROVIDER` etc. | `none` | Enables vector retrieval |
 | `AGENT_MEMORY_CORS_ORIGINS` | Empty | Allowed origins (comma-separated) |
+| `AGENT_MEMORY_TRUSTED_PROXIES` | Unset (Compose: `memory-panel,caddy`) | Proxies whose `X-Forwarded-For` names the client; refused keys are counted and locked out per client address ([UPGRADE](docs/UPGRADE.md#refused-keys-are-throttled-and-audited)) |
+| `AGENT_MEMORY_AUDIT_RETENTION_DAYS` | `90` | Days the credential audit log keeps an event |
+| `AGENT_MEMORY_ALLOW_KEY_RECOVERY` | `false` | Lets `internal/upgrade` issue an admin key without legacy data to move |
+| `BIND_ADDR` (Compose) | `127.0.0.1` from `install.sh` | Where ports 8420 and 8125 listen; `0.0.0.0` for every network |
 
 ## Storage and Coordination Backends
 

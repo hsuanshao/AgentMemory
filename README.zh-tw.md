@@ -49,6 +49,7 @@ git clone https://github.com/hsuanshao/AgentMemory.git && cd AgentMemory
 2. **協調後端**：單機（預設）／既有的 Redis／幫我用 Docker 啟動 Redis
 3. **LLM**：OpenAI 相容 API／Claude Code CLI／Antigravity CLI／Codex CLI
 4. CLI 的專案目錄與對外 port
+5. **誰要連線**：只有這台機器（預設，port 聽在 `127.0.0.1`）／其他機器透過一般 HTTP／其他機器透過 Caddy 的 HTTPS（[TLS](docs/ops/TLS.zh-tw.md)）
 
 接著它會產生 Gateway API key 與資料庫密碼、寫入權限 600 的 `.env`（含 `COMPOSE_PROFILES`）、啟動服務並等待健康檢查，最後建立第一位管理員並顯示一次登入用的 user key。
 
@@ -175,6 +176,10 @@ docs/ops/                    給維護者：測試、發版、儲存搬移的內
 | `AGENT_MEMORY_LLM_CLI_*` | 未設定 | provider=cli 時使用，見上節 |
 | `AGENT_MEMORY_EMBEDDING_PROVIDER` 等 | `none` | 啟用向量檢索 |
 | `AGENT_MEMORY_CORS_ORIGINS` | 空 | 允許的來源（逗號分隔） |
+| `AGENT_MEMORY_TRUSTED_PROXIES` | 未設定（Compose：`memory-panel,caddy`） | 採信其 `X-Forwarded-For` 的代理；錯誤的 key 依 client 位址計數與封鎖（[UPGRADE](docs/UPGRADE.zh-tw.md#錯誤的-key-會被節流並記錄)） |
+| `AGENT_MEMORY_AUDIT_RETENTION_DAYS` | `90` | 憑證稽核紀錄保留的天數 |
+| `AGENT_MEMORY_ALLOW_KEY_RECOVERY` | `false` | 允許 `internal/upgrade` 在沒有 legacy 資料要搬時也發管理者 key |
+| `BIND_ADDR`（Compose） | `install.sh` 預設 `127.0.0.1` | 8420 與 8125 port 聽在哪裡；`0.0.0.0` 表示所有網路 |
 
 ## 儲存與協調後端
 

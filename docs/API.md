@@ -53,8 +53,9 @@ The HTTP status equals `code` in the envelope; `message` explains.
 | 404 | Unknown route or entity; `unknown_department` on an operator route for a department that does not exist (run `init-admin` for it) |
 | 409 | Conflict, e.g. `already_initialized`, `target_has_profile` |
 | 413 | Body over `max_body_bytes` (`max_session_body_bytes` for `session/add`) |
-| 429 | Quota exceeded |
-| 503 | A dependency (LLM, database) is unavailable |
+| 429 | Quota exceeded; `too_many_failures` with `Retry-After` when the client's address is locked out after too many refused credentials ([credential audit log](#credential-audit-log)) |
+| 500 | The server failed; `message` has the error code and request id, the detail is in memory-core's log |
+| 503 | A dependency (LLM, database) is unavailable; `message` has the code (e.g. `LLM_UNAVAILABLE`) and request id, the detail is in the log |
 
 Skill errors use five-digit codes with the matching HTTP status, e.g. `40301` not owner, `40401` not found, `40901` stale version, `41301` too large.
 
@@ -171,13 +172,23 @@ Skill extraction proposes; it saves nothing until someone approves ([ARCHITECTUR
 
 Meta list responses: `{items, total, limit, offset}`; `redaction-rule/list` returns `{builtin, deployment_password_shape, deployment, department}` instead.
 
+A user key chosen by the caller (`user/create-with-key`, `init-admin`'s `user_key`) must be `sk-mem-` and at least 32 letters, digits, `-` or `_`. `agent-fixed-asset/set` records the caller as each binding's `created_by`. An agent's owner manages it (`agent/update`, `agent/delete`, `agent-fixed-asset/set`) only while an active member of its team.
+
+### Credential audit log
+
+memory-core counts refused credentials per client address: a wrong, revoked or expired user key, a wrong server API key, and a `meta/auth/verify` answering `valid: false`. From the 5th in 15 minutes each refusal is answered later (250 ms, doubling up to 5 s); the 20th locks the address out for 15 minutes, and every request from it gets 429 `too_many_failures` with `Retry-After` (seconds). The address is the connection's, or the client named in `X-Forwarded-For` by a proxy listed in `AGENT_MEMORY_TRUSTED_PROXIES`.
+
+`/v3/audit/list` `{kind?, since_ms?, limit?, offset?}` → `{items}` (system admins of the department; its own events, newest first; `limit` default 50, max 500). `kind` is `credential_rejected`, `source_locked` or `key_issued`. Each item: `{event_id, at_ms, kind, department, source, forwarded_for, user_agent, path, credential, request_id, detail}`; `credential` is `user key sha256:<first 8 hex of its digest>` or `server API key`, never the key.
+
 ### Internal / operations (server API key only)
 
 `/v3/internal/pipeline/dead-letter/{list,redrive}`, `/v3/internal/memory-generation-log/{list,summary}`: as without `internal/`, for the whole department; what `memory-server dead-letters` and `memory-server generations` call.
 
+`/v3/internal/audit/list` `{department_id?, kind?, since_ms?, limit?, offset?}`: the credential audit log of every department, or of `department_id` (also one that does not exist); no `x-memory-department-id` needed.
+
 `/v3/internal/meta/user/init-admin` `{username, user_key?}` → `{user_id, user_key, team_id, agent_id}`
 — first-run bootstrap: a system admin plus `default-team` and `default-agent-<username>`
-(409 `already_initialized` once any user exists); the only route that creates a department:
+(409 `already_initialized` once any user exists; calls at once create one admin; recorded in the audit log); the only route that creates a department:
 for one that does not exist, every other route is refused (a wrong-key 401 on the data plane and
 department routes, `valid: false` from `meta/auth/verify`, 404 `unknown_department` on operator routes),
 `/v3/internal/meta/user/list-by-department`,
@@ -199,7 +210,9 @@ only counts.
 finds the team (default `default-team`) and agent (default
 `default-agent-<admin>`) by exact name or creates them, runs the
 default-scope migration into them for that admin and, with `issue_key`,
-returns a new user key once. A dry run creates nothing (`team_id`/`agent_id`
+returns a new user key once, recorded in the audit log. `issue_key` is refused
+(403) when there is no legacy data to move, unless
+`AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`. A dry run creates nothing (`team_id`/`agent_id`
 are `null` when they would be created). Repeatable.
 `/v3/department/destroy` `{department_id}` → `{department_id, cleaned: {storage, state, dead_letters}}`; no `x-memory-department-id` needed.
 
