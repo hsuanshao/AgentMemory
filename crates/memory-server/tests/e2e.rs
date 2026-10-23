@@ -903,6 +903,7 @@ async fn the_amem_client_redacts_queues_and_delivers() {
         team_id: client.team_id.clone(),
         agent_id: client.agent_id.clone(),
         skip_prompt_prefixes: String::new(),
+        system_context_every: String::new(),
     };
     let msg = |role: &'static str, content: &str| Msg {
         role,
