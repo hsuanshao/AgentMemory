@@ -2024,6 +2024,7 @@ async fn the_amem_client_redacts_queues_and_delivers() {
         agent_id: client.agent_id.clone(),
         skip_prompt_prefixes: String::new(),
         system_context_every: String::new(),
+        ca_cert: String::new(),
     };
     let msg = |role: &'static str, content: &str| Msg {
         role,
@@ -3374,7 +3375,8 @@ async fn refused_credentials_are_throttled_and_audited() {
         req.json(&body).send()
     };
     let far = Some("203.0.113.9");
-    let wrong = "sk-mem-wrong-key-guess-0000000000000000";
+    // Built at runtime: tracked files hold nothing shaped like a key.
+    let wrong = &format!("sk-mem-{}", "0".repeat(40));
 
     // No legacy data: the server API key alone mints no admin key.
     let issued = client

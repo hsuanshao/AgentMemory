@@ -269,6 +269,7 @@ mod tests {
             agent_id: "agt-file".into(),
             skip_prompt_prefixes: String::new(),
             system_context_every: String::new(),
+            ca_cert: String::new(),
         };
         let c = Config::merge(Some(file), |k| match k {
             "AMEM_TEAM_ID" => Some("team-env".into()),
