@@ -97,8 +97,14 @@ pub struct DepartmentPool {
     entries: Mutex<HashMap<DepartmentId, Entry>>,
 }
 
+/// Where `retire` moves a department's directory before deleting it.
+const REMOVED_DIR: &str = "departments-removed";
+
 impl DepartmentPool {
     pub fn new(data_dir: PathBuf, capacity: usize) -> Self {
+        // Left behind when the process stopped between moving a retired
+        // department aside and deleting it.
+        let _ = std::fs::remove_dir_all(data_dir.join(REMOVED_DIR));
         Self {
             data_dir,
             capacity: capacity.max(1),
@@ -162,6 +168,31 @@ impl DepartmentPool {
             .lock()
             .is_ok_and(|entries| entries.contains_key(department));
         open || self.department_dir(department).join("memory.db").is_file()
+    }
+
+    /// Takes the department out of service in one step under the pool lock:
+    /// its open database is dropped and its directory moved aside, so no
+    /// `get` in between can reopen the file or build a new one. Returns
+    /// where the directory went, for the caller to delete (that can take a
+    /// while, so it happens outside the lock). In-flight users keep their
+    /// handle to the old file; nothing they write is visible afterwards.
+    pub fn retire(&self, department: &DepartmentId) -> DomainResult<Option<PathBuf>> {
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| DomainError::internal("pool lock poisoned"))?;
+        entries.remove(department);
+        let dir = self.department_dir(department);
+        if !dir.exists() {
+            return Ok(None);
+        }
+        let removed = self.data_dir.join(REMOVED_DIR);
+        std::fs::create_dir_all(&removed)
+            .map_err(|e| DomainError::unavailable(format!("create {}: {e}", removed.display())))?;
+        let to = removed.join(format!("{}-{}", department, uuid::Uuid::new_v4().simple()));
+        std::fs::rename(&dir, &to)
+            .map_err(|e| DomainError::unavailable(format!("move {} aside: {e}", dir.display())))?;
+        Ok(Some(to))
     }
 
     /// Closes the department database (in-flight users keep their handle).

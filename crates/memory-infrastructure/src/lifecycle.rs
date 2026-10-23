@@ -53,7 +53,13 @@ impl LocalDirCleanup {
 impl DepartmentLifecycle for LocalDirCleanup {
     async fn destroy(&self, department: &DepartmentId) -> DomainResult<Value> {
         if let Some(pool) = &self.sqlite {
-            pool.evict(department);
+            let Some(moved) = pool.retire(department)? else {
+                return Ok(json!({"removed": false}));
+            };
+            tokio::fs::remove_dir_all(&moved).await.map_err(|e| {
+                DomainError::unavailable(format!("failed to remove department data: {e}"))
+            })?;
+            return Ok(json!({"removed": true}));
         }
         let dir = self.data_dir.join("departments").join(department.as_str());
         let existed = dir.exists();

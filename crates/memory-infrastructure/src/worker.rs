@@ -441,7 +441,11 @@ pub fn spawn_worker(
                     continue;
                 }
             };
-            let (queue, pipeline) = (Arc::clone(&queue), Arc::clone(&pipeline));
+            let (queue, pipeline, departments) = (
+                Arc::clone(&queue),
+                Arc::clone(&pipeline),
+                Arc::clone(&departments),
+            );
             tokio::spawn(async move {
                 queue.running.fetch_add(1, Ordering::Relaxed);
                 // An inner task turns a panic into an error, so the serial
@@ -459,7 +463,8 @@ pub fn spawn_worker(
                 drop(permit);
                 // Ack only once the outcome is recorded; a crash before
                 // that lets the backend redeliver the job.
-                if handle_result(&queue, &pipeline, envelope, result, &settings).await {
+                if handle_result(&queue, &pipeline, &departments, envelope, result, &settings).await
+                {
                     ack(&queue, &receipt).await;
                 }
                 if let Some(lease) = lease {
@@ -524,6 +529,7 @@ fn drop_for_unknown_department(envelope: &Envelope) {
 async fn handle_result(
     queue: &WorkerQueue,
     pipeline: &PipelineService,
+    departments: &Arc<dyn DepartmentDirectory>,
     envelope: Envelope,
     result: Result<(), JobFailure>,
     settings: &WorkerSettings,
@@ -533,8 +539,17 @@ async fn handle_result(
         metrics.completed(Utc::now().to_rfc3339());
         return true;
     };
-    // Destroyed while the job ran: nothing to retry or keep.
-    if err.code == "unknown_department" {
+    // Destroyed while the job ran: nothing to retry or keep. A replica
+    // with the schema cached sees missing tables rather than
+    // `unknown_department`, so the registry is asked as well; a destroy
+    // removes dead letters only after the registry row, so a letter
+    // written before that row went is removed with the rest.
+    if err.code == "unknown_department"
+        || matches!(
+            departments.exists(envelope.job.department()).await,
+            Ok(false)
+        )
+    {
         drop_for_unknown_department(&envelope);
         return true;
     }

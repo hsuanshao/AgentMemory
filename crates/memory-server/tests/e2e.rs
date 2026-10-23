@@ -2,6 +2,7 @@
 //! `AGENT_MEMORY_TEST_POSTGRES_URL` is set), with a scripted
 //! OpenAI-compatible LLM, driving L0 → L1 → L2 → L3 and skill extraction.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::routing::post;
@@ -1996,6 +1997,131 @@ async fn assert_destroyed_department_stays_gone(client: &Client) {
         left.iter().all(|l| l.job.department() != &id),
         "the dropped job was not dead-lettered"
     );
+}
+
+/// An overloaded LLM endpoint that answers only once released, and says
+/// when a request has arrived.
+async fn spawn_gated_failing_llm() -> (String, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+    let arrived = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (a, r) = (Arc::clone(&arrived), Arc::clone(&release));
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/v1/chat/completions",
+                post(move || {
+                    let (a, r) = (Arc::clone(&a), Arc::clone(&r));
+                    async move {
+                        a.notify_one();
+                        r.notified().await;
+                        (
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                            "model is at capacity",
+                        )
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap()
+    });
+    (format!("http://{addr}/v1"), arrived, release)
+}
+
+/// Two replicas on one Postgres, each with its own queue. A job runs on B,
+/// which has the department's schema cached, while A destroys the
+/// department; the job then fails on tables that are gone. It is dropped,
+/// not retried or dead-lettered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_job_failing_after_its_department_was_destroyed_is_dropped() {
+    let Ok(url) = std::env::var("AGENT_MEMORY_TEST_POSTGRES_URL") else {
+        eprintln!("skipping: set AGENT_MEMORY_TEST_POSTGRES_URL to run against Postgres");
+        return;
+    };
+    let (base_url, arrived, release) = spawn_gated_failing_llm().await;
+    let configure = |config: &mut Config| {
+        config.llm.base_url = base_url.clone();
+        config.llm.api_key = "fake".into();
+        config.worker.max_retries = 0;
+        config.storage.backend = "postgres".into();
+        config.storage.postgres.url = url.clone();
+    };
+    let (_data_a, a) = start_with(configure).await;
+
+    // Replica B: same database, its own data directory and local queue.
+    let data_b = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.data.base_dir = data_b.path().to_string_lossy().into_owned();
+    config.server.api_key = Some("test-key".into());
+    configure(&mut config);
+    config.worker.scan_interval_ms = 50;
+    let app = wiring::build(&config).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(memory_gateway::serve(
+        listener,
+        app.state.clone(),
+        std::future::pending(),
+    ));
+    let b = Client {
+        http: reqwest::Client::new(),
+        base,
+        department: a.department.clone(),
+        admin_key: a.admin_key.clone(),
+        member_key: a.member_key.clone(),
+        team_id: a.team_id.clone(),
+        agent_id: a.agent_id.clone(),
+        user_id: a.user_id.clone(),
+        state: app.state.clone(),
+    };
+
+    let added = b
+        .call(
+            "/v3/conversation/add",
+            b.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "We release v2 next Monday."}
+            ]})),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    tokio::time::timeout(Duration::from_secs(10), arrived.notified())
+        .await
+        .expect("B's worker calls the model");
+
+    let destroyed = a
+        .call_as(
+            "/v3/department/destroy",
+            "",
+            json!({"department_id": a.department}),
+        )
+        .await;
+    assert_eq!(destroyed["code"], 0, "{destroyed}");
+    release.notify_waiters();
+    release.notify_one();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    let id = memory_domain::scope::SegmentId::parse("department", &a.department).unwrap();
+    let everyone = memory_application::ports::pipeline::DeadLetterFilter::default();
+    let left = b
+        .state
+        .services
+        .pipeline
+        .dead_letters(
+            &everyone,
+            100,
+            &memory_domain::meta::visibility::ScopeVisibility::Department,
+        )
+        .await
+        .unwrap();
+    assert!(
+        left.iter().all(|l| l.job.department() != &id),
+        "dead-lettered: {:?}",
+        left.iter().map(|l| &l.error).collect::<Vec<_>>()
+    );
+    assert!(!b.state.services.departments.exists(&id).await.unwrap());
 }
 
 /// An LLM endpoint that is always overloaded.

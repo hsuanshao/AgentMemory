@@ -613,3 +613,43 @@ async fn only_create_makes_a_department_database() {
         0
     );
 }
+
+/// `department/destroy` while other tasks keep opening the department:
+/// none of them may reopen the old file or build a new one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_destroyed_department_cannot_be_reopened_meanwhile() {
+    use memory_application::admin::DepartmentLifecycle;
+    use memory_infrastructure::lifecycle::LocalDirCleanup;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    for _ in 0..30 {
+        let (dir, pool, department) = setup();
+        let store = SqliteMemoryStore::new(Arc::clone(&pool), None);
+        store
+            .append(&department, &[message("m1", "hello", "alice", 0)])
+            .await
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let openers: Vec<_> = (0..4)
+            .map(|_| {
+                let (pool, department, stop) =
+                    (Arc::clone(&pool), department.clone(), Arc::clone(&stop));
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = pool.get(&department);
+                    }
+                })
+            })
+            .collect();
+        LocalDirCleanup::new(dir.path().to_path_buf(), Some(Arc::clone(&pool)))
+            .destroy(&department)
+            .await
+            .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        for t in openers {
+            t.join().unwrap();
+        }
+        assert!(!pool.exists(&department), "reopened after destroy");
+        assert!(!dir.path().join("departments/ins-test").exists());
+    }
+}
