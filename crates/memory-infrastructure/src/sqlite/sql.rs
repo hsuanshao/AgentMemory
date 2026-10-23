@@ -88,11 +88,19 @@ pub fn blob_to_embedding(b: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+fn like_escape(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 /// Escapes `%`/`_` for a `LIKE ? ESCAPE '\'` prefix match.
 pub fn like_prefix(prefix: &str) -> String {
-    let escaped = prefix
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    format!("{escaped}%")
+    format!("{}%", like_escape(prefix))
+}
+
+/// Escapes `%`/`_` for a `LIKE ? ESCAPE '\'` substring match: a name
+/// filter matches the characters typed, not a pattern.
+pub fn like_contains(part: &str) -> String {
+    format!("%{}%", like_escape(part))
 }

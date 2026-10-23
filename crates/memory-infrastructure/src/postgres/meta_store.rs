@@ -25,6 +25,7 @@ use sqlx::postgres::PgConnection;
 
 use super::db::{pg_err, PgDb, Schema};
 use super::sql::{args, count, docs, execute, fetch_all, fetch_optional, get, to_doc, Arg, Where};
+use crate::sqlite::sql::like_contains;
 
 pub struct PostgresMetaStore {
     db: Arc<PgDb>,
@@ -265,7 +266,10 @@ impl UserRepository for PostgresMetaStore {
             w.in_list("user_id", ids);
         }
         if let Some(name) = &filter.username {
-            w.raw("username ILIKE ?", [Arg::from(format!("%{name}%"))]);
+            w.raw(
+                "username ILIKE ? ESCAPE '\\'",
+                [Arg::from(like_contains(name))],
+            );
         }
         w.eq_opt("user_type", filter.user_type.map(|t| t.as_str().to_owned()));
         w.eq_opt("status", filter.status.map(|st| st.as_str().to_owned()));
@@ -529,7 +533,7 @@ impl TeamRepository for PostgresMetaStore {
             );
         }
         if let Some(n) = name {
-            w.raw("name ILIKE ?", [Arg::from(format!("%{n}%"))]);
+            w.raw("name ILIKE ? ESCAPE '\\'", [Arg::from(like_contains(n))]);
         }
         paged(
             &mut *self.db.conn().await?,
@@ -756,7 +760,7 @@ impl AgentRepository for PostgresMetaStore {
             .eq_opt("owner_user_id", filter.owner_user_id.clone())
             .eq_opt("status", filter.status.map(|st| st.as_str().to_owned()));
         if let Some(n) = &filter.name {
-            w.raw("name ILIKE ?", [Arg::from(format!("%{n}%"))]);
+            w.raw("name ILIKE ? ESCAPE '\\'", [Arg::from(like_contains(n))]);
         }
         paged(
             &mut *self.db.conn().await?,

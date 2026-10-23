@@ -22,7 +22,7 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transact
 use serde::de::DeserializeOwned;
 
 use super::db::DepartmentPool;
-use super::sql::{from_doc, to_doc, Where};
+use super::sql::{from_doc, like_contains, to_doc, Where};
 
 pub struct SqliteMetaStore {
     pool: Arc<DepartmentPool>,
@@ -214,7 +214,10 @@ impl UserRepository for SqliteMetaStore {
             w.in_list("user_id", ids);
         }
         if let Some(name) = &filter.username {
-            w.raw("username LIKE ?", [Value::from(format!("%{name}%"))]);
+            w.raw(
+                "username LIKE ? ESCAPE '\\'",
+                [Value::from(like_contains(name))],
+            );
         }
         w.eq_opt("user_type", filter.user_type.map(|t| t.as_str().to_owned()));
         w.eq_opt("status", filter.status.map(|s| s.as_str().to_owned()));
@@ -417,7 +420,7 @@ impl TeamRepository for SqliteMetaStore {
             w.raw("team_id IN (SELECT team_id FROM meta_team_members WHERE user_id = ? AND status = 'active')", [Value::from(user_id.to_owned())]);
         }
         if let Some(n) = name {
-            w.raw("name LIKE ?", [Value::from(format!("%{n}%"))]);
+            w.raw("name LIKE ? ESCAPE '\\'", [Value::from(like_contains(n))]);
         }
         self.with(department, move |c| {
             paged(c, "meta_teams", &w, "created_at, team_id", page)
@@ -590,7 +593,7 @@ impl AgentRepository for SqliteMetaStore {
             .eq_opt("owner_user_id", filter.owner_user_id.clone())
             .eq_opt("status", filter.status.map(|s| s.as_str().to_owned()));
         if let Some(n) = &filter.name {
-            w.raw("name LIKE ?", [Value::from(format!("%{n}%"))]);
+            w.raw("name LIKE ? ESCAPE '\\'", [Value::from(like_contains(n))]);
         }
         self.with(department, move |c| {
             paged(c, "meta_agents", &w, "created_at, agent_id", page)
