@@ -26,6 +26,9 @@
 ### 變更
 - `amem` 對 Claude Code session 只在 persona 和 scene 導覽的內容和這個 session 上次收到的不同時才送，`SessionStart`（啟動、resume、`/clear`、fork、壓縮）之後再送一次；相關記憶仍然每個 prompt 都送。在一個約 20 個 agent 的部署裡，這部分占全部注入 context 的三分之二，而且每 4 個 prompt 有 3 個是原封不動重送。預設另外每 20 個 prompt 重送一次，以涵蓋沒有 `SessionStart` 的壓縮或 `/rewind`；`AMEM_SYSTEM_CONTEXT_EVERY`（或 `client.json` 的 `system_context_every`）可設成別的 `N`、`0` 只在變動時送、`1` 恢復原本行為。Claude Code plugin 為此多註冊一個 `SessionStart` hook；手寫的 `settings.json` 要自行加上 `amem hook claude-code session-start`。寫入 session 狀態的 hook 會對旁邊的 `.lock` 檔取得 `flock`，彼此不會互相覆蓋；hook 最多等一秒，拿不到就照樣寫入。Codex 和 Antigravity 不變（#39）。
 
+### 修正
+- `/v3/session/add` 又能存下回合了：授權層會把解析後的範圍寫進 body，所以每個通過授權的請求都會收到 422 `unknown field: team_id`。現在會先拿掉這些範圍欄位，再檢查回合內容；client 自己送的 `user`、`session` 欄位仍會被拒絕（[API](docs/API.zh-tw.md)）。
+
 ## [0.4.1] - 2026-10-23
 
 ### 新增

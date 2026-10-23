@@ -591,9 +591,17 @@ pub async fn core_count(
 pub async fn session_add(
     State(s): State<SharedState>,
     ctx: Ctx,
-    JsonBody(body): JsonBody,
+    JsonBody(mut body): JsonBody,
 ) -> ApiResult {
     let department = ctx.department()?;
+    // The authorization layer writes the resolved scope into the body; the
+    // turn takes it from the headers it also sets, and stores only its own
+    // fields.
+    if let Some(record) = body.as_object_mut() {
+        for field in crate::authz::SCOPE_FIELDS {
+            record.remove(field);
+        }
+    }
     let required = |name: &str| {
         ctx.header(name).ok_or_else(|| {
             ApiError::bad_request(&ctx.request_id, format!("missing header: {name}"))

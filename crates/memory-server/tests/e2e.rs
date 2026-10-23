@@ -1152,6 +1152,63 @@ async fn clients_older_than_departments_are_told_to_update() {
     );
 }
 
+/// A raw turn through the data plane: stored under the caller's team, user
+/// and session, with the scope taken from the authorization layer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_raw_session_turn_is_stored() {
+    let (data, client) = start().await;
+    let turn = json!({
+        "source": "online",
+        "started_at": "2026-06-11T02:18:20.359Z",
+        "ended_at": "2026-06-11T02:18:47.945Z",
+        "user_query": "what did we decide?",
+        "model": "m",
+        "messages": [{"role": "user", "content": "what did we decide?"}],
+        "output": {"role": "assistant", "content": "ship on Monday"}
+    });
+    let send = |body: Value| {
+        client
+            .http
+            .post(format!("{}/v3/session/add", client.base))
+            .header("x-memory-department-id", &client.department)
+            .header("x-memory-user-key", &client.member_key)
+            .header("x-memory-session-id", "s-raw")
+            .json(&body)
+            .send()
+    };
+    let res = send(client.scoped_for(turn.clone(), None)).await.unwrap();
+    assert_eq!(res.status(), 200);
+    let added: Value = res.json().await.unwrap();
+    let key = added["data"]["object_key"].as_str().unwrap().to_owned();
+    assert!(
+        key.starts_with(&format!(
+            "sessions/online/{}/{}/s-raw/",
+            client.team_id, client.user_id
+        )),
+        "{key}"
+    );
+    let stored: Value = serde_json::from_slice(
+        &std::fs::read(
+            data.path()
+                .join("departments")
+                .join(&client.department)
+                .join(&key),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["user"], client.user_id.as_str());
+    assert_eq!(stored["session"], "s-raw");
+    for field in ["team_id", "agent_id", "user_id", "task_id"] {
+        assert!(stored.get(field).is_none(), "{field} stored: {stored}");
+    }
+
+    // A client still cannot name the stored identity itself.
+    let mut forged = client.scoped_for(turn, None);
+    forged["user"] = json!("someone-else");
+    assert_eq!(send(forged).await.unwrap().status(), 422);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_departments_get_no_storage() {
     let (data, client) = start().await;
