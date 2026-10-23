@@ -186,7 +186,7 @@ finds the team (default `default-team`) and agent (default
 default-scope migration into them for that admin and, with `issue_key`,
 returns a new user key once. A dry run creates nothing (`team_id`/`agent_id`
 are `null` when they would be created). Repeatable.
-`/v3/department/destroy` `{department_id}`.
+`/v3/department/destroy` `{department_id}` → `{department_id, cleaned: {storage, state, dead_letters}}`; no `x-memory-department-id` needed.
 
 ## Design decisions
 

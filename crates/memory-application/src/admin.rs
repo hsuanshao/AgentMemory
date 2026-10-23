@@ -338,12 +338,15 @@ pub struct StatsOverview {
     pub generation_logs: usize,
 }
 
-/// Which departments have storage. Storage is created on first use, so
-/// requests for a department nobody set up are refused before they reach it;
-/// only `init-admin` starts a new one.
+/// Which departments have storage. Storage opens only departments created
+/// here (`init-admin`); anything else gets `unknown_department`.
 #[async_trait]
 pub trait DepartmentDirectory: Send + Sync {
+    /// Never creates anything. Also forgets a department another replica
+    /// destroyed, so a stale view does not outlive the answer.
     async fn exists(&self, department: &DepartmentId) -> DomainResult<bool>;
+    /// Creates the department's storage; a no-op when it exists.
+    async fn create(&self, department: &DepartmentId) -> DomainResult<()>;
 }
 
 /// Wipes every trace of a department (database + files).

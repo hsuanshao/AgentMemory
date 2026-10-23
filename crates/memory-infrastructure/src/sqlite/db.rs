@@ -97,8 +97,14 @@ pub struct DepartmentPool {
     entries: Mutex<HashMap<DepartmentId, Entry>>,
 }
 
+/// Where `retire` moves a department's directory before deleting it.
+const REMOVED_DIR: &str = "departments-removed";
+
 impl DepartmentPool {
     pub fn new(data_dir: PathBuf, capacity: usize) -> Self {
+        // Left behind when the process stopped between moving a retired
+        // department aside and deleting it.
+        let _ = std::fs::remove_dir_all(data_dir.join(REMOVED_DIR));
         Self {
             data_dir,
             capacity: capacity.max(1),
@@ -110,7 +116,18 @@ impl DepartmentPool {
         self.data_dir.join("departments").join(department.as_str())
     }
 
+    /// The department's database; `unknown_department` when it has none
+    /// (only [`DepartmentPool::create`] makes one).
     pub fn get(&self, department: &DepartmentId) -> DomainResult<Arc<Db>> {
+        self.open(department, false)
+    }
+
+    /// Opens the department's database, creating it if needed.
+    pub fn create(&self, department: &DepartmentId) -> DomainResult<Arc<Db>> {
+        self.open(department, true)
+    }
+
+    fn open(&self, department: &DepartmentId, create: bool) -> DomainResult<Arc<Db>> {
         let mut entries = self
             .entries
             .lock()
@@ -118,6 +135,10 @@ impl DepartmentPool {
         if let Some(entry) = entries.get_mut(department) {
             entry.last_used = Instant::now();
             return Ok(Arc::clone(&entry.db));
+        }
+        let path = self.department_dir(department).join("memory.db");
+        if !create && !path.is_file() {
+            return Err(DomainError::unknown_department(department));
         }
         if entries.len() >= self.capacity {
             if let Some(oldest) = entries
@@ -128,10 +149,7 @@ impl DepartmentPool {
                 entries.remove(&oldest);
             }
         }
-        let db = Arc::new(Db::open(
-            &self.department_dir(department).join("memory.db"),
-            schema::migrate_department,
-        )?);
+        let db = Arc::new(Db::open(&path, schema::migrate_department)?);
         entries.insert(
             department.clone(),
             Entry {
@@ -152,6 +170,31 @@ impl DepartmentPool {
         open || self.department_dir(department).join("memory.db").is_file()
     }
 
+    /// Takes the department out of service in one step under the pool lock:
+    /// its open database is dropped and its directory moved aside, so no
+    /// `get` in between can reopen the file or build a new one. Returns
+    /// where the directory went, for the caller to delete (that can take a
+    /// while, so it happens outside the lock). In-flight users keep their
+    /// handle to the old file; nothing they write is visible afterwards.
+    pub fn retire(&self, department: &DepartmentId) -> DomainResult<Option<PathBuf>> {
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| DomainError::internal("pool lock poisoned"))?;
+        entries.remove(department);
+        let dir = self.department_dir(department);
+        if !dir.exists() {
+            return Ok(None);
+        }
+        let removed = self.data_dir.join(REMOVED_DIR);
+        std::fs::create_dir_all(&removed)
+            .map_err(|e| DomainError::unavailable(format!("create {}: {e}", removed.display())))?;
+        let to = removed.join(format!("{}-{}", department, uuid::Uuid::new_v4().simple()));
+        std::fs::rename(&dir, &to)
+            .map_err(|e| DomainError::unavailable(format!("move {} aside: {e}", dir.display())))?;
+        Ok(Some(to))
+    }
+
     /// Closes the department database (in-flight users keep their handle).
     pub fn evict(&self, department: &DepartmentId) {
         if let Ok(mut entries) = self.entries.lock() {
@@ -159,11 +202,13 @@ impl DepartmentPool {
         }
     }
 
-    /// Departments that currently have a database on disk.
+    /// Departments that currently have a database on disk (a directory
+    /// holding only files is not one).
     pub fn known_departments(&self) -> Vec<String> {
         std::fs::read_dir(self.data_dir.join("departments"))
             .map(|dir| {
                 dir.filter_map(Result::ok)
+                    .filter(|e| e.path().join("memory.db").is_file())
                     .filter_map(|e| e.file_name().into_string().ok())
                     .collect()
             })

@@ -155,7 +155,7 @@ Meta 的列表回應格式：`{items, total, limit, offset}`；`redaction-rule/l
   * 帶 `issue_key` 時，另外發一把新的 user key，只回傳這一次。
 
   Dry run 不會建立任何東西；將會新建的 team 或 agent，其 `team_id`/`agent_id` 回傳 `null`。可以安全地重複執行。
-* `/v3/department/destroy` `{department_id}`。
+* `/v3/department/destroy` `{department_id}` → `{department_id, cleaned: {storage, state, dead_letters}}`；不需要 `x-memory-department-id`。
 
 ## 設計決策
 

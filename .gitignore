@@ -16,3 +16,6 @@
 
 # Local design discussions (not published)
 .discussion/
+
+# Local test tools (smoke tests, scripts; not published)
+.tools/

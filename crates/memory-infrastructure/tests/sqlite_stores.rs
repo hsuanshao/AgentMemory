@@ -30,11 +30,9 @@ use serde_json::json;
 fn setup() -> (tempfile::TempDir, Arc<DepartmentPool>, DepartmentId) {
     let dir = tempfile::tempdir().unwrap();
     let pool = Arc::new(DepartmentPool::new(dir.path().to_path_buf(), 4));
-    (
-        dir,
-        pool,
-        SegmentId::parse("department", "ins-test").unwrap(),
-    )
+    let department = SegmentId::parse("department", "ins-test").unwrap();
+    pool.create(&department).unwrap();
+    (dir, pool, department)
 }
 
 fn scope(user: &str) -> MemoryScope {
@@ -591,4 +589,67 @@ async fn a_service_that_refuses_every_input_stops_the_run_as_misconfigured() {
 async fn redaction_rules_are_kept_and_replaced_by_id() {
     let (_dir, pool, department) = setup();
     redaction_rules::exercise(&SqliteMetaStore::new(pool), &department).await;
+}
+
+#[tokio::test]
+async fn only_create_makes_a_department_database() {
+    let (dir, pool, created) = setup();
+    let unknown = SegmentId::parse("department", "ins-unknown").unwrap();
+    let store = SqliteMemoryStore::new(Arc::clone(&pool), None);
+    let filter = ConversationFilter::default();
+    let err = ConversationRepository::count(&store, &unknown, None, &filter)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "unknown_department");
+    assert!(!pool.exists(&unknown));
+    assert!(!dir.path().join("departments/ins-unknown").exists());
+
+    assert!(pool.exists(&created));
+    pool.create(&unknown).unwrap();
+    assert_eq!(
+        ConversationRepository::count(&store, &unknown, None, &filter)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+/// `department/destroy` while other tasks keep opening the department:
+/// none of them may reopen the old file or build a new one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_destroyed_department_cannot_be_reopened_meanwhile() {
+    use memory_application::admin::DepartmentLifecycle;
+    use memory_infrastructure::lifecycle::LocalDirCleanup;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    for _ in 0..30 {
+        let (dir, pool, department) = setup();
+        let store = SqliteMemoryStore::new(Arc::clone(&pool), None);
+        store
+            .append(&department, &[message("m1", "hello", "alice", 0)])
+            .await
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let openers: Vec<_> = (0..4)
+            .map(|_| {
+                let (pool, department, stop) =
+                    (Arc::clone(&pool), department.clone(), Arc::clone(&stop));
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = pool.get(&department);
+                    }
+                })
+            })
+            .collect();
+        LocalDirCleanup::new(dir.path().to_path_buf(), Some(Arc::clone(&pool)))
+            .destroy(&department)
+            .await
+            .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        for t in openers {
+            t.join().unwrap();
+        }
+        assert!(!pool.exists(&department), "reopened after destroy");
+        assert!(!dir.path().join("departments/ins-test").exists());
+    }
 }

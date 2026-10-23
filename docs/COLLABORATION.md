@@ -289,7 +289,7 @@ Pipeline state (`/v3/pipeline/status`), generation logs (`/v3/memory-generation-
 - A department is created by `init-admin` (below). Every other request for a department that does not exist is refused without storing anything: data-plane routes answer as for a wrong user key, `meta/auth/verify` with `valid: false`, other routes with 404 `unknown_department`. The answer does not tell whether a department exists, but the response time can (department names are not secrets; [ARCHITECTURE](ARCHITECTURE.md#two-trust-zones)). With SQLite that is a database file at `<data>/departments/<id>/memory.db`; with Postgres, a schema of its own. Files (skill resources, raw session turns) live under `<data>/departments/<id>/`.
 - Users are per department, so each new department needs its own administrator: `POST /v3/internal/meta/user/init-admin` with that department's `x-memory-department-id`.
 - One Panel deployment serves one department (`CORE_DEPARTMENT_ID`). Run a second Panel to manage another one.
-- `POST /v3/department/destroy` removes a department and everything in it. It needs the server API key.
+- `POST /v3/department/destroy` removes a department and everything in it, including its dead letters. It needs the server API key; the department is named in the body, no header needed. Jobs still queued for it are dropped when a worker takes them; if the same department id is initialized again before that, such a job runs against the new department.
 
 ## 14. Limits and current gaps
 

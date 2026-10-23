@@ -52,7 +52,9 @@ async fn setup() -> Option<(Arc<PgDb>, DepartmentId)> {
         .await
         .expect("connect to test postgres");
     let id = format!("ins-pg-{}", uuid::Uuid::new_v4().simple());
-    Some((Arc::new(db), SegmentId::parse("department", &id).unwrap()))
+    let department = SegmentId::parse("department", &id).unwrap();
+    db.create_department(&department).await.unwrap();
+    Some((Arc::new(db), department))
 }
 
 /// Drops the department schema.
@@ -515,7 +517,7 @@ async fn keyword_search_matches_underscored_and_cjk_tokens_verbatim() {
 }
 
 /// Two replicas on one database: one destroys a department the other has
-/// cached; the other must see it gone, and build it again on next use.
+/// cached; the other must see it gone, and build it again when created.
 #[tokio::test]
 async fn a_department_destroyed_elsewhere_is_unknown_here() {
     let Some((a, department)) = setup().await else {
@@ -526,7 +528,6 @@ async fn a_department_destroyed_elsewhere_is_unknown_here() {
     let store_b = PostgresMemoryStore::new(Arc::clone(&b));
     let filter = ConversationFilter::default();
 
-    a.schema(&department).await.unwrap();
     b.schema(&department).await.unwrap();
     assert!(DepartmentDirectory::exists(b.as_ref(), &department)
         .await
@@ -536,7 +537,13 @@ async fn a_department_destroyed_elsewhere_is_unknown_here() {
     assert!(!DepartmentDirectory::exists(b.as_ref(), &department)
         .await
         .unwrap());
-    // Built again on next use (init-admin), not served from the stale cache.
+    // Not served from the stale cache, not re-created by using it.
+    let err = ConversationRepository::count(&store_b, &department, None, &filter)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "unknown_department");
+    // init-admin on this replica builds it again.
+    b.create_department(&department).await.unwrap();
     assert_eq!(
         ConversationRepository::count(&store_b, &department, None, &filter)
             .await
@@ -555,6 +562,7 @@ async fn departments_live_in_separate_schemas_and_cleanup_drops_them() {
         return;
     };
     let b = SegmentId::parse("department", &format!("{}-other", a.as_str())).unwrap();
+    db.create_department(&b).await.unwrap();
     let store = PostgresMemoryStore::new(Arc::clone(&db));
     store
         .append(&a, &[message("m1", "只在 A 實例", "alice", 0)])
@@ -611,7 +619,13 @@ async fn departments_live_in_separate_schemas_and_cleanup_drops_them() {
         json!({"removed": false})
     );
 
-    // The department comes back empty on next use.
+    // Using it does not bring it back; creating it does, empty.
+    let err = ConversationRepository::count(&store, &a, None, &filter)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "unknown_department");
+    assert!(!schema_exists(schema_name(&a)).await);
+    db.create_department(&a).await.unwrap();
     assert_eq!(
         ConversationRepository::count(&store, &a, None, &filter)
             .await

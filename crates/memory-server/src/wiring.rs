@@ -33,7 +33,7 @@ use memory_domain::retrieval::SearchMode;
 use memory_gateway::{AppState, GatewaySettings, HealthFacts, Services};
 use memory_infrastructure::cli_llm::{harden, CliLlm, CliLlmSettings, Hardened, PromptMode};
 use memory_infrastructure::fs::LocalFileStore;
-use memory_infrastructure::lifecycle::{CompositeLifecycle, StateCleanup};
+use memory_infrastructure::lifecycle::{CompositeLifecycle, DeadLetterCleanup, StateCleanup};
 use memory_infrastructure::openai::{
     EmbeddingSettings, LlmSettings, NoEmbedding, OpenAiEmbedding, OpenAiLlm,
 };
@@ -306,6 +306,10 @@ pub async fn build(config: &Config) -> Result<App> {
             "state",
             Arc::new(StateCleanup::new(Arc::clone(&coordination.state))),
         ),
+        (
+            "dead_letters",
+            Arc::new(DeadLetterCleanup::new(Arc::clone(&coordination.queue))),
+        ),
     ]));
     let migration = Arc::new(LegacyScopeMigration::new(
         Arc::clone(&storage.meta),
@@ -373,6 +377,7 @@ pub async fn build(config: &Config) -> Result<App> {
             Arc::clone(&queue),
             Arc::clone(&coordination.job_locks),
             pipeline.clone(),
+            Arc::clone(&storage.departments),
             worker,
         ),
         spawn_dead_letter_sweeper(queue, pipeline.clone(), worker),

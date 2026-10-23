@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use memory_application::admin::DepartmentDirectory;
 use memory_application::memory::backfill::EmbeddingBackfill;
 use memory_application::pipeline::service::{JobFailure, PipelineService};
 use memory_application::ports::coordination::KeyLock;
@@ -389,11 +390,13 @@ impl QueueBackend for LocalQueue {
 /// Spawns the dispatcher. Jobs sharing a serial key never run concurrently
 /// (across nodes when `locks` is distributed). `locks` must not be the
 /// department the pipeline uses for its state documents: a job holds its
-/// serial key while the pipeline takes state locks inside it.
+/// serial key while the pipeline takes state locks inside it. A job whose
+/// department no longer exists (destroyed after it was queued) is dropped.
 pub fn spawn_worker(
     queue: Arc<WorkerQueue>,
     locks: Arc<dyn KeyLock>,
     pipeline: Arc<PipelineService>,
+    departments: Arc<dyn DepartmentDirectory>,
     settings: WorkerSettings,
 ) -> JoinHandle<()> {
     let permits = Arc::new(Semaphore::new(settings.concurrency.max(1)));
@@ -411,6 +414,21 @@ pub fn spawn_worker(
                     continue;
                 }
             };
+            // Asked per job: it also clears what this node still remembers
+            // of a department another node destroyed.
+            match departments.exists(envelope.job.department()).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    drop_for_unknown_department(&envelope);
+                    ack(&queue, &receipt).await;
+                    continue;
+                }
+                Err(err) => {
+                    warn!(error = %err, "department check failed; requeueing");
+                    requeue_and_ack(&queue, envelope, &receipt, settings.busy_requeue_delay).await;
+                    continue;
+                }
+            }
             let guard = match locks.try_lock(&envelope.job.serial_key()).await {
                 Ok(Some(guard)) => guard,
                 Ok(None) => {
@@ -423,7 +441,11 @@ pub fn spawn_worker(
                     continue;
                 }
             };
-            let (queue, pipeline) = (Arc::clone(&queue), Arc::clone(&pipeline));
+            let (queue, pipeline, departments) = (
+                Arc::clone(&queue),
+                Arc::clone(&pipeline),
+                Arc::clone(&departments),
+            );
             tokio::spawn(async move {
                 queue.running.fetch_add(1, Ordering::Relaxed);
                 // An inner task turns a panic into an error, so the serial
@@ -441,7 +463,8 @@ pub fn spawn_worker(
                 drop(permit);
                 // Ack only once the outcome is recorded; a crash before
                 // that lets the backend redeliver the job.
-                if handle_result(&queue, &pipeline, envelope, result, &settings).await {
+                if handle_result(&queue, &pipeline, &departments, envelope, result, &settings).await
+                {
                     ack(&queue, &receipt).await;
                 }
                 if let Some(lease) = lease {
@@ -493,11 +516,20 @@ fn keep_lease(backend: Arc<dyn QueueBackend>, receipt: String) -> Option<JoinHan
     }))
 }
 
+fn drop_for_unknown_department(envelope: &Envelope) {
+    info!(
+        kind = envelope.job.kind(),
+        department = %envelope.job.department(),
+        "job dropped: its department no longer exists"
+    );
+}
+
 /// Records the outcome; `true` once it is durable, so the delivery may be
 /// acked.
 async fn handle_result(
     queue: &WorkerQueue,
     pipeline: &PipelineService,
+    departments: &Arc<dyn DepartmentDirectory>,
     envelope: Envelope,
     result: Result<(), JobFailure>,
     settings: &WorkerSettings,
@@ -507,6 +539,20 @@ async fn handle_result(
         metrics.completed(Utc::now().to_rfc3339());
         return true;
     };
+    // Destroyed while the job ran: nothing to retry or keep. A replica
+    // with the schema cached sees missing tables rather than
+    // `unknown_department`, so the registry is asked as well; a destroy
+    // removes dead letters only after the registry row, so a letter
+    // written before that row went is removed with the rest.
+    if err.code == "unknown_department"
+        || matches!(
+            departments.exists(envelope.job.department()).await,
+            Ok(false)
+        )
+    {
+        drop_for_unknown_department(&envelope);
+        return true;
+    }
     // A failure that would repeat is not retried (L1/L2 dropped its input).
     let retry =
         envelope.attempt < settings.max_retries && !failure_is_deterministic(&err.to_string());
