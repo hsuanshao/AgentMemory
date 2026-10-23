@@ -14,6 +14,7 @@ use memory_application::migration::LegacyScopeMigration;
 use memory_application::pipeline::generation_logs::GenerationLogService;
 use memory_application::pipeline::memory_prompts::MemoryPromptService;
 use memory_application::pipeline::service::PipelineService;
+use memory_application::redaction::RedactionService;
 use memory_application::skill::extraction::SkillExtractionService;
 use memory_application::skill::service::SkillService;
 use memory_application::upgrade::LegacyUpgrade;
@@ -48,6 +49,8 @@ pub struct Services {
     pub prompts: Arc<MemoryPromptService>,
     pub generation_logs: Arc<GenerationLogService>,
     pub meta: Arc<MetaService>,
+    /// Redaction rules: the per-department redactor and its admin API.
+    pub redaction: Arc<RedactionService>,
     pub chat_memory: Arc<ChatMemoryService>,
     pub knowledge: Arc<KnowledgeService>,
     pub stats: Arc<StatsService>,

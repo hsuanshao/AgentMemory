@@ -146,6 +146,9 @@ CREATE TABLE IF NOT EXISTS meta_asset_acl (
     permission TEXT NOT NULL, doc TEXT NOT NULL,
     UNIQUE (asset_id, subject_type, subject_id, permission)
 );
+CREATE TABLE IF NOT EXISTS meta_redaction_rules (
+    rule_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, doc TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta_config_params (
     scope TEXT NOT NULL, user_id TEXT NOT NULL, module TEXT NOT NULL, param_name TEXT NOT NULL, param_value TEXT NOT NULL,
     PRIMARY KEY (scope, user_id, module, param_name)
@@ -185,7 +188,10 @@ CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_
 /// 4. A partial index of the atoms without an embedding
 ///    (`ix_atoms_missing_embedding`), the embedding backfill's queue. The
 ///    DDL above creates it; nothing is converted.
-pub const SCHEMA_VERSION: i64 = 4;
+/// 5. Administrators' redaction rules (`meta_redaction_rules`). Nothing to
+///    convert, but an older memory-server must not run on it: it would store
+///    what those rules hide.
+pub const SCHEMA_VERSION: i64 = 5;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -432,7 +438,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(indexed, 1);
-        assert_eq!(user_version(&conn).unwrap(), 4);
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
     }
 
     #[test]

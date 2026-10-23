@@ -21,9 +21,10 @@ use memory_application::pipeline::l3::PersonaGenerator;
 use memory_application::pipeline::memory_prompts::MemoryPromptService;
 use memory_application::pipeline::metrics::PipelineMetrics;
 use memory_application::pipeline::service::{PipelineDeps, PipelineService, SkillJobRunner};
-use memory_application::ports::meta::KnowledgeRepository;
+use memory_application::ports::meta::{KnowledgeRepository, RedactionRuleRepository};
 use memory_application::ports::pipeline::DeadLetterPolicy;
 use memory_application::ports::system::{Clock, EmbeddingProvider, IdGenerator, LlmClient};
+use memory_application::redaction::RedactionService;
 use memory_application::skill::extraction::{ExtractionSettings, SkillExtractionService};
 use memory_application::skill::service::{SkillService, SkillSettings};
 use memory_application::upgrade::LegacyUpgrade;
@@ -161,12 +162,18 @@ pub async fn build(config: &Config) -> Result<App> {
 
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let ids: Arc<dyn IdGenerator> = Arc::new(RandomIds);
-    // Every write path redacts with the same rules (#57).
-    let redactor = Arc::new(config.redaction.redactor()?);
     let llm = llm(config);
     let embedder = embedder(config);
 
     let storage = build_storage(config, &data_dir, embedder.dimensions()).await?;
+    // Every write path redacts with the department's rules: built-in, the
+    // deployment's, its administrators' (#57).
+    let redaction = Arc::new(RedactionService::new(
+        config.redaction.deployment_rules()?,
+        Arc::clone(&storage.meta) as Arc<dyn RedactionRuleRepository>,
+        Arc::clone(&clock),
+        Arc::clone(&ids),
+    ));
     let coordination = build_coordination(config, &data_dir).await?;
     let conversations = Arc::clone(&storage.conversations);
     let atoms = Arc::clone(&storage.atoms);
@@ -180,7 +187,7 @@ pub async fn build(config: &Config) -> Result<App> {
     // a forwarding observer breaks the cycle.
     let observer = Arc::new(LateObserver::default());
     let memory = Arc::new(MemoryService::new(
-        Arc::clone(&redactor),
+        Arc::clone(&redaction),
         Arc::clone(&conversations),
         Arc::clone(&atoms),
         Arc::clone(&profiles),
@@ -202,7 +209,7 @@ pub async fn build(config: &Config) -> Result<App> {
     ));
     let settings = pipeline_settings(config);
     let l1 = L1Extractor::new(
-        Arc::clone(&redactor),
+        Arc::clone(&redaction),
         Arc::clone(&llm),
         Arc::clone(&atoms),
         Arc::clone(&embedder),
@@ -264,7 +271,7 @@ pub async fn build(config: &Config) -> Result<App> {
     meta.register_chat_memory_cleaner(chat_memory.clone() as Arc<dyn ChatMemoryCleaner>);
 
     let skills = Arc::new(SkillService::new(
-        Arc::clone(&redactor),
+        Arc::clone(&redaction),
         Arc::clone(&storage.skills),
         files.clone(),
         meta.clone(),
@@ -277,7 +284,7 @@ pub async fn build(config: &Config) -> Result<App> {
         },
     ));
     let skill_extraction = Arc::new(SkillExtractionService::new(
-        Arc::clone(&redactor),
+        Arc::clone(&redaction),
         Arc::clone(&storage.skill_buffers),
         skills.clone(),
         pipeline.clone(),
@@ -317,7 +324,7 @@ pub async fn build(config: &Config) -> Result<App> {
             recall_settings(config),
         )),
         session: Arc::new(SessionService::new(
-            Arc::clone(&redactor),
+            Arc::clone(&redaction),
             files,
             Arc::clone(&ids),
         )),
@@ -337,6 +344,7 @@ pub async fn build(config: &Config) -> Result<App> {
         prompts,
         generation_logs,
         meta,
+        redaction,
         chat_memory,
         skills,
         skill_extraction,

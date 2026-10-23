@@ -8,8 +8,8 @@ use memory_application::common::{BatchDeleteResult, FailedId, Page};
 use memory_application::ports::meta::{
     AclRepository, AgentFilter, AgentRepository, AssetFilter, AssetRepository, BindingRepository,
     ConfigParam, ConfigRepository, KnowledgeEntity, KnowledgeRepository, MemberRepository,
-    ParticipationFilter, TaskFilter, TaskRepository, TeamRepository, UserFilter, UserKeyRepository,
-    UserRepository,
+    ParticipationFilter, RedactionRule, RedactionRuleRepository, TaskFilter, TaskRepository,
+    TeamRepository, UserFilter, UserKeyRepository, UserRepository,
 };
 use memory_domain::error::DomainResult;
 use memory_domain::meta::{
@@ -1129,6 +1129,39 @@ impl KnowledgeRepository for SqliteMetaStore {
         }
         self.with(department, move |c| {
             paged(c, "knowledge", &w, "created_at DESC, id", page)
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl RedactionRuleRepository for SqliteMetaStore {
+    async fn list_redaction_rules(
+        &self,
+        department: &DepartmentId,
+    ) -> DomainResult<Vec<RedactionRule>> {
+        self.with(department, |c| {
+            many(
+                c,
+                "SELECT doc FROM meta_redaction_rules ORDER BY created_at, rule_id",
+                &[],
+            )
+        })
+        .await
+    }
+
+    async fn put_redaction_rule(
+        &self,
+        department: &DepartmentId,
+        rule: &RedactionRule,
+    ) -> DomainResult<()> {
+        let r = rule.clone();
+        self.with(department, move |c| {
+            c.execute(
+                "INSERT OR REPLACE INTO meta_redaction_rules (rule_id, created_at, doc) VALUES (?,?,?)",
+                params![r.rule_id, r.created_at, to_doc(&r)?],
+            )
+            .map(|_| ())
         })
         .await
     }

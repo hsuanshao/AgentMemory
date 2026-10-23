@@ -336,6 +336,33 @@ export interface TeamMember {
 
 export type TeamRole = "admin" | "leader" | "member";
 
+/** A redaction rule a system admin added to the department (#57). */
+export interface RedactionRule {
+  rule_id: string;
+  /** Shown as `[REDACTED:<kind>]`. */
+  kind: string;
+  pattern: string;
+  description: string;
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+/** The three layers of rules, listed apart; only `department` is editable here. */
+export interface RedactionRuleListing {
+  builtin: string[];
+  deployment_password_shape: boolean;
+  deployment: { kind: string; pattern: string }[];
+  department: RedactionRule[];
+}
+
+export interface RedactionTestResult {
+  redacted: string;
+  hits: { kind: string; count: number }[];
+}
+
 export interface UserKeyInfo {
   key_id: string;
   user_id: string;

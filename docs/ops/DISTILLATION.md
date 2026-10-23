@@ -213,10 +213,18 @@ redaction:
 - Personal data such as ids and phone numbers is not redacted by default. Which formats matter depends on the country and the deployment, so add them here.
 - These settings apply to memory-core only. `amem` always uses the built-in rules, shape rule included, so turning `passwordShape` off or adding patterns does not change what the client redacts before sending.
 
+**Department rules.** A department's system admins add their own patterns, on top of the built-in and deployment ones, in the Panel (Metadata → Redaction) or through `/v3/meta/redaction-rule/*` ([API](../API.md)). Other users, MCP and the distillation model cannot see or change them.
+
+- Each rule is a kind (shown as `[REDACTED:<kind>]`; not a built-in one) and a Rust regex, at most 500 characters. A pattern that does not compile, matches the empty string or is too large is refused. At most 50 enabled rules per department.
+- **Try it** (`test`) runs sample text through the department's rules, plus a pattern not saved yet, and shows the result and what each kind caught. The text is not stored.
+- A new or changed rule applies to the next write on that replica; other replicas pick it up within 30 seconds. Stored data is not rewritten.
+- Removing a rule disables it. The record of who added and changed it, and when, stays; it can be enabled again.
+- If the rules cannot be read, writes to the department fail rather than going through without them.
+
 **Limits.**
 
 - Rules are heuristics: a safety net, not a guarantee.
-- Data stored before an upgrade is not rewritten.
+- Data stored before an upgrade, or before a rule was added, is not rewritten.
 - Binary skill resource files (not UTF-8) are not scanned.
 
 ## 8. Embeddings and load

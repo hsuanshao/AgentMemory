@@ -116,7 +116,16 @@ describe("user key guard", () => {
     const fetchFn = coreFetch(() => jsonResponse(ok({})));
     const app = buildApp(fetchFn);
     const viewer = { "x-memory-user-key": "sk-mem-viewer" };
-    for (const path of ["meta/team/create", "meta/team-member/add", "atomic/delete", "core/write", "pipeline/dead-letter/redrive"]) {
+    for (const path of [
+      "meta/team/create",
+      "meta/team-member/add",
+      "atomic/delete",
+      "core/write",
+      "pipeline/dead-letter/redrive",
+      "meta/redaction-rule/list",
+      "meta/redaction-rule/create",
+      "meta/redaction-rule/test",
+    ]) {
       const res = await app.request(`/api/core/${path}`, post("", {}, viewer));
       expect(res.status, path).toBe(403);
       expect(await res.json()).toMatchObject({ message: "forbidden: system_admin_required" });

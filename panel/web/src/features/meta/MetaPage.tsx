@@ -11,10 +11,11 @@ import { useAsync } from "../../hooks/useAsync";
 import { useStore } from "../../hooks/useStore";
 import { isSystemAdmin, sessionStore } from "../auth/session";
 import { LIST_LIMIT, mono, time } from "./shared";
+import { RedactionPanel } from "./RedactionPanel";
 import { TeamsPanel } from "./TeamsPanel";
 import { UsersPanel } from "./UsersPanel";
 
-type TabId = "teams" | "users" | "assets";
+type TabId = "teams" | "users" | "assets" | "redaction";
 
 const ASSET_TYPES = [
   { value: "", label: "All types" },
@@ -44,6 +45,7 @@ export function MetaPage() {
     { id: "teams", label: "Teams" },
     ...(admin ? [{ id: "users" as const, label: "Users" }] : []),
     { id: "assets", label: "Assets" },
+    ...(admin ? [{ id: "redaction" as const, label: "Redaction" }] : []),
   ];
 
   return (
@@ -64,6 +66,7 @@ export function MetaPage() {
       {tab === "teams" && <TeamsPanel userId={userId} admin={admin} />}
       {tab === "users" && admin && <UsersPanel />}
       {tab === "assets" && <AssetsPanel userId={userId} />}
+      {tab === "redaction" && admin && <RedactionPanel />}
     </div>
   );
 }

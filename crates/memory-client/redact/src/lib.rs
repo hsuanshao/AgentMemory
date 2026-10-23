@@ -15,11 +15,12 @@
 //! (see [`looks_like_password`]).
 //!
 //! Deployments add their own patterns (national ids, phone numbers) with
-//! [`Redactor::with_extra`].
+//! [`Redactor::with_extra`]; memory-core also lets department administrators
+//! add theirs. [`check_pattern`] is the gate for both.
 
 use std::sync::OnceLock;
 
-use regex::{Captures, Regex};
+use regex::{Captures, Regex, RegexBuilder};
 
 /// (kind, pattern). A pattern with a `keep` group keeps that prefix (e.g.
 /// the `password=` of a key/value pair) and redacts the rest of the match.
@@ -340,6 +341,38 @@ fn looks_like_password(core: &str) -> bool {
     core.chars().any(|c| c.is_ascii_alphabetic()) && core.chars().any(|c| c.is_ascii_digit())
 }
 
+/// Compiled size limit of an added pattern. The default (10 MiB) lets one
+/// pattern cost every write a lot of memory; real rules need a few KiB.
+const EXTRA_SIZE_LIMIT: usize = 1 << 20;
+
+/// Kinds of the built-in rules, in the order they run; `password-shape` last.
+pub fn builtin_kinds() -> Vec<&'static str> {
+    RULES
+        .iter()
+        .map(|(kind, _)| *kind)
+        .chain(["secret-phrase", "password-shape"])
+        .collect()
+}
+
+/// Compiles an added pattern, or says why it cannot be one: it does not
+/// compile, is too large, or matches the empty string (it would put a
+/// marker between every two characters).
+fn compile_extra(pattern: &str) -> Result<Regex, String> {
+    let re = RegexBuilder::new(pattern)
+        .size_limit(EXTRA_SIZE_LIMIT)
+        .build()
+        .map_err(|e| e.to_string())?;
+    if re.is_match("") {
+        return Err("it matches the empty string".into());
+    }
+    Ok(re)
+}
+
+/// Checks a pattern before it is added; see [`Redactor::new`].
+pub fn check_pattern(pattern: &str) -> Result<(), String> {
+    compile_extra(pattern).map(|_| ())
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Check {
     /// The pattern alone decides.
@@ -407,16 +440,16 @@ impl Redactor {
 
     /// The built-in rules, the shape rule when `password_shape` is set, then
     /// `extra` (kind, pattern) pairs. A pattern may have a `keep` group, like
-    /// the built-in ones. Fails on the first pattern that does not compile,
-    /// naming it.
+    /// the built-in ones. Fails on the first pattern [`check_pattern`]
+    /// rejects, naming it.
     pub fn new(extra: &[(String, String)], password_shape: bool) -> Result<Redactor, String> {
         let mut rules = Self::builtin_rules();
         if password_shape {
             rules.push(Self::shape_rule());
         }
         for (kind, pattern) in extra {
-            let re = Regex::new(pattern)
-                .map_err(|e| format!("redaction pattern {kind:?} does not compile: {e}"))?;
+            let re = compile_extra(pattern)
+                .map_err(|e| format!("redaction pattern {kind:?} is rejected: {e}"))?;
             rules.push(Rule {
                 kind: kind.clone(),
                 re,
@@ -428,14 +461,24 @@ impl Redactor {
 
     /// Replaces every secret with `[REDACTED:<kind>]`.
     pub fn redact(&self, text: &str) -> String {
+        self.redact_counted(text).0
+    }
+
+    /// Like [`Redactor::redact`], also returning how many secrets each kind
+    /// replaced (kinds that replaced none are left out), in rule order.
+    pub fn redact_counted(&self, text: &str) -> (String, Vec<(String, usize)>) {
         let mut out = text.to_owned();
+        let mut hits = Vec::new();
         for rule in &self.rules {
             if !rule.re.is_match(&out) {
                 continue;
             }
+            let mut n = 0;
             out = rule
                 .re
                 .replace_all(&out, |c: &Captures| match rule.check {
+                    // A zero-width match (`\b`) has nothing to hide.
+                    _ if c[0].is_empty() => String::new(),
                     Check::Phrase
                         if c.name("strong").is_none()
                             && c.name("strong2").is_none()
@@ -450,18 +493,23 @@ impl Redactor {
                         if !looks_like_password(core) {
                             return run.to_owned();
                         }
+                        n += 1;
                         let start = run.len() - run.trim_start_matches(WRAPPING).len();
                         let end = start + core.len();
                         format!("{}[REDACTED:{}]{}", &run[..start], rule.kind, &run[end..])
                     }
                     _ => {
+                        n += 1;
                         let keep = c.name("keep").map_or("", |m| m.as_str());
                         format!("{keep}[REDACTED:{}]", rule.kind)
                     }
                 })
                 .into_owned();
+            if n > 0 {
+                hits.push((rule.kind.clone(), n));
+            }
         }
-        out
+        (out, hits)
     }
 }
 
@@ -565,7 +613,7 @@ pub fn redact(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_secret_key, redact, Redactor};
+    use super::{builtin_kinds, check_pattern, is_secret_key, redact, Redactor};
 
     /// `prefix` followed by `len` filler characters. Fixtures are built at
     /// runtime so the source holds no token-shaped literal for a secret
@@ -815,6 +863,32 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.contains("\"broken\""), "{err}");
+    }
+
+    #[test]
+    fn added_patterns_must_not_match_nothing_or_be_huge() {
+        assert!(check_pattern(r"\b[A-Z][12]\d{8}\b").is_ok());
+        for empty in ["a*", "", "(x)?", "^"] {
+            let err = check_pattern(empty).unwrap_err();
+            assert!(err.contains("empty string"), "{empty}: {err}");
+        }
+        assert!(check_pattern(r"\w{1000}{1000}").is_err());
+        assert!(Redactor::with_extra(&[("all".into(), "a*".into())]).is_err());
+        // Zero-width elsewhere: allowed, but never inserts a marker.
+        let r = Redactor::with_extra(&[("edge".into(), r"\b".into())]).unwrap();
+        assert_eq!(r.redact("two words"), "two words");
+    }
+
+    #[test]
+    fn counts_what_each_kind_replaced() {
+        let r = Redactor::with_extra(&[("emp-id".into(), r"\bEMP-\d{6}\b".into())]).unwrap();
+        let (out, hits) = r.redact_counted("EMP-123456 and EMP-654321, pw: Hunter2xyz99");
+        assert!(!out.contains("EMP-1") && !out.contains("Hunter2"), "{out}");
+        assert_eq!(
+            hits,
+            vec![("secret-phrase".to_owned(), 1), ("emp-id".to_owned(), 2)]
+        );
+        assert!(builtin_kinds().ends_with(&["secret-phrase", "password-shape"]));
     }
 
     /// No word around it, but the shape of a password.

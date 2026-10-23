@@ -60,6 +60,19 @@ pub struct RedactionPattern {
 }
 
 impl RedactionConfig {
+    /// These settings as the deployment layer of the rules, checked.
+    pub fn deployment_rules(&self) -> Result<memory_application::redaction::DeploymentRules> {
+        self.redactor()?;
+        Ok(memory_application::redaction::DeploymentRules {
+            password_shape: self.password_shape,
+            patterns: self
+                .patterns
+                .iter()
+                .map(|p| (p.kind.clone(), p.pattern.clone()))
+                .collect(),
+        })
+    }
+
     /// The redactor these settings describe; fails on a pattern that does
     /// not compile.
     pub fn redactor(&self) -> Result<memory_redact::Redactor> {

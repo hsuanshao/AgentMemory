@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::redaction::RedactionService;
 use memory_redact::Redactor;
 
 use base64::Engine;
@@ -282,7 +283,7 @@ fn decode_resources(
 }
 
 pub struct SkillService {
-    redactor: Arc<Redactor>,
+    redaction: Arc<RedactionService>,
     repo: Arc<dyn SkillRepository>,
     resources: Arc<dyn SkillResourceStore>,
     meta: Arc<MetaService>,
@@ -293,7 +294,7 @@ pub struct SkillService {
 
 impl SkillService {
     pub fn new(
-        redactor: Arc<Redactor>,
+        redaction: Arc<RedactionService>,
         repo: Arc<dyn SkillRepository>,
         resources: Arc<dyn SkillResourceStore>,
         meta: Arc<MetaService>,
@@ -302,7 +303,7 @@ impl SkillService {
         settings: SkillSettings,
     ) -> Self {
         Self {
-            redactor,
+            redaction,
             repo,
             resources,
             meta,
@@ -339,8 +340,9 @@ impl SkillService {
         resources: Vec<ResourceInput>,
         metadata: Option<Value>,
     ) -> DomainResult<SkillSummary> {
+        let redactor = self.redaction.redactor(department).await?;
         let (team, agent, user) = who.require_writer()?;
-        let content = &self.redactor.redact(content);
+        let content = &redactor.redact(content);
         let fm = parse_frontmatter(content)?;
         if fm.name != name {
             return Err(skill_error(
@@ -361,7 +363,7 @@ impl SkillService {
                 format!("skill name exists: {name}"),
             ));
         }
-        let resources = decode_resources(&self.redactor, resources)?;
+        let resources = decode_resources(&redactor, resources)?;
         let skill_id = self.new_skill_id(department).await?;
         let now = self.now_ms();
         let mut manifest = Vec::new();
@@ -463,8 +465,9 @@ impl SkillService {
         writes: Vec<Resource>,
         removes: Vec<String>,
     ) -> DomainResult<SkillSummary> {
+        let redactor = self.redaction.redactor(department).await?;
         let content = match content {
-            Some(c) => self.redactor.redact(&c),
+            Some(c) => redactor.redact(&c),
             None => head.content.clone(),
         };
         let fm = parse_frontmatter(&content)?;
@@ -636,13 +639,14 @@ impl SkillService {
         expected: u32,
         files: Vec<ResourceInput>,
     ) -> DomainResult<SkillSummary> {
+        let redactor = self.redaction.redactor(department).await?;
         if files.is_empty() {
             return Err(DomainError::invalid("files must not be empty"));
         }
         let head = self
             .head_for_write(department, who, skill_id, expected)
             .await?;
-        let writes = decode_resources(&self.redactor, files)?;
+        let writes = decode_resources(&redactor, files)?;
         self.append_next(department, who, head, None, writes, Vec::new())
             .await
     }

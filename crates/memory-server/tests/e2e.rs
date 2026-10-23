@@ -506,6 +506,135 @@ async fn scene_writes_during_l2_are_kept() {
     );
 }
 
+/// A department's system admins add redaction rules; writes follow them at
+/// once, and only admins can see or change them (#57).
+#[tokio::test(flavor = "multi_thread")]
+async fn admins_add_redaction_rules_that_writes_follow() {
+    let (_data, client) = start().await;
+    let admin = |path: &'static str, body: Value| {
+        let client = &client;
+        async move { client.call_as(path, &client.admin_key, body).await }
+    };
+    let stored = |text: &'static str| {
+        let client = &client;
+        async move {
+            let added = client
+                .call(
+                    "/v3/conversation/add",
+                    client.scoped(json!({"session_id": "rules", "messages": [{"role": "user", "content": text}]})),
+                )
+                .await;
+            assert_eq!(added["code"], 0, "{added}");
+            // Each text starts with its own word, so the latest is found.
+            let first = text.split(' ').next().unwrap_or_default();
+            let l0 = client
+                .call(
+                    "/v3/conversation/query",
+                    client.scoped(json!({"limit": 100})),
+                )
+                .await;
+            l0["data"]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|m| m["content"].as_str())
+                .find(|c| c.split(' ').next() == Some(first))
+                .unwrap_or_default()
+                .to_owned()
+        }
+    };
+
+    // Members cannot see or change the rules.
+    let denied = client.call("/v3/meta/redaction-rule/list", json!({})).await;
+    assert_ne!(denied["code"], 0, "{denied}");
+    let denied = client
+        .call(
+            "/v3/meta/redaction-rule/create",
+            json!({"kind": "emp-id", "pattern": r"\bEMP-\d{6}\b"}),
+        )
+        .await;
+    assert_ne!(denied["code"], 0, "{denied}");
+
+    // The three layers, listed apart.
+    let list = admin("/v3/meta/redaction-rule/list", json!({})).await;
+    assert_eq!(list["code"], 0, "{list}");
+    assert!(list["data"]["builtin"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("secret-phrase")));
+    assert_eq!(list["data"]["department"], json!([]));
+
+    // Rejected: a pattern that matches nothing at all, a built-in kind.
+    for body in [
+        json!({"kind": "all", "pattern": "a*"}),
+        json!({"kind": "jwt", "pattern": r"\bJWT\d+\b"}),
+        json!({"kind": "emp-id", "pattern": "("}),
+    ] {
+        let refused = admin("/v3/meta/redaction-rule/create", body.clone()).await;
+        assert_ne!(refused["code"], 0, "{body}: {refused}");
+    }
+
+    // A preview before saving.
+    let preview = admin(
+        "/v3/meta/redaction-rule/test",
+        json!({"text": "badge EMP-123456", "kind": "emp-id", "pattern": r"\bEMP-\d{6}\b"}),
+    )
+    .await;
+    assert_eq!(
+        preview["data"]["redacted"], "badge [REDACTED:emp-id]",
+        "{preview}"
+    );
+    assert_eq!(
+        preview["data"]["hits"],
+        json!([{"kind": "emp-id", "count": 1}])
+    );
+    assert_eq!(
+        stored("one EMP-111111").await,
+        "one EMP-111111",
+        "not saved yet"
+    );
+
+    // Saved: the next write follows it.
+    let created = admin(
+        "/v3/meta/redaction-rule/create",
+        json!({"kind": "emp-id", "pattern": r"\bEMP-\d{6}\b", "description": "badge numbers"}),
+    )
+    .await;
+    assert_eq!(created["code"], 0, "{created}");
+    let rule_id = created["data"]["rule_id"].as_str().unwrap().to_owned();
+    assert_eq!(stored("two EMP-222222").await, "two [REDACTED:emp-id]");
+
+    // Disabled (the delete): writes are no longer redacted by it, and the
+    // record stays.
+    let disabled = admin(
+        "/v3/meta/redaction-rule/disable",
+        json!({"rule_id": rule_id}),
+    )
+    .await;
+    assert_eq!(disabled["data"]["enabled"], false, "{disabled}");
+    assert_eq!(stored("three EMP-333333").await, "three EMP-333333");
+    let list = admin("/v3/meta/redaction-rule/list", json!({})).await;
+    let rule = &list["data"]["department"][0];
+    assert_eq!(rule["rule_id"], json!(rule_id));
+    assert_eq!(rule["enabled"], false);
+    assert_ne!(rule["created_by"], json!(""));
+
+    // Enabled again, then changed.
+    let enabled = admin(
+        "/v3/meta/redaction-rule/enable",
+        json!({"rule_id": rule_id}),
+    )
+    .await;
+    assert_eq!(enabled["data"]["enabled"], true, "{enabled}");
+    let updated = admin(
+        "/v3/meta/redaction-rule/update",
+        json!({"rule_id": rule_id, "pattern": r"\bEMP-\d{4,6}\b"}),
+    )
+    .await;
+    assert_eq!(updated["code"], 0, "{updated}");
+    assert_eq!(stored("four EMP-4444").await, "four [REDACTED:emp-id]");
+}
+
 /// Secrets are redacted on every server write path, whatever the client
 /// sent and whatever the model wrote (#57).
 #[tokio::test(flavor = "multi_thread")]

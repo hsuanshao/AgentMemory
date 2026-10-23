@@ -7,5 +7,6 @@ pub mod meta;
 pub mod migration;
 pub mod pipeline;
 pub mod ports;
+pub mod redaction;
 pub mod skill;
 pub mod upgrade;

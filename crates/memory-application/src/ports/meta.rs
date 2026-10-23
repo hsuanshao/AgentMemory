@@ -392,6 +392,38 @@ pub trait KnowledgeRepository: Send + Sync {
     ) -> DomainResult<(Vec<KnowledgeEntity>, usize)>;
 }
 
+/// A redaction pattern a system admin added to the department, on top of
+/// the built-in rules and the deployment's. Never deleted: removing one
+/// disables it, so the record of who added what stays.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RedactionRule {
+    pub rule_id: String,
+    /// The `<kind>` of `[REDACTED:<kind>]`.
+    pub kind: String,
+    pub pattern: String,
+    #[serde(default)]
+    pub description: String,
+    pub enabled: bool,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_by: String,
+    pub updated_at: String,
+}
+
+#[async_trait]
+pub trait RedactionRuleRepository: Send + Sync {
+    /// Every rule, enabled or not, oldest first.
+    async fn list_redaction_rules(
+        &self,
+        department: &DepartmentId,
+    ) -> DomainResult<Vec<RedactionRule>>;
+    async fn put_redaction_rule(
+        &self,
+        department: &DepartmentId,
+        rule: &RedactionRule,
+    ) -> DomainResult<()>;
+}
+
 /// Everything the metadata use cases need, as one injectable bundle.
 pub trait MetaStore:
     UserRepository
@@ -405,6 +437,7 @@ pub trait MetaStore:
     + AclRepository
     + ConfigRepository
     + KnowledgeRepository
+    + RedactionRuleRepository
 {
 }
 
@@ -420,5 +453,6 @@ impl<T> MetaStore for T where
         + AclRepository
         + ConfigRepository
         + KnowledgeRepository
+        + RedactionRuleRepository
 {
 }

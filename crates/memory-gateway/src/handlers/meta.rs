@@ -10,6 +10,9 @@ use memory_application::meta::{
     UpdateTaskInput, UpdateTeamInput,
 };
 use memory_application::ports::meta::UserFilter;
+use memory_application::redaction::{
+    CreateRedactionRuleInput, TestRedactionInput, UpdateRedactionRuleInput,
+};
 use memory_domain::error::DomainError;
 use memory_domain::meta::{UserStatus, UserType};
 use memory_domain::scope::DepartmentId;
@@ -431,6 +434,38 @@ pub async fn dispatch(
         }
 
         ("department-quota", "get") => meta.department_quota(i).await.map_err(e)?,
+
+        // System admins only; checked in the service.
+        ("redaction-rule", "list") => json!(s.services.redaction.list(i, &who).await.map_err(e)?),
+        ("redaction-rule", "create") => json!(s
+            .services
+            .redaction
+            .create(i, &who, input::<CreateRedactionRuleInput>(&ctx, &body)?)
+            .await
+            .map_err(e)?),
+        ("redaction-rule", "update") => json!(s
+            .services
+            .redaction
+            .update(i, &who, input::<UpdateRedactionRuleInput>(&ctx, &body)?)
+            .await
+            .map_err(e)?),
+        ("redaction-rule", action @ ("disable" | "enable")) => json!(s
+            .services
+            .redaction
+            .set_enabled(
+                i,
+                &who,
+                required(&ctx, &body, "rule_id")?,
+                action == "enable"
+            )
+            .await
+            .map_err(e)?),
+        ("redaction-rule", "test") => json!(s
+            .services
+            .redaction
+            .test(i, &who, input::<TestRedactionInput>(&ctx, &body)?)
+            .await
+            .map_err(e)?),
         ("config", "user-get") => {
             json!({"items": meta.get_config(i, &who, required(&ctx, &body, "user_id")?, required(&ctx, &body, "module")?, str_of(&body, "param_name")).await.map_err(e)?})
         }
