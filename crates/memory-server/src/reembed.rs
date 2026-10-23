@@ -73,6 +73,9 @@ pub async fn run(args: impl Iterator<Item = String>) -> Result<()> {
             if r.service_down {
                 line += "; stopped: the embedding service keeps failing";
             }
+            if r.misconfigured {
+                line += "; stopped: the embedding service refuses every input, check memory.embedding model and dimensions";
+            }
             println!("{line}");
         }
     }
@@ -94,9 +97,10 @@ async fn until_done(
         total.embedded += report.embedded;
         total.skipped += report.skipped;
         total.service_down = report.service_down;
+        total.misconfigured = report.misconfigured;
         total.complete = report.complete;
         let reached = limit.is_some_and(|l| total.embedded >= l);
-        if report.complete || report.service_down || reached {
+        if report.complete || report.service_down || report.misconfigured || reached {
             return Ok(total);
         }
     }

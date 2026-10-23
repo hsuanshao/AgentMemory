@@ -26,6 +26,11 @@ const BATCH: usize = 32;
 /// the input) before it counts as down.
 const DOWN_AFTER: usize = 3;
 
+/// Atoms in a row whose input the service refuses before the settings, not
+/// the atoms, are taken as wrong (a misspelt model, `dimensions` the model
+/// does not support): a batch's worth.
+const MISCONFIGURED_AFTER: usize = BATCH;
+
 /// Why an embedding call did not give vectors.
 enum Failure {
     /// The service refused this input (HTTP 400/413/422): skip it.
@@ -47,6 +52,9 @@ pub struct BackfillReport {
     pub complete: bool,
     /// The run stopped because the embedding service kept failing.
     pub service_down: bool,
+    /// The run stopped because the service refused every input: its
+    /// settings (model, dimensions) are likely wrong.
+    pub misconfigured: bool,
 }
 
 impl BackfillReport {
@@ -55,6 +63,7 @@ impl BackfillReport {
         self.embedded += other.embedded;
         self.skipped += other.skipped;
         self.service_down |= other.service_down;
+        self.misconfigured |= other.misconfigured;
     }
 }
 
@@ -94,9 +103,10 @@ impl EmbeddingBackfill {
     /// Embeds up to `limit` atoms of one department, continuing where the
     /// last run stopped. A failed batch is retried one atom at a time; an
     /// atom whose input the service refuses is skipped, however many there
-    /// are in a row. When the service fails `DOWN_AFTER` atoms in a row
-    /// for its own reasons (unreachable, timeouts, 5xx), it is taken as
-    /// down: the run stops and the next one starts again from those atoms.
+    /// are in a row, up to `MISCONFIGURED_AFTER`: then the settings are taken
+    /// as wrong. When the service fails `DOWN_AFTER` atoms in a row for its
+    /// own reasons (unreachable, timeouts, 5xx), it is taken as down. Either
+    /// way the run stops, and the next one starts again from those atoms.
     pub async fn department(
         &self,
         department: &DepartmentId,
@@ -113,30 +123,44 @@ impl EmbeddingBackfill {
         report.missing = atoms.len();
         // The seq up to which every atom was embedded or skipped.
         let mut done: Option<i64> = self.cursor(department);
-        let mut failed_in_a_row = 0;
-        'batches: for batch in atoms.chunks(BATCH) {
+        // The current streaks of refused and failed atoms, by the index of
+        // their first atom and their length.
+        let (mut refused, mut failed) = ((0, 0), (0, 0));
+        let mut stop_at = None;
+        'batches: for (b, batch) in atoms.chunks(BATCH).enumerate() {
             if let Ok(vectors) = self.embed(batch).await {
                 for (atom, vector) in batch.iter().zip(&vectors) {
                     self.store(department, &atom.item, vector, &mut report)
                         .await?;
                     done = Some(atom.seq);
                 }
-                failed_in_a_row = 0;
+                (refused, failed) = ((0, 0), (0, 0));
                 continue;
             }
-            for atom in batch {
+            for (j, atom) in batch.iter().enumerate() {
+                let index = b * BATCH + j;
                 match self.embed(std::slice::from_ref(atom)).await {
                     Ok(vectors) => {
                         self.store(department, &atom.item, &vectors[0], &mut report)
                             .await?;
-                        failed_in_a_row = 0;
+                        (refused, failed) = ((0, 0), (0, 0));
                     }
                     // The service answered: skip this one.
-                    Err(Failure::Refused) => failed_in_a_row = 0,
+                    Err(Failure::Refused) => {
+                        failed = (0, 0);
+                        refused = streak(refused, index);
+                        if refused.1 == MISCONFIGURED_AFTER {
+                            report.misconfigured = true;
+                            stop_at = Some(refused.0);
+                            break 'batches;
+                        }
+                    }
                     Err(Failure::Unavailable) => {
-                        failed_in_a_row += 1;
-                        if failed_in_a_row == DOWN_AFTER {
+                        refused = (0, 0);
+                        failed = streak(failed, index);
+                        if failed.1 == DOWN_AFTER {
                             report.service_down = true;
+                            stop_at = Some(failed.0);
                             break 'batches;
                         }
                     }
@@ -144,20 +168,21 @@ impl EmbeddingBackfill {
                 done = Some(atom.seq);
             }
         }
-        if report.service_down {
-            // Resume at the first of the atoms that failed in a row; refused
-            // ones before them wait for the next pass.
-            let resume = atoms
-                .iter()
-                .take_while(|a| Some(a.seq) <= done)
-                .count()
-                .saturating_sub(failed_in_a_row - 1);
-            done = resume
+        if report.misconfigured {
+            warn!(
+                %department,
+                "embedding service refuses every input; check memory.embedding model and dimensions"
+            );
+        }
+        if let Some(first) = stop_at {
+            // Resume at the first atom of the streak; atoms skipped before
+            // it wait for the next pass.
+            done = first
                 .checked_sub(1)
                 .map(|i| atoms[i].seq)
                 .or(self.cursor(department));
         }
-        report.complete = !report.service_down && atoms.len() < limit;
+        report.complete = stop_at.is_none() && atoms.len() < limit;
         // At the end of the queue, start over next time.
         self.set_cursor(department, if report.complete { None } else { done });
         report.skipped = report.missing - report.embedded;
@@ -205,5 +230,14 @@ impl EmbeddingBackfill {
             }
         }
         Ok(total)
+    }
+}
+
+/// A streak `(first index, length)` extended by the atom at `index`.
+fn streak((first, len): (usize, usize), index: usize) -> (usize, usize) {
+    if len == 0 {
+        (index, 1)
+    } else {
+        (first, len + 1)
     }
 }

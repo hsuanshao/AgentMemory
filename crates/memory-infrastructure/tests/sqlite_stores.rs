@@ -420,6 +420,19 @@ async fn atoms_without_an_embedding_get_one_later() {
 /// text containing "TOO LONG" (as a model with a small input limit does).
 struct FlakyEmbedder {
     up: std::sync::atomic::AtomicBool,
+    /// Refuse every input, as a service with a wrong model name does.
+    refuse_all: std::sync::atomic::AtomicBool,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FlakyEmbedder {
+    fn new(up: bool) -> Self {
+        Self {
+            up: up.into(),
+            refuse_all: false.into(),
+            calls: 0.into(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -429,6 +442,11 @@ impl memory_application::ports::system::EmbeddingProvider for FlakyEmbedder {
     }
 
     async fn embed(&self, texts: &[String]) -> memory_domain::error::DomainResult<Vec<Vec<f32>>> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.refuse_all.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(memory_domain::error::DomainError::invalid("unknown model"));
+        }
         if !self.up.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(memory_domain::error::DomainError::unavailable("timed out"));
         }
@@ -460,7 +478,7 @@ async fn backfill_waits_out_a_failing_embedding_service() {
     let (_dir, pool, department) = setup();
     let store = Arc::new(SqliteMemoryStore::new(pool, None));
     store_without_embeddings(&store, &department, &["one", "two", "three", "four"]).await;
-    let embedder = Arc::new(FlakyEmbedder { up: false.into() });
+    let embedder = Arc::new(FlakyEmbedder::new(false));
     let backfill = EmbeddingBackfill::new(store.clone(), embedder.clone());
 
     // Down: stops after a few refusals, embeds nothing, keeps its place.
@@ -486,7 +504,7 @@ async fn an_atom_the_service_refuses_does_not_block_the_others() {
     let store = Arc::new(SqliteMemoryStore::new(pool, None));
     // The refused atom is the oldest, so it comes first every time.
     store_without_embeddings(&store, &department, &["TOO LONG", "two", "three"]).await;
-    let embedder = Arc::new(FlakyEmbedder { up: true.into() });
+    let embedder = Arc::new(FlakyEmbedder::new(true));
     let backfill = EmbeddingBackfill::new(store.clone(), embedder);
 
     let first = backfill.department(&department, 2).await.unwrap();
@@ -524,7 +542,7 @@ async fn several_refused_atoms_in_a_row_do_not_block_the_others() {
         ],
     )
     .await;
-    let embedder = Arc::new(FlakyEmbedder { up: true.into() });
+    let embedder = Arc::new(FlakyEmbedder::new(true));
     let backfill = EmbeddingBackfill::new(store.clone(), embedder);
 
     for _ in 0..3 {
@@ -537,4 +555,32 @@ async fn several_refused_atoms_in_a_row_do_not_block_the_others() {
         .unwrap();
     assert_eq!(left.len(), 4, "only the refused ones are left");
     assert!(left.iter().all(|a| a.item.content.starts_with("TOO LONG")));
+}
+
+#[tokio::test]
+async fn a_service_that_refuses_every_input_stops_the_run_as_misconfigured() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+    use std::sync::atomic::Ordering;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    let contents: Vec<String> = (0..100).map(|i| format!("atom {i}")).collect();
+    let refs: Vec<&str> = contents.iter().map(String::as_str).collect();
+    store_without_embeddings(&store, &department, &refs).await;
+    let embedder = Arc::new(FlakyEmbedder::new(true));
+    embedder.refuse_all.store(true, Ordering::Relaxed);
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder.clone());
+
+    let run = backfill.department(&department, 200).await.unwrap();
+    assert!(
+        run.misconfigured && !run.complete && run.embedded == 0,
+        "{run:?}"
+    );
+    // One batch, then each of its atoms once: not all 100.
+    assert_eq!(embedder.calls.load(Ordering::Relaxed), 33);
+
+    // Fixed: the next run starts from the beginning and embeds everything.
+    embedder.refuse_all.store(false, Ordering::Relaxed);
+    let fixed = backfill.department(&department, 200).await.unwrap();
+    assert_eq!((fixed.embedded, fixed.complete), (100, true), "{fixed:?}");
 }
