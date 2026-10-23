@@ -13,6 +13,7 @@ memory-core distils conversations in the background: L1 extracts memories, L2 fo
 - [5. Dead letters and redrive](#5-dead-letters-and-redrive)
 - [6. Tools and distillation](#6-tools-and-distillation)
 - [7. Secrets and redaction](#7-secrets-and-redaction)
+- [8. Embeddings and load](#8-embeddings-and-load)
 
 ## 1. What is recorded
 
@@ -217,3 +218,39 @@ redaction:
 - Rules are heuristics: a safety net, not a guarantee.
 - Data stored before an upgrade is not rewritten.
 - Binary skill resource files (not UTF-8) are not scanned.
+
+## 8. Embeddings and load
+
+With embeddings on, every atom is embedded when it is stored. When that call fails or times out, the atom is still stored: recall finds it by keyword, not by meaning, until it gets an embedding.
+
+**Backfill.** memory-core embeds atoms stored without one every `backfillIntervalSecs` (default 600; the first run waits one interval after start), up to `backfillBatch` atoms per department per run.
+
+- Each run goes on where the last one stopped, in the order the atoms were written, and starts over at the end.
+- An atom whose input the service refuses (HTTP 400, 413 or 422: too long for the model, say) is skipped, however many there are in a row, so they do not hold up the rest; the next pass tries them again.
+- When the service fails three atoms in a row for its own reasons (unreachable, timeouts, 5xx, 429), it is taken as down: the department is left as it is until the next run.
+- When it refuses 32 inputs in a row, its settings are taken as wrong (a misspelt `model`, or `dimensions` the model does not support): the run stops and logs `embedding service refuses every input; check memory.embedding model and dimensions`, and `reembed` says the same.
+- The atom is not rewritten, so L2 does not treat it as new.
+
+To run one pass now and see the result:
+
+```bash
+docker compose exec memory-core memory-server reembed
+docker compose exec memory-core memory-server reembed --department default --limit 500 --json
+```
+
+**Settings.**
+
+| Setting | Env | Default | |
+| --- | --- | --- | --- |
+| `memory.embedding.timeoutMs` | `AGENT_MEMORY_EMBEDDING_TIMEOUT_MS` | 10000 | Per request to the embedding service |
+| `memory.embedding.maxConcurrency` | `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY` | 4 | Requests in flight at once; more wait their turn |
+| `memory.embedding.backfillIntervalSecs` | `AGENT_MEMORY_EMBEDDING_BACKFILL_INTERVAL_SECS` | 600 | `0` turns the background run off; `reembed` still works |
+| `memory.embedding.backfillBatch` | | 200 | Atoms per department per background run |
+| `worker.concurrency` | `AGENT_MEMORY_WORKER_CONCURRENCY` | 8 | Pipeline jobs (L1/L2/L3/skills) at once |
+| `llm.cli.maxConcurrency` | `AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY` | 2 | CLI model processes at once |
+
+The backfill shares `maxConcurrency` with L1 and `atomic/update`: while it catches up after an outage, their embedding calls may wait for a free slot. It sends 32 atoms per request.
+
+A small or shared embedding server that times out under load: lower `maxConcurrency` first, then raise `timeoutMs`. Many embeddings missing after an outage: run `reembed` once the service is back.
+
+A numeric variable that does not parse (`AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY=abc`) stops memory-core at startup with its name; `memory-server check-config` reports it too.

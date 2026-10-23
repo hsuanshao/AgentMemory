@@ -5,4 +5,5 @@ pub mod config;
 pub mod migrate;
 pub mod migrate_storage;
 pub mod ops_cli;
+pub mod reembed;
 pub mod wiring;

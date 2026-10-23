@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+#[path = "support/embedding_backfill.rs"]
+mod embedding_backfill;
 #[path = "support/profile_versions.rs"]
 mod profile_versions;
 
@@ -631,5 +633,25 @@ async fn atoms_can_be_queried_by_session() {
     .unwrap();
     assert_eq!(total, 1);
     assert_eq!(found[0].id, "a1");
+    teardown(&db, &department).await;
+}
+
+#[tokio::test]
+async fn atoms_without_an_embedding_get_one_later() {
+    let Some((db, department)) = setup().await else {
+        return;
+    };
+    let store = PostgresMemoryStore::new(Arc::clone(&db));
+    let without = AtomicMemory {
+        updated_at: Utc::now() + Duration::milliseconds(1),
+        ..atom("a2", "deploys with a blue-green switch", "alice")
+    };
+    embedding_backfill::exercise(
+        &store,
+        &department,
+        atom("a1", "prefers Rust for backend services", "alice"),
+        without,
+    )
+    .await;
     teardown(&db, &department).await;
 }

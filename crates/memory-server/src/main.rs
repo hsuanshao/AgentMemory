@@ -15,13 +15,32 @@ async fn main() -> Result<()> {
     let json_logs = std::env::var("LOG_FORMAT").is_ok_and(|f| f == "json");
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,tower_http=warn"));
+    // Operator commands print their result on stdout (`--json` for scripts),
+    // so their logs go to stderr; the server keeps logging to stdout.
+    let command = matches!(
+        std::env::args().nth(1).as_deref(),
+        Some(
+            "migrate"
+                | "migrate-storage"
+                | "generations"
+                | "dead-letters"
+                | "reembed"
+                | "check-config"
+        )
+    );
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(move || -> Box<dyn std::io::Write> {
+            if command {
+                Box::new(std::io::stderr())
+            } else {
+                Box::new(std::io::stdout())
+            }
+        });
     if json_logs {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .init();
+        builder.json().init();
     } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        builder.init();
     }
 
     match std::env::args().nth(1).as_deref() {
@@ -32,6 +51,7 @@ async fn main() -> Result<()> {
         Some("generations") => {
             return memory_server::ops_cli::generations(std::env::args().skip(2)).await
         }
+        Some("reembed") => return memory_server::reembed::run(std::env::args().skip(2)).await,
         Some("dead-letters") => {
             return memory_server::ops_cli::dead_letters(std::env::args().skip(2)).await
         }

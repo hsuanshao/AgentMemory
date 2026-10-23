@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS atoms (
 );
 CREATE INDEX IF NOT EXISTS ix_atoms_scope ON atoms(team_id, agent_id, user_id, updated_at_ms);
 CREATE INDEX IF NOT EXISTS ix_atoms_profile ON atoms(team_id, agent_id, seq);
+CREATE INDEX IF NOT EXISTS ix_atoms_missing_embedding ON atoms(seq) WHERE embedding IS NULL;
 CREATE VIRTUAL TABLE IF NOT EXISTS atoms_fts USING fts5(tokens, id UNINDEXED);
 -- Bookkeeping for derived indexes (e.g. the sqlite-vec atom index's dims).
 CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -181,7 +182,10 @@ CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_
 /// 2. 0.3.0: the team role `reviewer` was removed; its members are members.
 /// 3. Scenes and personas became append-only versions (`scenes`,
 ///    `scene_versions`, `persona_versions`); `profile_files` is imported.
-pub const SCHEMA_VERSION: i64 = 3;
+/// 4. A partial index of the atoms without an embedding
+///    (`ix_atoms_missing_embedding`), the embedding backfill's queue. The
+///    DDL above creates it; nothing is converted.
+pub const SCHEMA_VERSION: i64 = 4;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -411,6 +415,24 @@ mod tests {
             .unwrap();
         assert_eq!(role, "member", "reviewers become members");
         assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn department_db_from_0_4_1_gets_the_backfill_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(DEPARTMENT_SCHEMA).unwrap();
+        conn.execute_batch("DROP INDEX ix_atoms_missing_embedding; PRAGMA user_version = 3")
+            .unwrap();
+        migrate_department(&conn).unwrap();
+        let indexed: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_atoms_missing_embedding'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed, 1);
+        assert_eq!(user_version(&conn).unwrap(), 4);
     }
 
     #[test]

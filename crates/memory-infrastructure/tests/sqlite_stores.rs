@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+#[path = "support/embedding_backfill.rs"]
+mod embedding_backfill;
 #[path = "support/profile_versions.rs"]
 mod profile_versions;
 
@@ -388,4 +390,197 @@ async fn atoms_can_be_queried_by_session() {
     .unwrap();
     assert_eq!(total, 1);
     assert_eq!(found[0].id, "a1");
+}
+
+#[tokio::test]
+async fn atoms_without_an_embedding_get_one_later() {
+    // Brute-force cosine over the BLOBs, and the vec0 index when it loads.
+    let mut dims = vec![None];
+    if memory_infrastructure::sqlite::vec_index::available() {
+        dims.push(Some(2));
+    }
+    for dims in dims {
+        let (_dir, pool, department) = setup();
+        let store = SqliteMemoryStore::new(pool, dims);
+        let without = AtomicMemory {
+            updated_at: Utc::now() + Duration::milliseconds(1),
+            ..atom("a2", "deploys with a blue-green switch", "alice")
+        };
+        embedding_backfill::exercise(
+            &store,
+            &department,
+            atom("a1", "prefers Rust for backend services", "alice"),
+            without,
+        )
+        .await;
+    }
+}
+
+/// An embedding service that is down until `up` is set, and always refuses
+/// text containing "TOO LONG" (as a model with a small input limit does).
+struct FlakyEmbedder {
+    up: std::sync::atomic::AtomicBool,
+    /// Refuse every input, as a service with a wrong model name does.
+    refuse_all: std::sync::atomic::AtomicBool,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FlakyEmbedder {
+    fn new(up: bool) -> Self {
+        Self {
+            up: up.into(),
+            refuse_all: false.into(),
+            calls: 0.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl memory_application::ports::system::EmbeddingProvider for FlakyEmbedder {
+    fn dimensions(&self) -> Option<usize> {
+        Some(2)
+    }
+
+    async fn embed(&self, texts: &[String]) -> memory_domain::error::DomainResult<Vec<Vec<f32>>> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.refuse_all.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(memory_domain::error::DomainError::invalid("unknown model"));
+        }
+        if !self.up.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(memory_domain::error::DomainError::unavailable("timed out"));
+        }
+        // As the OpenAI adapter maps a 413.
+        if texts.iter().any(|t| t.contains("TOO LONG")) {
+            return Err(memory_domain::error::DomainError::invalid("input too long"));
+        }
+        Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+    }
+}
+
+async fn store_without_embeddings(
+    store: &SqliteMemoryStore,
+    department: &DepartmentId,
+    contents: &[&str],
+) {
+    for (i, content) in contents.iter().enumerate() {
+        store
+            .upsert(department, &atom(&format!("a{i}"), content, "alice"), None)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn backfill_waits_out_a_failing_embedding_service() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    store_without_embeddings(&store, &department, &["one", "two", "three", "four"]).await;
+    let embedder = Arc::new(FlakyEmbedder::new(false));
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder.clone());
+
+    // Down: stops after a few refusals, embeds nothing, keeps its place.
+    let down = backfill.all(10).await.unwrap();
+    assert!(down.service_down && !down.complete, "{down:?}");
+    assert_eq!(down.embedded, 0);
+
+    embedder
+        .up
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let part = backfill.department(&department, 3).await.unwrap();
+    assert_eq!((part.embedded, part.complete), (3, false), "{part:?}");
+    let rest = backfill.department(&department, 3).await.unwrap();
+    assert_eq!((rest.embedded, rest.complete), (1, true), "{rest:?}");
+    assert_eq!(backfill.all(10).await.unwrap().missing, 0);
+}
+
+#[tokio::test]
+async fn an_atom_the_service_refuses_does_not_block_the_others() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    // The refused atom is the oldest, so it comes first every time.
+    store_without_embeddings(&store, &department, &["TOO LONG", "two", "three"]).await;
+    let embedder = Arc::new(FlakyEmbedder::new(true));
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder);
+
+    let first = backfill.department(&department, 2).await.unwrap();
+    assert_eq!((first.embedded, first.skipped), (1, 1), "{first:?}");
+    assert!(!first.service_down);
+    // The next run goes on after it instead of starting with it again.
+    let second = backfill.department(&department, 2).await.unwrap();
+    assert_eq!((second.embedded, second.complete), (1, true), "{second:?}");
+    // Then starts over: only the refused one is left.
+    let left = store
+        .missing_embeddings(&department, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].item.content, "TOO LONG");
+}
+
+#[tokio::test]
+async fn several_refused_atoms_in_a_row_do_not_block_the_others() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    // One L1 run wrote several long atoms in a row, oldest first.
+    store_without_embeddings(
+        &store,
+        &department,
+        &[
+            "TOO LONG 1",
+            "TOO LONG 2",
+            "TOO LONG 3",
+            "TOO LONG 4",
+            "five",
+            "six",
+        ],
+    )
+    .await;
+    let embedder = Arc::new(FlakyEmbedder::new(true));
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder);
+
+    for _ in 0..3 {
+        let run = backfill.department(&department, 200).await.unwrap();
+        assert!(!run.service_down, "{run:?}");
+    }
+    let left = store
+        .missing_embeddings(&department, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(left.len(), 4, "only the refused ones are left");
+    assert!(left.iter().all(|a| a.item.content.starts_with("TOO LONG")));
+}
+
+#[tokio::test]
+async fn a_service_that_refuses_every_input_stops_the_run_as_misconfigured() {
+    use memory_application::memory::backfill::EmbeddingBackfill;
+    use std::sync::atomic::Ordering;
+
+    let (_dir, pool, department) = setup();
+    let store = Arc::new(SqliteMemoryStore::new(pool, None));
+    let contents: Vec<String> = (0..100).map(|i| format!("atom {i}")).collect();
+    let refs: Vec<&str> = contents.iter().map(String::as_str).collect();
+    store_without_embeddings(&store, &department, &refs).await;
+    let embedder = Arc::new(FlakyEmbedder::new(true));
+    embedder.refuse_all.store(true, Ordering::Relaxed);
+    let backfill = EmbeddingBackfill::new(store.clone(), embedder.clone());
+
+    let run = backfill.department(&department, 200).await.unwrap();
+    assert!(
+        run.misconfigured && !run.complete && run.embedded == 0,
+        "{run:?}"
+    );
+    // One batch, then each of its atoms once: not all 100.
+    assert_eq!(embedder.calls.load(Ordering::Relaxed), 33);
+
+    // Fixed: the next run starts from the beginning and embeds everything.
+    embedder.refuse_all.store(false, Ordering::Relaxed);
+    let fixed = backfill.department(&department, 200).await.unwrap();
+    assert_eq!((fixed.embedded, fixed.complete), (100, true), "{fixed:?}");
 }

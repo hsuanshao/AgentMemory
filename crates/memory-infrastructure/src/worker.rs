@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use memory_application::memory::backfill::EmbeddingBackfill;
 use memory_application::pipeline::service::{JobFailure, PipelineService};
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::pipeline::{
@@ -566,6 +567,35 @@ pub fn spawn_dead_letter_sweeper(
             {
                 Ok((redriven, expired)) => pipeline.metrics().swept(redriven, expired),
                 Err(err) => warn!(error = %err, "dead letter sweep failed"),
+            }
+        }
+    })
+}
+
+/// Periodically gives atoms stored without an embedding one. The first run
+/// waits a full interval, so a restart does not hit a recovering embedding
+/// service at once. Replicas may run it at the same time; an atom is only
+/// given an embedding it does not have, so the worst case is a repeated
+/// embedding call.
+pub fn spawn_embedding_backfill(
+    backfill: Arc<EmbeddingBackfill>,
+    interval: Duration,
+    batch: usize,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let start = tokio::time::Instant::now() + interval;
+        let mut ticker = tokio::time::interval_at(start, interval);
+        loop {
+            ticker.tick().await;
+            match backfill.all(batch).await {
+                Ok(r) if r.missing > 0 => info!(
+                    missing = r.missing,
+                    embedded = r.embedded,
+                    skipped = r.skipped,
+                    "embedding backfill"
+                ),
+                Ok(_) => {}
+                Err(err) => warn!(error = %err, "embedding backfill failed"),
             }
         }
     })

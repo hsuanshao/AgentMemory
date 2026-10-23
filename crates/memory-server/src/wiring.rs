@@ -7,6 +7,7 @@ use anyhow::Result;
 use memory_application::admin::{
     ChatMemoryService, DepartmentLifecycle, KnowledgeService, StatsService,
 };
+use memory_application::memory::backfill::EmbeddingBackfill;
 use memory_application::memory::recall::{RecallService, RecallSettings};
 use memory_application::memory::search::AtomSearcher;
 use memory_application::memory::service::{ConversationObserver, MemoryService};
@@ -37,7 +38,8 @@ use memory_infrastructure::openai::{
 };
 use memory_infrastructure::system::{RandomIds, SystemClock};
 use memory_infrastructure::worker::{
-    spawn_dead_letter_sweeper, spawn_scanner, spawn_worker, WorkerQueue, WorkerSettings,
+    spawn_dead_letter_sweeper, spawn_embedding_backfill, spawn_scanner, spawn_worker, WorkerQueue,
+    WorkerSettings,
 };
 use tokio::task::JoinHandle;
 
@@ -105,7 +107,7 @@ fn hardened_args(command: &str, args: &[String], hardening: &str) -> Vec<String>
     }
 }
 
-fn embedder(config: &Config) -> Arc<dyn EmbeddingProvider> {
+pub(crate) fn embedder(config: &Config) -> Arc<dyn EmbeddingProvider> {
     let e = &config.memory.embedding;
     if !e.is_enabled() {
         return Arc::new(NoEmbedding);
@@ -116,6 +118,7 @@ fn embedder(config: &Config) -> Arc<dyn EmbeddingProvider> {
         model: e.model.clone(),
         dimensions: e.dimensions,
         timeout: Duration::from_millis(e.timeout_ms),
+        max_concurrency: e.max_concurrency,
     }))
 }
 
@@ -356,7 +359,7 @@ pub async fn build(config: &Config) -> Result<App> {
         redrive_batch: w.dead_letter_redrive_batch,
         ..Default::default()
     };
-    let background = vec![
+    let mut background = vec![
         spawn_worker(
             Arc::clone(&queue),
             Arc::clone(&coordination.job_locks),
@@ -366,6 +369,17 @@ pub async fn build(config: &Config) -> Result<App> {
         spawn_dead_letter_sweeper(queue, pipeline.clone(), worker),
         spawn_scanner(pipeline, worker.scan_interval),
     ];
+    let e = &config.memory.embedding;
+    if embedder.dimensions().is_some() && e.backfill_interval_secs > 0 {
+        background.push(spawn_embedding_backfill(
+            Arc::new(EmbeddingBackfill::new(
+                Arc::clone(&atoms),
+                Arc::clone(&embedder),
+            )),
+            Duration::from_secs(e.backfill_interval_secs),
+            e.backfill_batch,
+        ));
+    }
 
     let state = Arc::new(AppState {
         health: HealthFacts {

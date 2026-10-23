@@ -20,6 +20,10 @@ pub struct Config {
     pub storage: StorageConfig,
     pub coordination: CoordinationConfig,
     pub redaction: RedactionConfig,
+    /// Numeric `AGENT_MEMORY_*` variables that did not parse; reported at
+    /// startup instead of silently falling back to the config file.
+    #[serde(skip)]
+    pub env_errors: Vec<String>,
 }
 
 /// Secrets redacted before anything is stored or distilled (#57). The
@@ -356,7 +360,15 @@ pub struct EmbeddingConfig {
     pub api_key: String,
     pub model: String,
     pub dimensions: usize,
+    /// Per request to the embedding service.
     pub timeout_ms: u64,
+    /// Requests to the embedding service in flight at once.
+    pub max_concurrency: usize,
+    /// How often atoms stored without an embedding get one (0 = never;
+    /// `memory-server reembed` still works).
+    pub backfill_interval_secs: u64,
+    /// Atoms embedded per department per backfill run, at most.
+    pub backfill_batch: usize,
 }
 
 impl Default for EmbeddingConfig {
@@ -368,6 +380,9 @@ impl Default for EmbeddingConfig {
             model: String::new(),
             dimensions: 0,
             timeout_ms: 10_000,
+            max_concurrency: 4,
+            backfill_interval_secs: 600,
+            backfill_batch: 200,
         }
     }
 }
@@ -514,6 +529,18 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
+/// A numeric variable; one that does not parse is recorded in `errors`.
+fn env_number<T: std::str::FromStr>(name: &str, errors: &mut Vec<String>) -> Option<T> {
+    let raw = env(name)?;
+    match raw.trim().parse() {
+        Ok(v) => Some(v),
+        Err(_) => {
+            errors.push(format!("{name}={raw:?} is not a number"));
+            None
+        }
+    }
+}
+
 fn find_config_file() -> Option<PathBuf> {
     if let Some(path) = env("AGENT_MEMORY_CONFIG") {
         return Some(PathBuf::from(path));
@@ -595,7 +622,7 @@ impl Config {
             }
         };
         set(&mut self.server.host, "AGENT_MEMORY_HOST");
-        if let Some(port) = env("AGENT_MEMORY_PORT").and_then(|p| p.parse().ok()) {
+        if let Some(port) = env_number("AGENT_MEMORY_PORT", &mut self.env_errors) {
             self.server.port = port;
         }
         if let Some(key) = env("AGENT_MEMORY_API_KEY") {
@@ -640,8 +667,29 @@ impl Config {
         set(&mut e.base_url, "AGENT_MEMORY_EMBEDDING_BASE_URL");
         set(&mut e.api_key, "AGENT_MEMORY_EMBEDDING_API_KEY");
         set(&mut e.model, "AGENT_MEMORY_EMBEDDING_MODEL");
-        if let Some(d) = env("AGENT_MEMORY_EMBEDDING_DIMENSIONS").and_then(|d| d.parse().ok()) {
+        if let Some(d) = env_number("AGENT_MEMORY_EMBEDDING_DIMENSIONS", &mut self.env_errors) {
             e.dimensions = d;
+        }
+        if let Some(ms) = env_number("AGENT_MEMORY_EMBEDDING_TIMEOUT_MS", &mut self.env_errors) {
+            e.timeout_ms = ms;
+        }
+        if let Some(n) = env_number(
+            "AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY",
+            &mut self.env_errors,
+        ) {
+            e.max_concurrency = n;
+        }
+        if let Some(secs) = env_number(
+            "AGENT_MEMORY_EMBEDDING_BACKFILL_INTERVAL_SECS",
+            &mut self.env_errors,
+        ) {
+            e.backfill_interval_secs = secs;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_WORKER_CONCURRENCY", &mut self.env_errors) {
+            self.worker.concurrency = n;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY", &mut self.env_errors) {
+            self.llm.cli.max_concurrency = n;
         }
         if let Some(on) = env("AGENT_MEMORY_REDACTION_PASSWORD_SHAPE") {
             self.redaction.password_shape = matches!(on.as_str(), "1" | "true" | "on" | "yes");
@@ -663,6 +711,9 @@ impl Config {
     /// Exposing the API beyond loopback without a key would leak every
     /// tenant's memory.
     fn validate(&self) -> Result<()> {
+        if !self.env_errors.is_empty() {
+            bail!("invalid environment: {}", self.env_errors.join("; "));
+        }
         let loopback = matches!(self.server.host.as_str(), "127.0.0.1" | "localhost" | "::1");
         if !loopback && self.server.api_key.is_none() {
             bail!(
@@ -779,6 +830,58 @@ mod tests {
         assert_eq!(c.llm.provider, "openai");
         assert_eq!(c.llm.cli.prompt_mode, "stdin");
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn a_number_variable_that_does_not_parse_is_reported() {
+        // Names no other test uses.
+        std::env::set_var("AGENT_MEMORY_TEST_NUMBER_BAD", "abc");
+        std::env::set_var("AGENT_MEMORY_TEST_NUMBER_OK", " 7 ");
+        let mut errors = Vec::new();
+        assert_eq!(
+            env_number::<usize>("AGENT_MEMORY_TEST_NUMBER_BAD", &mut errors),
+            None
+        );
+        assert_eq!(
+            env_number::<usize>("AGENT_MEMORY_TEST_NUMBER_OK", &mut errors),
+            Some(7)
+        );
+        assert_eq!(
+            env_number::<usize>("AGENT_MEMORY_TEST_NUMBER_UNSET", &mut errors),
+            None
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0].contains("AGENT_MEMORY_TEST_NUMBER_BAD"),
+            "{errors:?}"
+        );
+        let c = Config {
+            env_errors: errors,
+            ..Config::default()
+        };
+        let err = c.validate().unwrap_err().to_string();
+        assert!(err.contains("invalid environment"), "{err}");
+    }
+
+    #[test]
+    fn embedding_limits_are_read_from_the_config_file() {
+        let d = EmbeddingConfig::default();
+        assert_eq!(
+            (d.timeout_ms, d.max_concurrency, d.backfill_interval_secs),
+            (10_000, 4, 600)
+        );
+        let yaml = "memory:\n  embedding:\n    timeoutMs: 30000\n    maxConcurrency: 2\n    backfillIntervalSecs: 0\n    backfillBatch: 50\n";
+        let c: Config = serde_yaml::from_str(yaml).unwrap();
+        let e = &c.memory.embedding;
+        assert_eq!(
+            (
+                e.timeout_ms,
+                e.max_concurrency,
+                e.backfill_interval_secs,
+                e.backfill_batch
+            ),
+            (30_000, 2, 0, 50)
+        );
     }
 
     #[test]

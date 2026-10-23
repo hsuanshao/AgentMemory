@@ -24,24 +24,24 @@ memory-server dead-letters redrive [--kind l1|l2|l3|skill] [--limit N] [--depart
 Pipeline jobs that failed every retry. `redrive` queues them again as first
 attempts, oldest first (default limit 10), so a fixed LLM catches up gradually.";
 
-struct Args {
+pub(crate) struct Args {
     rest: Vec<String>,
 }
 
 impl Args {
-    fn new(args: impl Iterator<Item = String>) -> Self {
+    pub(crate) fn new(args: impl Iterator<Item = String>) -> Self {
         Self {
             rest: args.collect(),
         }
     }
 
-    fn flag(&mut self, name: &str) -> bool {
+    pub(crate) fn flag(&mut self, name: &str) -> bool {
         let before = self.rest.len();
         self.rest.retain(|a| a != name);
         self.rest.len() != before
     }
 
-    fn value(&mut self, name: &str) -> Result<Option<String>> {
+    pub(crate) fn value(&mut self, name: &str) -> Result<Option<String>> {
         let Some(i) = self.rest.iter().position(|a| a == name) else {
             return Ok(None);
         };
@@ -53,7 +53,7 @@ impl Args {
         Ok(Some(value))
     }
 
-    fn number(&mut self, name: &str) -> Result<Option<u64>> {
+    pub(crate) fn number(&mut self, name: &str) -> Result<Option<u64>> {
         self.value(name)?
             .map(|v| {
                 v.parse()
@@ -62,7 +62,7 @@ impl Args {
             .transpose()
     }
 
-    fn finish(self) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<()> {
         match self.rest.first() {
             Some(extra) => bail!("unexpected argument: {extra}"),
             None => Ok(()),
