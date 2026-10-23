@@ -26,8 +26,8 @@ pub fn log(message: &str) {
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1_000_000) {
         let _ = std::fs::remove_file(&path);
     }
-    let _ = std::fs::create_dir_all(data_dir());
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    let _ = crate::config::create_private_dir(&data_dir());
+    if let Ok(mut f) = crate::config::private_file()
         .create(true)
         .append(true)
         .open(&path)
@@ -178,16 +178,13 @@ impl CursorLock {
 
     fn open(path: &Path) -> std::io::Result<std::fs::File> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            crate::config::create_private_dir(dir)?;
         }
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).truncate(false).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        options.open(path)
+        crate::config::private_file()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
     }
 
     /// How long a hook waits for the lock. A holder only reads and writes
