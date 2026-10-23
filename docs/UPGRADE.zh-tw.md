@@ -51,7 +51,7 @@ Migration 6 把每一把儲存的 user key 換成它的 SHA-256 雜湊，並保�
 
 ### 錯誤的 key 會被節流並記錄
 
-memory-core 會依 client 位址計算被拒絕的憑證（錯誤或已撤銷的 user key、錯誤的伺服器 API key、回答 `valid: false` 的 `meta/auth/verify`）。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘：它的每個請求都會收到 429 `too_many_failures` 和 `Retry-After`。成功的請求不會變慢。門檻在設定檔的 `server.throttle`（[memory-core.example.yaml](../config/memory-core.example.yaml)）。使用 Redis 協調時，所有 replica 共用計數；使用 local 協調時計數放在記憶體裡，重新啟動 memory-core 會解除所有封鎖。
+memory-core 會依 client 位址計算被拒絕的憑證（錯誤或已撤銷的 user key、錯誤的伺服器 API key、回答 `valid: false` 的 `meta/auth/verify`）。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘：它的每個請求都會收到 429 `too_many_failures` 和 `Retry-After`。成功的請求不會變慢。門檻在設定檔的 `server.throttle`（[memory-core.example.yaml](../config/memory-core.example.yaml)）。使用 Redis 協調時，所有 replica 共用計數，刪除 `<key_prefix>:auth:locked:<位址>`（以及 `:auth:failures:<位址>`）可以提早解除封鎖；使用 local 協調時計數放在記憶體裡，重新啟動 memory-core 會解除所有封鎖。
 
 位址是連線本身的位址；如果連線來自可信任的代理，則是該代理在 `X-Forwarded-For` 裡指出的 client。Compose 預設信任 Panel 和 Caddy（`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`），所以在 Panel 打錯的 key 算在瀏覽器的位址上，而不是 Panel 的。**如果前面還有別的反向代理**（nginx、負載平衡器），請加上它的位址或網段，例如 `AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy,10.0.0.0/8`；否則所有 client 共用代理的位址，一個人打錯就會讓所有人被擋。絕對不要列入 client 能直接連過來的位址：從那裡連線的人可以冒稱任何 client。
 

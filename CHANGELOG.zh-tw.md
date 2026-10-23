@@ -15,8 +15,8 @@
 - **`internal/upgrade` 只在有 legacy 資料要搬時才發 key**，或設了 `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`（新增）以找回遺失的管理者 key。
 - **蒸餾模型的輸入改成 JSON 資料**：L1 萃取與去重、L2 場景、L3 persona 都和 skill 萃取一樣，對話內容無法結束資料、也無法假裝成指令（[UPGRADE](docs/UPGRADE.zh-tw.md#蒸餾模型的輸入改成-json-資料)）。
 - **新安裝的連接埠只聽在本機**：`install.sh` 會詢問，預設 `127.0.0.1`（`BIND_ADDR`，新增）；`upgrade.sh` 加上 `BIND_ADDR=0.0.0.0`，既有安裝照舊。可選的 Compose profile `tls` 在 memory-core 與 Panel 前面放一個提供 HTTPS 的 Caddy（[TLS](docs/ops/TLS.zh-tw.md)）。
-- Panel：登入的 key 只留在這個瀏覽器分頁（sessionStorage，不再用 localStorage），撤銷的 key 10 秒內失效（原本 60 秒），驗證結果以雜湊快取，並送出 Content-Security-Policy。Panel 會把瀏覽器的位址轉給 Core。
-- `amem` 與營運指令（`memory-server generations`、`dead-letters`）不跟隨轉址，key 不會被送到別的位址。`amem` 建立的檔案一開始就只有擁有者能讀。`install.sh` 與 `upgrade.sh` 經由 stdin 把伺服器 API key 交給 curl，不再放在命令列上。
+- Panel：登入的 key 只留在這個瀏覽器分頁（sessionStorage，不再用 localStorage），撤銷的 key 10 秒內失效（原本 60 秒），驗證結果以雜湊快取，並送出 Content-Security-Policy。Panel 會把瀏覽器的位址轉給 Core；驗證 key 時遇到封鎖（429）或 Core 錯誤，會照實轉回，不再說成 key 無效。
+- `amem` 與營運指令（`memory-server generations`、`dead-letters`）不跟隨轉址，key 不會被送到別的位址。`amem` 建立的檔案一開始就只有擁有者能讀；`amem login --ca-cert`（`AMEM_CA_CERT`）可以信任私有 CA，例如 Caddy 為 IP 位址簽發憑證用的 CA。`install.sh` 與 `upgrade.sh` 經由 stdin 把伺服器 API key 交給 curl，不再放在命令列上。
 - `amem` 依主程式上限截斷召回內容時，會關閉已開啟的區塊。
 - 內部錯誤或依賴服務無法使用時只回應錯誤代碼與 request id；細節（路徑、主機、查詢）只寫在 memory-core 的 log。
 - 已離開 team 的 agent 擁有者不能再修改這個 agent 或它的 binding；binding 記錄實際設定它的呼叫者（請求裡的 `created_by` 會被忽略）。
