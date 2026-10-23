@@ -45,7 +45,7 @@ impl ApiError {
         Self {
             status,
             code,
-            message: err.to_string(),
+            message: public_message(request_id, &err),
             data: None,
             request_id: request_id.into(),
         }
@@ -99,6 +99,30 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// What the caller is told. A failure of the server itself (storage, a
+/// dependency, a bug) is logged with its detail, which may name files,
+/// hosts or queries, and the caller gets its code (e.g. `LLM_UNAVAILABLE`)
+/// and the request id to report.
+fn public_message(request_id: &str, err: &DomainError) -> String {
+    match err.kind {
+        ErrorKind::Internal => {
+            tracing::error!(request_id, error = %err, "internal error");
+            format!(
+                "{}: the server failed; its log has the details (request {request_id})",
+                err.code
+            )
+        }
+        ErrorKind::Unavailable => {
+            tracing::warn!(request_id, error = %err, "service unavailable");
+            format!(
+                "{}: a service memory-core depends on is unavailable; its log has the details (request {request_id})",
+                err.code
+            )
+        }
+        _ => err.to_string(),
+    }
+}
+
 pub fn status_for(kind: ErrorKind) -> StatusCode {
     match kind {
         ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
@@ -132,6 +156,22 @@ fn skill_code(code: &str) -> Option<i64> {
         "SKILL_ID_COLLISION" => 50304,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod public_message_tests {
+    use super::*;
+
+    #[test]
+    fn server_failures_do_not_reach_the_caller() {
+        let err = DomainError::unavailable("create /data/departments/x: Permission denied");
+        let api = ApiError::from_domain("req-1", err);
+        assert_eq!(api.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!api.message.contains("/data"), "{}", api.message);
+        assert!(api.message.contains("req-1"));
+        let conflict = ApiError::from_domain("r", DomainError::conflict("taken", "name taken"));
+        assert_eq!(conflict.message, "taken: name taken");
+    }
 }
 
 #[cfg(test)]
