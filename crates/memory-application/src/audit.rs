@@ -55,6 +55,19 @@ impl ThrottlePolicy {
     }
 }
 
+/// Every refusal from a source is recorded up to this many in a window;
+/// past it, one in [`AUDIT_ONE_IN`]. With the default lock a source never
+/// gets that far, but with the lock off (or set high) a source sending
+/// wrong keys without end would otherwise add a row each time.
+pub const AUDIT_EVERY_UP_TO: u32 = 20;
+pub const AUDIT_ONE_IN: u32 = 100;
+
+/// Whether the `failures`-th refusal in a window is recorded. 0 means the
+/// counter was unreachable: record it, since nothing can be sampled.
+fn audited(failures: u32) -> bool {
+    failures == 0 || failures <= AUDIT_EVERY_UP_TO || failures.is_multiple_of(AUDIT_ONE_IN)
+}
+
 /// Whether a request from a source may go on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
@@ -125,8 +138,16 @@ impl CredentialGuard {
                 0
             }
         };
-        self.record(AuditKind::CredentialRejected, &attempt, None)
-            .await;
+        if audited(failures) {
+            let detail = (failures > AUDIT_EVERY_UP_TO).then(|| {
+                format!(
+                    "{failures} failures in this window; past {AUDIT_EVERY_UP_TO}, \
+                     one in {AUDIT_ONE_IN} is recorded"
+                )
+            });
+            self.record(AuditKind::CredentialRejected, &attempt, detail)
+                .await;
+        }
         if failures >= self.policy.lock_after {
             if let Err(e) = self
                 .counter
@@ -300,6 +321,38 @@ mod tests {
         let events = log.0.lock().unwrap();
         assert_eq!(events.len(), 21);
         assert_eq!(events.last().unwrap().kind, AuditKind::SourceLocked);
+    }
+
+    #[tokio::test]
+    async fn with_the_lock_off_refusals_past_twenty_are_sampled() {
+        let log = Arc::new(Log::default());
+        let g = CredentialGuard::new(
+            Arc::new(Counter::default()),
+            log.clone(),
+            Arc::new(Fixed),
+            Arc::new(Ids),
+            ThrottlePolicy {
+                lock_after: u32::MAX,
+                ..Default::default()
+            },
+            Duration::from_secs(90 * 24 * 3600),
+        );
+        for _ in 0..1000 {
+            g.rejected(Attempt {
+                source: "10.0.0.1".into(),
+                ..Default::default()
+            })
+            .await;
+        }
+        assert_eq!(g.gate("10.0.0.1").await, Gate::Open);
+        let events = log.0.lock().unwrap();
+        // 1..=20, then 100, 200, …, 1000.
+        assert_eq!(events.len(), 30);
+        assert!(events[20]
+            .detail
+            .as_deref()
+            .unwrap()
+            .starts_with("100 failures"));
     }
 
     #[tokio::test]
