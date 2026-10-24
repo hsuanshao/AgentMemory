@@ -6,7 +6,9 @@
 
 ## [未發布]
 
-**升級前請先閱讀 [UPGRADE → 升級到 0.4.3](docs/UPGRADE.zh-tw.md#升級到-043)。** 退回 0.4.2 必須還原備份（schema 遷移 6）。
+## [0.4.3] - 2026-10-24
+
+**升級前請先閱讀 [UPGRADE → 升級到 0.4.3](docs/UPGRADE.zh-tw.md#升級到-043)。** 這一版完成十月的安全審查：user key 改存雜湊；被拒絕的憑證依 client 位址節流，並寫進稽核紀錄；新安裝的 port 只聽在這台機器上（另有可選的 HTTPS profile）；蒸餾模型的輸入全部改成 JSON 資料。Rootless Docker 會讓所有 client 顯示同一個位址：升級前請先決定封鎖的設定（[UPGRADE](docs/UPGRADE.zh-tw.md#rootless-docker所有-client-都是同一個位址)）。退回 0.4.2 必須還原備份（schema 遷移 6）。
 
 ### 安全性
 - **User key 改存 SHA-256 雜湊。** Schema 遷移 6 原地轉換已儲存的 key；現有的 key 照常可用，Panel 顯示最後四個字元。呼叫端自己指定的 key（`init-admin`、`user/create-with-key`）必須是 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`（[UPGRADE](docs/UPGRADE.zh-tw.md#user-key-改存雜湊)）。
@@ -154,7 +156,8 @@
 
 第一個公開版本：memory-core、L0→L3 蒸餾管線、混合召回、metadata 平面、Monitor Panel、`amem` 以及 Claude Code、Codex、Antigravity、Hermes 的 plugin，還有 `install.sh`。client 使用每位使用者各自的 key 驗證。
 
-[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.2...HEAD
+[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.3
 [0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
 [0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
 [0.4.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.0
