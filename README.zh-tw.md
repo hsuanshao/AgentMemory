@@ -51,6 +51,9 @@ git clone https://github.com/hsuanshao/AgentMemory.git && cd AgentMemory
 4. CLI 的專案目錄與對外 port
 5. **誰要連線**：只有這台機器（預設，port 聽在 `127.0.0.1`）／其他機器透過一般 HTTP／其他機器透過 Caddy 的 HTTPS（[TLS](docs/ops/TLS.zh-tw.md)）
 
+> [!IMPORTANT]
+> **Rootless Docker：** memory-core 看到的所有 client 都是同一個位址，所以任何人 15 分鐘內打錯 20 次 key，所有人都會被擋 15 分鐘。請在 `.env` 設 `AGENT_MEMORY_THROTTLE_LOCK_AFTER=0`（延遲與稽核紀錄仍保留），或在主機上放一個看得到真實位址的反向代理，並把它列進 `AGENT_MEMORY_TRUSTED_PROXIES`（[UPGRADE](docs/UPGRADE.zh-tw.md#rootless-docker所有-client-都是同一個位址)）。
+
 接著它會產生 Gateway API key 與資料庫密碼、寫入權限 600 的 `.env`（含 `COMPOSE_PROFILES`）、啟動服務並等待健康檢查，最後建立第一位管理員並顯示一次登入用的 user key。
 
 - 自動化部署：`INSTALL_STORAGE=postgres-docker INSTALL_COORDINATION=redis-docker ./install.sh --non-interactive`（變數說明見 `./install.sh --help`）。
@@ -177,6 +180,7 @@ docs/ops/                    給維護者：測試、發版、儲存搬移的內
 | `AGENT_MEMORY_EMBEDDING_PROVIDER` 等 | `none` | 啟用向量檢索 |
 | `AGENT_MEMORY_CORS_ORIGINS` | 空 | 允許的來源（逗號分隔） |
 | `AGENT_MEMORY_TRUSTED_PROXIES` | 未設定（Compose：`memory-panel,caddy`） | 採信其 `X-Forwarded-For` 的代理；錯誤的 key 依 client 位址計數與封鎖（[UPGRADE](docs/UPGRADE.zh-tw.md#錯誤的-key-會被節流並記錄)） |
+| `AGENT_MEMORY_THROTTLE_DELAY_AFTER` / `_LOCK_AFTER` / `_LOCK_MINUTES` | `5` / `20` / `15` | 依 client 位址計算被拒絕的憑證：從第幾次起延遲、第幾次封鎖、封鎖幾分鐘；設 0 關閉延遲或封鎖（rootless Docker：[UPGRADE](docs/UPGRADE.zh-tw.md#rootless-docker所有-client-都是同一個位址)） |
 | `AGENT_MEMORY_AUDIT_RETENTION_DAYS` | `90` | 憑證稽核紀錄保留的天數 |
 | `AGENT_MEMORY_ALLOW_KEY_RECOVERY` | `false` | 允許 `internal/upgrade` 在沒有 legacy 資料要搬時也發管理者 key |
 | `BIND_ADDR`（Compose） | `install.sh` 預設 `127.0.0.1` | 8420 與 8125 port 聽在哪裡；`0.0.0.0` 表示所有網路 |

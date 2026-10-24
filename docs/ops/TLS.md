@@ -30,6 +30,9 @@ curl -fsS https://memory.example.com/health
 
 With `BIND_ADDR=127.0.0.1` the plain-HTTP ports 8420 and 8125 answer only on this machine; other machines go through Caddy. Caddy forwards the client's address, and memory-core trusts it from Caddy and the Panel only (`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`), so refused keys are counted per client, not per proxy ([UPGRADE](../UPGRADE.md#refused-keys-are-throttled-and-audited)).
 
+> [!WARNING]
+> **Rootless Docker:** Caddy runs inside Docker, so with rootless Docker's default port driver it sees every client as one address and forwards that. Turn off the lock (`AGENT_MEMORY_THROTTLE_LOCK_AFTER=0`), or use a reverse proxy on the host instead of this profile ([UPGRADE](../UPGRADE.md#rootless-docker-every-client-shows-one-address)).
+
 The Panel is served at the same address. Only admins need it; on an address the internet reaches, consider limiting it in `docker/Caddyfile`, e.g. a `remote_ip` matcher for your office or VPN range in front of the last `reverse_proxy`.
 
 ## 3. Trust Caddy's CA (IP address or internal name)

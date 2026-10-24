@@ -30,6 +30,9 @@ curl -fsS https://memory.example.com/health
 
 設 `BIND_ADDR=127.0.0.1` 後，一般 HTTP 的 8420 與 8125 只在這台機器上回應；其他機器透過 Caddy 連線。Caddy 會轉送 client 的位址，而 memory-core 只信任 Caddy 與 Panel 轉送的位址（`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`），所以錯誤的 key 會依 client 計算，而不是依代理（[UPGRADE](../UPGRADE.zh-tw.md#錯誤的-key-會被節流並記錄)）。
 
+> [!WARNING]
+> **Rootless Docker：** Caddy 跑在 Docker 裡，在 rootless Docker 預設的連接埠驅動下，它看到的所有 client 都是同一個位址，轉送出去的也是這個位址。請關閉封鎖（`AGENT_MEMORY_THROTTLE_LOCK_AFTER=0`），或改用主機上的反向代理取代這個 profile（[UPGRADE](../UPGRADE.zh-tw.md#rootless-docker所有-client-都是同一個位址)）。
+
 Panel 也在同一個位址。只有管理者需要它；如果這個位址對網際網路開放，可以考慮在 `docker/Caddyfile` 限制它，例如在最後一個 `reverse_proxy` 前加上辦公室或 VPN 網段的 `remote_ip` matcher。
 
 ## 3. 信任 Caddy 的 CA（IP 位址或內部名稱）
