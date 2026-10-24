@@ -158,7 +158,9 @@ Meta 的列表回應格式：`{items, total, limit, offset}`；`redaction-rule/l
 
 ### 憑證稽核紀錄
 
-memory-core 依 client 位址計算被拒絕的憑證：錯誤、已撤銷或已過期的 user key、錯誤的伺服器 API key，以及回答 `valid: false` 的 `meta/auth/verify`。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘，期間它的每個請求都回 429 `too_many_failures` 並附 `Retry-After`（秒）。位址是連線本身的位址，或是 `AGENT_MEMORY_TRUSTED_PROXIES` 列出的代理在 `X-Forwarded-For` 指出的 client。
+memory-core 依 client 位址計算被拒絕的憑證：錯誤、已撤銷或已過期的 user key、錯誤的伺服器 API key，以及回答 `valid: false` 的 `meta/auth/verify`。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘，期間它的每個請求都回 429 `too_many_failures` 並附 `Retry-After`（秒）。位址是連線本身的位址，或是 `AGENT_MEMORY_TRUSTED_PROXIES` 列出的代理在 `X-Forwarded-For` 指出的 client。請求裡的每一個 `X-Forwarded-For` header 都會依序讀取、串成一條鏈；帶 port 的位址（`203.0.113.9:5678`、`[2001:db8::1]:443`）以位址本身計算。延遲是在回應每次拒絕時才套用，所以同時送出的請求不會被它拖慢；擋下它們的是封鎖。
+
+稽核紀錄在一個時間窗內，每個位址前 20 次拒絕都會記錄，之後每 100 次記一筆（`detail` 寫出次數），所以關閉封鎖後一直失敗的位址，不會每試一次就多一筆。`department` 是請求送來的 `x-memory-department-id`，在檢查任何憑證之前就取得：任何人都能在這裡寫任何部門，包括不存在的部門，所以系統管理者可能看到標示自己部門、但來自部門外的拒絕紀錄。
 
 `/v3/audit/list` `{kind?, since_ms?, limit?, offset?}` → `{items}`（部門的系統管理者；只有自己部門的事件，新的在前；`limit` 預設 50，最大 500）。`kind` 為 `credential_rejected`、`source_locked` 或 `key_issued`。每一筆：`{event_id, at_ms, kind, department, source, forwarded_for, user_agent, path, credential, request_id, detail}`；`credential` 是 `user key sha256:<雜湊前 8 個 hex>` 或 `server API key`，絕不是 key 本身。
 

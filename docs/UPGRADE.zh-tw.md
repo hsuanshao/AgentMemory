@@ -53,9 +53,12 @@ Migration 6 把每一把儲存的 user key 換成它的 SHA-256 雜湊，並保�
 
 memory-core 會依 client 位址計算被拒絕的憑證（錯誤或已撤銷的 user key、錯誤的伺服器 API key、回答 `valid: false` 的 `meta/auth/verify`）。15 分鐘內從第 5 次起，每次拒絕都會晚一點回應（250 ms，倍增到最多 5 秒）；第 20 次會讓這個位址被擋 15 分鐘：它的每個請求都會收到 429 `too_many_failures` 和 `Retry-After`。成功的請求不會變慢。門檻在設定檔的 `server.throttle`（[memory-core.example.yaml](../config/memory-core.example.yaml)），或用 `AGENT_MEMORY_THROTTLE_DELAY_AFTER`、`AGENT_MEMORY_THROTTLE_LOCK_AFTER`、`AGENT_MEMORY_THROTTLE_LOCK_MINUTES` 設定；設 0 表示關閉延遲或封鎖。
 
+> [!WARNING]
+> **封鎖也會擋掉正確的 key。** 封鎖的是位址而不是 key，所以封鎖期間，這個位址後面的每個人都會被拒絕，帶著正確的 key 也一樣。很多人共用一個位址時（辦公室 NAT、VPN 閘道），其中任何人只要送 20 次錯誤的 key，就能讓所有人被擋 15 分鐘。這是用位址擋下猜測的代價：如果共用位址後面出現粗心或惡意同事的機會，比有人猜 key 還高，請調高 `AGENT_MEMORY_THROTTLE_LOCK_AFTER`，或設 0（延遲與稽核紀錄仍保留）。
+
 **確認 client 分得開。** 升級後到 Panel → Metadata → Audit 看位址（在 Panel 打錯一次 key 就會出現一筆）。如果所有 client 都顯示同一個內部位址，例如 Docker 網路的 gateway `172.x.0.1`，memory-core 就分不出誰是誰：rootless Docker 預設的連接埠轉送會藏起 client 的位址，前面的 NAT 也會。這時一個人打錯就會讓所有人被擋。請讓看得到真實位址的代理把位址轉送過來（列入 `AGENT_MEMORY_TRUSTED_PROXIES` 的反向代理），或設 `AGENT_MEMORY_THROTTLE_LOCK_AFTER=0`，只靠延遲與稽核紀錄；rootless Docker 請見[下一節](#rootless-docker所有-client-都是同一個位址)。使用 Redis 協調時，所有 replica 共用計數，刪除 `<key_prefix>:auth:locked:<位址>`（以及 `:auth:failures:<位址>`）可以提早解除封鎖；使用 local 協調時計數放在記憶體裡，重新啟動 memory-core 會解除所有封鎖。
 
-位址是連線本身的位址；如果連線來自可信任的代理，則是該代理在 `X-Forwarded-For` 裡指出的 client。Compose 預設信任 Panel 和 Caddy（`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`），所以在 Panel 打錯的 key 算在瀏覽器的位址上，而不是 Panel 的。**如果前面還有別的反向代理**（nginx、負載平衡器），請加上它的位址或網段，例如 `AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy,10.0.0.0/8`；否則所有 client 共用代理的位址，一個人打錯就會讓所有人被擋。絕對不要列入 client 能直接連過來的位址：從那裡連線的人可以冒稱任何 client。
+位址是連線本身的位址；如果連線來自可信任的代理，則是該代理在 `X-Forwarded-For` 裡指出的 client。Compose 預設信任 Panel 和 Caddy（`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`），所以在 Panel 打錯的 key 算在瀏覽器的位址上，而不是 Panel 的。**如果前面還有別的反向代理**（nginx、負載平衡器），請加上它的位址或網段，例如 `AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy,10.0.0.0/8`；否則所有 client 共用代理的位址，一個人打錯就會讓所有人被擋。絕對不要列入 client 能直接連過來的位址：從那裡連線的人可以冒稱任何 client。memory-core 會讀取每一個 `X-Forwarded-For` header（代理可能另外加一行，而不是接在收到的那行後面），也會去掉負載平衡器加在位址後面的 port。
 
 每一次拒絕、每一次封鎖、每一把用伺服器 API key 發出的 key，都會寫進稽核紀錄：時間、位址、`X-Forwarded-For` 鏈、user agent、部門、路徑，以及 user key 雜湊的前 8 個字元（絕不是 key 本身）。紀錄放在部門之外（SQLite 是資料目錄裡的 `audit.db`，Postgres 是 `agent_memory.audit_events`），保留 90 天（`AGENT_MEMORY_AUDIT_RETENTION_DAYS`），`department/destroy` 也不會刪除。部門的系統管理員在 Panel → Metadata → Audit（`/v3/audit/list`）看自己部門的事件；營運者用伺服器 API key 呼叫 `/v3/internal/audit/list` 看所有部門的事件，包括不存在的部門名稱（[API](API.zh-tw.md#憑證稽核紀錄)）。
 
