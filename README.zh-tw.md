@@ -12,6 +12,9 @@
 [![Docker image](https://img.shields.io/badge/ghcr.io-agentmemory--core-2496ED?logo=docker&logoColor=white)](https://github.com/hsuanshao/AgentMemory/pkgs/container/agentmemory-core)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
 [![Last commit](https://img.shields.io/github/last-commit/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/commits/main)
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/AgentMemory?color=ee8449)](#contributors)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 [English](./README.md) | 繁體中文
 
@@ -267,6 +270,28 @@ llm:
 ## 參與開發
 
 歡迎提出 issue 和 pull request。開發環境、檢查項目和慣例見 [CONTRIBUTING.zh-tw.md](.github/CONTRIBUTING.zh-tw.md)；另有[行為準則](.github/CODE_OF_CONDUCT.md)，漏洞請依 [SECURITY.md](.github/SECURITY.md) 私下回報。
+
+<a id="contributors"></a>
+### 貢獻者
+
+感謝每一位貢獻者（[emoji 說明](https://allcontributors.org/docs/zh-tw/emoji-key)）。要列入某人，在他的 issue 或 pull request 留言 `@all-contributors please add <GitHub 帳號> for code, doc`，bot 會開一個 pull request 更新這份名單。
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/hsuan-shao-chang-59412894/"><img src="https://avatars.githubusercontent.com/u/5172404?v=4?s=100" width="100px;" alt="William Chang"/><br /><sub><b>William Chang</b></sub></a><br /><a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Code">💻</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Documentation">📖</a> <a href="#maintenance-hsuanshao" title="Maintenance">🚧</a> <a href="#infra-hsuanshao" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#security-hsuanshao" title="Security">🛡️</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/AgentMemory/pulls?q=is%3Apr+reviewed-by%3Ahsuanshao" title="Reviewed Pull Requests">👀</a> <a href="#projectManagement-hsuanshao" title="Project Management">📆</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://blog.seancheng.space"><img src="https://avatars.githubusercontent.com/u/29519438?v=4?s=100" width="100px;" alt="Sean Zheng"/><br /><sub><b>Sean Zheng</b></sub></a><br /><a href="https://github.com/hsuanshao/AgentMemory/commits?author=blackhorseya" title="Code">💻</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=blackhorseya" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/AgentMemory/pulls?q=is%3Apr+reviewed-by%3Ablackhorseya" title="Reviewed Pull Requests">👀</a> <a href="https://github.com/hsuanshao/AgentMemory/issues?q=author%3Ablackhorseya" title="Bug reports">🐛</a> <a href="#ideas-blackhorseya" title="Ideas, Planning, & Feedback">🤔</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
 
 ## 授權
 

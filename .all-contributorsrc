@@ -1,0 +1,47 @@
+{
+  "projectName": "AgentMemory",
+  "projectOwner": "hsuanshao",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": [
+    "README.md",
+    "README.zh-tw.md"
+  ],
+  "imageSize": 100,
+  "commit": false,
+  "commitConvention": "angular",
+  "contributorsPerLine": 7,
+  "linkToUsage": false,
+  "badgeTemplate": "[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/AgentMemory?color=ee8449)](#contributors)",
+  "contributors": [
+    {
+      "login": "hsuanshao",
+      "name": "William Chang",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5172404?v=4",
+      "profile": "https://www.linkedin.com/in/hsuan-shao-chang-59412894/",
+      "contributions": [
+        "code",
+        "doc",
+        "maintenance",
+        "infra",
+        "security",
+        "test",
+        "review",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "blackhorseya",
+      "name": "Sean Zheng",
+      "avatar_url": "https://avatars.githubusercontent.com/u/29519438?v=4",
+      "profile": "https://blog.seancheng.space",
+      "contributions": [
+        "code",
+        "test",
+        "review",
+        "bug",
+        "ideas"
+      ]
+    }
+  ]
+}
