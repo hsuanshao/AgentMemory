@@ -24,7 +24,26 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024;
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.use("*", requestId());
-  app.use("*", secureHeaders({ crossOriginEmbedderPolicy: false }));
+  app.use(
+    "*",
+    secureHeaders({
+      crossOriginEmbedderPolicy: false,
+      // The UI is one bundled script and stylesheet from this origin; nothing
+      // else may run, load or frame it.
+      contentSecurityPolicy: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        imgSrc: ["'self'", "data:"],
+        fontSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    }),
+  );
   app.use(
     "/api/*",
     bodyLimit({

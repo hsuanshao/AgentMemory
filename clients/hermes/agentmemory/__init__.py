@@ -99,7 +99,7 @@ class AgentMemoryProvider(MemoryProvider):
         if not query or not query.strip():
             return ""
         try:
-            return _run(["recall", query], timeout=_RECALL_TIMEOUT).strip()
+            return _run(["recall", "--", query], timeout=_RECALL_TIMEOUT).strip()
         except Exception as exc:  # never break the turn over memory
             logger.debug("agentmemory recall failed: %s", exc)
             return ""
@@ -151,7 +151,7 @@ class AgentMemoryProvider(MemoryProvider):
         if tool_name != "agentmemory_search":
             return json.dumps({"error": f"unknown tool {tool_name}"})
         try:
-            data = json.loads(_run(["recall", "--json", str(args.get("query", ""))],
+            data = json.loads(_run(["recall", "--json", "--", str(args.get("query", ""))],
                                    timeout=_RECALL_TIMEOUT))
             return json.dumps({"memories": data.get("memories", []),
                                "strategy": data.get("strategy")}, ensure_ascii=False)

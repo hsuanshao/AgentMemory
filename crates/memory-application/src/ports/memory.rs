@@ -271,6 +271,12 @@ pub struct MovedRows {
     pub skill_versions: usize,
 }
 
+impl MovedRows {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Upgrade path for data written before the data plane required a real
 /// team and agent: re-homes the `default` buckets in one transaction.
 #[async_trait]

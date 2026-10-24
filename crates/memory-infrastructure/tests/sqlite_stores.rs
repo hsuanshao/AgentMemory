@@ -244,6 +244,7 @@ fn key(id: &str, user: &str, value: &str, default: bool, created: &str) -> UserK
         key_id: id.into(),
         user_id: user.into(),
         key_value: value.into(),
+        key_hint: None,
         name: None,
         status: KeyStatus::Active,
         is_default: default,
@@ -652,4 +653,38 @@ async fn a_destroyed_department_cannot_be_reopened_meanwhile() {
         assert!(!pool.exists(&department), "reopened after destroy");
         assert!(!dir.path().join("departments/ins-test").exists());
     }
+}
+
+/// A name filter matches the characters typed: `_` and `%` are not
+/// wildcards.
+#[tokio::test]
+async fn name_filters_match_literally() {
+    let (_dir, pool, department) = setup();
+    let store = SqliteMetaStore::new(pool);
+    for (id, name) in [("usr-1", "a_b"), ("usr-2", "axb"), ("usr-3", "100%")] {
+        let k = key(&format!("k-{id}"), id, &format!("sk-mem-{id}"), true, "1");
+        store
+            .create_user(&department, &user(id, name), &k)
+            .await
+            .unwrap();
+    }
+    let page = memory_application::common::Page {
+        limit: 10,
+        offset: 0,
+    };
+    let names = |filter: &str| {
+        let filter = memory_application::ports::meta::UserFilter {
+            username: Some(filter.to_owned()),
+            ..Default::default()
+        };
+        let store = &store;
+        let department = &department;
+        async move {
+            let (users, _) = store.list_users(department, &filter, page).await.unwrap();
+            users.into_iter().map(|u| u.username).collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(names("a_b").await, ["a_b"]);
+    assert_eq!(names("0%").await, ["100%"]);
+    assert_eq!(names("%").await, ["100%"]);
 }

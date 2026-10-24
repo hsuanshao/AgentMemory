@@ -23,6 +23,10 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     // the column exists only when embeddings are on.
     (4, "index of atoms without an embedding"),
     (5, "administrators' redaction rules"),
+    (
+        6,
+        "user keys stored as SHA-256 digests; credential audit log",
+    ),
 ];
 
 /// The latest schema version.
@@ -49,6 +53,15 @@ CREATE TABLE IF NOT EXISTS $R.departments (
     schema_name TEXT COLLATE "C" NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS $R.audit_events (
+    event_id TEXT COLLATE "C" PRIMARY KEY,
+    at_ms BIGINT NOT NULL,
+    kind TEXT COLLATE "C" NOT NULL,
+    department TEXT COLLATE "C",
+    doc JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_audit_at ON $R.audit_events(at_ms);
+CREATE INDEX IF NOT EXISTS ix_audit_department ON $R.audit_events(department, at_ms);
 "#;
 
 /// One department. `$S` is the quoted department schema, `$K` a bytewise text.

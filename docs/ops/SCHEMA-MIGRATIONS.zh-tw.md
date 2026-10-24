@@ -52,8 +52,9 @@ flowchart LR
 | 1 | 0.3.0 | 「instance」改名為「部門（department）」：<br/>• `<data>/instances` → `<data>/departments`<br/>• `system.db` 的欄位 `instance` → `department`，各文件裡的同名欄位也一起改<br/>• Postgres 的 `agent_memory.instances(instance_id)` → `agent_memory.departments(department_id)`<br/>• prompt 目標 `instance` → `department`<br/>• 配額 `max_*_per_instance` → `max_*_per_department`（保留維運人員設定的值）<br/>• Redis 的 `{p}:pipe:inst:*` → `{p}:pipe:department:*`，以及狀態文件、佇列中的 job 和 dead letter 裡的 `instance` 欄位 |
 | 2 | 0.3.0 | 移除 team 角色 `reviewer`：這些成員改為 `member`（SQLite 和 Postgres；Redis 沒有第 2 步） |
 | 3 | 0.4.1 | 場景和 persona 改成只追加的版本：`profile_files` 的每一列都匯入 `scenes`／`scene_versions`／`persona_versions`（保留版本號；場景 id 由 team、agent 和路徑推導；只更新了導覽的 persona 版本略過）。`profile_files` 保留但不再寫入（SQLite 和 Postgres；Redis 沒有第 3 步） |
-| 4 | 下一版 | 新增「沒有向量的 atom」的 partial index `ix_atoms_missing_embedding`，作為補向量的佇列。SQLite 和部門的資料表一起建立；Postgres 和 embedding 欄位一起建立，所以只在開啟 embedding 時才有，並在升級後每個部門第一次被使用時建立。建立方式是交易內的一般 `CREATE INDEX`：`atoms` 很大的部門，第一個請求要等索引建完，期間對它的寫入也會被擋住（Redis 沒有第 4 步） |
-| 5 | 下一版 | 管理者的遮罩規則：每個部門新增 `meta_redaction_rules` 表（SQLite 和 Postgres；Redis 沒有第 5 步）。沒有要轉換的資料，但記成新版本可以擋住舊版 memory-server：舊版不認得這些規則，會把它們要遮的內容照樣存下來 |
+| 4 | 0.4.2 | 新增「沒有向量的 atom」的 partial index `ix_atoms_missing_embedding`，作為補向量的佇列。SQLite 和部門的資料表一起建立；Postgres 和 embedding 欄位一起建立，所以只在開啟 embedding 時才有，並在升級後每個部門第一次被使用時建立。建立方式是交易內的一般 `CREATE INDEX`：`atoms` 很大的部門，第一個請求要等索引建完，期間對它的寫入也會被擋住（Redis 沒有第 4 步） |
+| 5 | 0.4.2 | 管理者的遮罩規則：每個部門新增 `meta_redaction_rules` 表（SQLite 和 Postgres；Redis 沒有第 5 步）。沒有要轉換的資料，但記成新版本可以擋住舊版 memory-server：舊版不認得這些規則，會把它們要遮的內容照樣存下來 |
+| 6 | 下一版 | User key 改存 SHA-256 雜湊：`key_value` 變成 `sha256:<hex>`，文件加上 `key_hint`（最後四個字元），已轉換的列會跳過。Postgres 在 memory-core 啟動時轉換所有部門；SQLite 在每個部門的資料庫第一次開啟時轉換。Postgres 也在登記表 schema 新增憑證稽核紀錄 `agent_memory.audit_events`（SQLite 放在 `<data>/audit.db`，不屬於有版本的資料庫；Redis 沒有第 6 步）。現有的 key 照常可用；舊版 memory-server 無法比對它們 |
 
 ## 4. 新增遷移
 

@@ -363,6 +363,25 @@ export interface TeamMember {
 
 export type TeamRole = "admin" | "leader" | "member";
 
+export type AuditKind = "credential_rejected" | "source_locked" | "key_issued";
+
+/** A refused credential, a locked-out address or an issued key. Never holds a key. */
+export interface AuditEvent {
+  event_id: string;
+  at_ms: number;
+  kind: AuditKind;
+  department: string | null;
+  /** The client address failures are counted under. */
+  source: string;
+  forwarded_for: string | null;
+  user_agent: string | null;
+  path: string;
+  /** e.g. `user key sha256:1a2b3c4d` (the start of the key's digest) or `server API key`. */
+  credential: string | null;
+  request_id: string;
+  detail: string | null;
+}
+
 /** A redaction rule a system admin added to the department (#57). */
 export interface RedactionRule {
   rule_id: string;

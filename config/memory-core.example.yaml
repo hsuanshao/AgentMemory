@@ -7,6 +7,14 @@ server:
   port: 8420                  # AGENT_MEMORY_PORT
   apiKey: "${AGENT_MEMORY_API_KEY:-}"
   corsOrigins: []             # e.g. ["http://localhost:8125"]
+  trustedProxies: []          # AGENT_MEMORY_TRUSTED_PROXIES; proxies whose X-Forwarded-For names the client, e.g. ["memory-panel", "10.0.0.0/8"]
+  auditRetentionDays: 90      # AGENT_MEMORY_AUDIT_RETENTION_DAYS; credential audit log
+  throttle:                   # refused credentials, per client address; 0 turns delays / locks off
+    windowMinutes: 15
+    delayAfter: 5             # AGENT_MEMORY_THROTTLE_DELAY_AFTER; from this failure on, each refusal waits 250 ms, doubling up to 5 s
+    lockAfter: 20             # AGENT_MEMORY_THROTTLE_LOCK_AFTER; this failure refuses the address (429) for lockMinutes
+    lockMinutes: 15           # AGENT_MEMORY_THROTTLE_LOCK_MINUTES
+  allowKeyRecovery: false     # AGENT_MEMORY_ALLOW_KEY_RECOVERY; lets `upgrade --issue-key` issue a key without legacy data to move
 
 data:
   baseDir: "~/.agent-memory"   # AGENT_MEMORY_DATA_DIR

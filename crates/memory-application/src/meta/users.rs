@@ -1,7 +1,9 @@
 //! Users, user keys, bootstrap, configuration and quotas.
 
 use memory_domain::error::{DomainError, DomainResult, ErrorKind};
-use memory_domain::meta::{KeyStatus, User, UserKey, UserStatus, UserType, USER_KEY_PREFIX};
+use memory_domain::meta::{
+    digest_user_key, key_hint, KeyStatus, User, UserKey, UserStatus, UserType, USER_KEY_PREFIX,
+};
 use memory_domain::scope::DepartmentId;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -119,6 +121,21 @@ pub struct UpdateKeyInput {
     pub expires_at: Option<String>,
 }
 
+/// Characters a caller-chosen key needs after the prefix: as many as a
+/// generated one (24 random bytes, base64).
+const MIN_CUSTOM_KEY_CHARS: usize = 32;
+
+/// A caller-chosen key (`init-admin`, `user/create-with-key`) must be as hard
+/// to guess as a generated one.
+fn strong_custom_key(key: &str) -> bool {
+    key.strip_prefix(USER_KEY_PREFIX).is_some_and(|rest| {
+        rest.chars().count() >= MIN_CUSTOM_KEY_CHARS
+            && rest
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    })
+}
+
 /// The 401 for a user key that does not authenticate (also used for a
 /// department that does not exist, so the two cannot be told apart).
 pub fn invalid_user_key() -> DomainError {
@@ -141,7 +158,8 @@ impl MetaService {
         UserKey {
             key_id: self.entity_id("uky"),
             user_id: user_id.to_owned(),
-            key_value: value,
+            key_value: digest_user_key(&value),
+            key_hint: Some(key_hint(&value)),
             name,
             status: KeyStatus::Active,
             is_default,
@@ -160,7 +178,11 @@ impl MetaService {
         department: &DepartmentId,
         value: &str,
     ) -> DomainResult<Option<User>> {
-        let Some(key) = self.store.find_key_by_value(department, value).await? else {
+        let Some(key) = self
+            .store
+            .find_key_by_value(department, &digest_user_key(value))
+            .await?
+        else {
             return Ok(None);
         };
         let now = self.now();
@@ -229,13 +251,16 @@ impl MetaService {
             ));
         }
         let key_value = match input.user_key {
-            Some(k) if !k.starts_with(USER_KEY_PREFIX) => {
-                return Err(DomainError::invalid("user_key must start with sk-mem-"))
+            Some(k) if !strong_custom_key(&k) => {
+                return Err(DomainError::invalid(format!(
+                "user_key must be {USER_KEY_PREFIX} followed by at least {MIN_CUSTOM_KEY_CHARS} \
+                     characters of A-Z, a-z, 0-9, - or _ (leave it out to have one generated)"
+            )))
             }
             Some(k) => {
                 if self
                     .store
-                    .find_key_by_value(department, &k)
+                    .find_key_by_value(department, &digest_user_key(&k))
                     .await?
                     .is_some()
                 {
@@ -295,6 +320,12 @@ impl MetaService {
         username: &str,
         user_key: Option<String>,
     ) -> DomainResult<BootstrapResult> {
+        // Two concurrent calls would otherwise both find no users and each
+        // create a system admin.
+        let _bootstrap = self
+            .locks
+            .lock(&format!("init-admin:{}", department.as_str()))
+            .await?;
         if self.store.count_users(department).await? > 0 {
             return Err(DomainError::conflict(
                 "already_initialized",

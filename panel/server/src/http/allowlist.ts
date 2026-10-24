@@ -69,6 +69,8 @@ export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   "meta/redaction-rule/disable",
   "meta/redaction-rule/enable",
   "meta/redaction-rule/test",
+  // the department's credential audit log (Core: system admins only)
+  "audit/list",
 ]);
 
 /** Paths callable without a verified user key (the login call itself). */
@@ -106,6 +108,7 @@ export const ADMIN_ONLY_V3_PATHS: ReadonlySet<string> = new Set([
   "meta/redaction-rule/disable",
   "meta/redaction-rule/enable",
   "meta/redaction-rule/test",
+  "audit/list",
 ]);
 
 const SAFE_SEGMENT = /^[a-z0-9-]+$/;

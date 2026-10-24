@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use memory_application::admin::{DepartmentDirectory, DepartmentLifecycle};
+use memory_application::ports::audit::{AuditLog, FailureCounter};
 use memory_application::ports::coordination::KeyLock;
 use memory_application::ports::memory::{
     AtomRepository, ConversationRepository, ProfileVersionStore, ScopeMigrationStore,
@@ -19,6 +20,8 @@ use memory_application::ports::pipeline::{
 use memory_application::ports::skill::{SkillBufferStore, SkillRepository};
 use memory_infrastructure::lifecycle::{CompositeLifecycle, LocalDirCleanup};
 use memory_infrastructure::local_lock::LocalKeyLock;
+use memory_infrastructure::local_throttle::LocalFailureCounter;
+use memory_infrastructure::postgres::audit_store::PostgresAuditLog;
 use memory_infrastructure::postgres::db::PgDb;
 use memory_infrastructure::postgres::lifecycle::PostgresCleanup;
 use memory_infrastructure::postgres::memory_store::PostgresMemoryStore;
@@ -28,8 +31,10 @@ use memory_infrastructure::postgres::pipeline_store::{
 };
 use memory_infrastructure::postgres::skill_store::PostgresSkillStore;
 use memory_infrastructure::redis::{
-    self as redis_backend, KeySpace, RedisKeyLock, RedisPipelineState, RedisQueue,
+    self as redis_backend, KeySpace, RedisFailureCounter, RedisKeyLock, RedisPipelineState,
+    RedisQueue,
 };
+use memory_infrastructure::sqlite::audit_store::{migrate_audit, SqliteAuditLog};
 use memory_infrastructure::sqlite::db::{Db, DepartmentPool};
 use memory_infrastructure::sqlite::memory_store::SqliteMemoryStore;
 use memory_infrastructure::sqlite::meta_store::SqliteMetaStore;
@@ -58,6 +63,8 @@ pub struct Storage {
     pub cleanup: Arc<dyn DepartmentLifecycle>,
     /// Which departments have storage.
     pub departments: Arc<dyn DepartmentDirectory>,
+    /// Credential failures and issued keys, across departments.
+    pub audit: Arc<dyn AuditLog>,
     pub name: &'static str,
     pub fts_available: bool,
     /// How vector search is executed, for `/health`.
@@ -72,6 +79,8 @@ pub struct Coordination {
     pub state_locks: Arc<dyn KeyLock>,
     /// For per-job exclusivity in the worker (a separate lock space).
     pub job_locks: Arc<dyn KeyLock>,
+    /// Credential failures per client address.
+    pub failures: Arc<dyn FailureCounter>,
     pub name: &'static str,
 }
 
@@ -81,13 +90,13 @@ pub async fn build_storage(
     vector_dims: Option<usize>,
 ) -> Result<Storage> {
     match config.storage.backend.as_str() {
-        "sqlite" => Ok(sqlite_storage(config, data_dir, vector_dims)),
+        "sqlite" => sqlite_storage(config, data_dir, vector_dims),
         "postgres" => postgres_storage(config, data_dir, vector_dims).await,
         other => bail!("storage backend `{other}` is not available in this build"),
     }
 }
 
-fn sqlite_storage(config: &Config, data_dir: &Path, vector_dims: Option<usize>) -> Storage {
+fn sqlite_storage(config: &Config, data_dir: &Path, vector_dims: Option<usize>) -> Result<Storage> {
     let pool = Arc::new(DepartmentPool::new(
         data_dir.to_path_buf(),
         config.data.max_open_departments,
@@ -95,7 +104,8 @@ fn sqlite_storage(config: &Config, data_dir: &Path, vector_dims: Option<usize>) 
     let memory = Arc::new(SqliteMemoryStore::new(Arc::clone(&pool), vector_dims));
     let vector_index = memory.vector_index().to_owned();
     let skills = Arc::new(SqliteSkillStore::new(Arc::clone(&pool)));
-    Storage {
+    let audit = Db::open(&data_dir.join("audit.db"), migrate_audit).context("audit.db")?;
+    Ok(Storage {
         conversations: memory.clone(),
         atoms: memory.clone(),
         profiles: memory.clone(),
@@ -112,8 +122,9 @@ fn sqlite_storage(config: &Config, data_dir: &Path, vector_dims: Option<usize>) 
             Some(Arc::clone(&pool)),
         )),
         departments: pool,
+        audit: Arc::new(SqliteAuditLog::new(Arc::new(audit))),
         name: "sqlite",
-    }
+    })
 }
 
 /// One shared pool, one schema per department. Files (skill resources,
@@ -155,6 +166,7 @@ async fn postgres_storage(
         fts_available: true,
         vector_index: db.vector_index().into(),
         cleanup: Arc::new(cleanup),
+        audit: Arc::new(PostgresAuditLog::new(Arc::clone(&db))),
         departments: db,
         name: "postgres",
     })
@@ -172,6 +184,7 @@ pub async fn build_coordination(config: &Config, data_dir: &Path) -> Result<Coor
                 queue: LocalQueue::new(),
                 state_locks: Arc::new(LocalKeyLock::default()),
                 job_locks: Arc::new(LocalKeyLock::default()),
+                failures: Arc::new(LocalFailureCounter::default()),
                 name: "local",
             })
         }
@@ -198,7 +211,8 @@ pub async fn build_coordination(config: &Config, data_dir: &Path) -> Result<Coor
                     keys.child("lock:state"),
                     ttl,
                 )),
-                job_locks: Arc::new(RedisKeyLock::new(conn, keys.child("lock:job"), ttl)),
+                job_locks: Arc::new(RedisKeyLock::new(conn.clone(), keys.child("lock:job"), ttl)),
+                failures: Arc::new(RedisFailureCounter::new(conn, &keys)),
                 name: "redis",
             })
         }

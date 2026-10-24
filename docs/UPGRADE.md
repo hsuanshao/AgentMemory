@@ -4,6 +4,7 @@
 
 ## Contents
 
+- [To 0.4.3](#to-043)
 - [To 0.4.2](#to-042)
 - [To 0.4.1](#to-041)
 - [To 0.4.0](#to-040)
@@ -18,6 +19,80 @@
   - [D. Check the result](#d-check-the-result)
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
+
+## To 0.4.3
+
+```bash
+git fetch --tags && git checkout v0.4.3
+./upgrade.sh
+```
+
+> [!WARNING]
+> **Going back to 0.4.2 means restoring the backup** ([E. Roll back](#e-roll-back)). When it starts, memory-core runs schema migration 6: every stored user key is replaced by its SHA-256 digest. Existing keys keep working, but 0.4.2 refuses data at schema version 6 and could not check a digest anyway.
+
+**Check before upgrading.** Each row links to its section below.
+
+| If … | Then … |
+| --- | --- |
+| Clients on other machines reach memory-core or the Panel | Nothing changes on upgrade (`BIND_ADDR=0.0.0.0` is added to `.env`); consider HTTPS ([network](#where-the-ports-listen)) |
+| memory-core sits behind a reverse proxy other than the bundled Panel and Caddy | Name it in `AGENT_MEMORY_TRUSTED_PROXIES`, or every client counts as the proxy's address ([refused keys](#refused-keys-are-throttled-and-audited)) |
+| Many people share one address (NAT, a VPN gateway), or Docker shows every client with one address (rootless Docker) | 20 refused keys in 15 minutes lock that address, so everyone behind it, out for 15 minutes: check the addresses after upgrading, and raise or turn off the lock (`AGENT_MEMORY_THROTTLE_LOCK_AFTER`) ([refused keys](#refused-keys-are-throttled-and-audited)); for rootless Docker, decide before upgrading ([rootless Docker](#rootless-docker-every-client-shows-one-address)) |
+| A script calls `internal/upgrade` with `issue_key` to get a fresh admin key | It is refused unless there is legacy data to move or `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true` ([keys](#user-keys-are-stored-as-digests)) |
+| A script creates users or the first admin with its own key (`user_key`) | Use `sk-mem-` and at least 32 letters, digits, `-` or `_` ([keys](#user-keys-are-stored-as-digests)) |
+| A department has custom memory prompts (Panel → Prompts) that mention the input's old labels, such as `[New messages to extract]` | Refer to the JSON fields instead ([distillation input](#the-distillation-model-gets-its-input-as-json-data)) |
+
+### User keys are stored as digests
+
+Migration 6 replaces each stored user key by its SHA-256 digest and keeps its last four characters to show in the Panel. Nobody needs a new key: a key is checked by its digest. What changes:
+
+- **A lost key cannot be read back** from the database (it never should have been). A system admin issues a new one in the Panel (Metadata → Users → Keys). If the only system admin lost theirs, the operator can set `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true` in `.env`, restart, run `internal/upgrade` with `issue_key` ([B5](#b5-move-the-data-and-get-a-key)), and remove the setting again.
+- **`internal/upgrade` issues a key only along with legacy data to move** (an install from before 0.1.1), or with `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true`. Otherwise the server API key alone could mint a system admin key for any department. Every key issued this way, and every first admin `init-admin` creates, is recorded in the audit log.
+- **A key chosen by the caller** (`init-admin` or `user/create-with-key` with `user_key`) must be `sk-mem-` followed by at least 32 letters, digits, `-` or `_`, as hard to guess as a generated one. Existing keys are not affected.
+
+### Refused keys are throttled and audited
+
+memory-core counts refused credentials (a wrong or revoked user key, a wrong server API key, a `meta/auth/verify` that answers `valid: false`) per client address. From the 5th in 15 minutes each refusal is answered later (250 ms, doubling up to 5 s); the 20th locks the address out for 15 minutes: every request from it gets 429 `too_many_failures` with `Retry-After`. Requests that succeed are not slowed. The limits are `server.throttle` in the config file ([memory-core.example.yaml](../config/memory-core.example.yaml)) or `AGENT_MEMORY_THROTTLE_DELAY_AFTER`, `AGENT_MEMORY_THROTTLE_LOCK_AFTER` and `AGENT_MEMORY_THROTTLE_LOCK_MINUTES`; 0 turns delays or locks off.
+
+> [!WARNING]
+> **A lockout refuses valid keys too.** It locks the address, not the key, so while it lasts everyone behind that address is refused, with the right key as well. Where many people share one address (an office NAT, a VPN gateway), anyone there can lock all of them out for 15 minutes by sending 20 wrong keys. That is the trade-off for stopping guesses at the address: if a shared address is more likely to meet a careless or hostile colleague than a key guesser, raise `AGENT_MEMORY_THROTTLE_LOCK_AFTER` or set it to 0, which keeps the delays and the audit log.
+
+**Check that clients are told apart.** After upgrading, look at the addresses on Panel → Metadata → Audit (a wrong key typed once into the Panel puts one there). If every client shows the same internal address, such as the Docker network's gateway `172.x.0.1`, memory-core cannot tell them apart: rootless Docker's default port forwarding hides the client's address, and so does a NAT in front. Then one person's typos lock everyone out. Either let a proxy that sees the real address forward it (a reverse proxy trusted in `AGENT_MEMORY_TRUSTED_PROXIES`), or set `AGENT_MEMORY_THROTTLE_LOCK_AFTER=0` and rely on the delays and the audit log; for rootless Docker, see [below](#rootless-docker-every-client-shows-one-address). With Redis coordination the counts are shared by every replica, and deleting `<key_prefix>:auth:locked:<address>` (and `:auth:failures:<address>`) lifts a lock early; with local coordination they are kept in memory, and restarting memory-core lifts every lock.
+
+The address is the connection's, or, when the connection comes from a trusted proxy, the client that proxy names in `X-Forwarded-For`. Compose trusts the Panel and Caddy (`AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy`), so a wrong key typed into the Panel counts against the browser's address, not the Panel's. **Behind another reverse proxy** (nginx, a load balancer), add its address or range, e.g. `AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy,10.0.0.0/8`; otherwise all clients share the proxy's address and one person's typos lock everyone out. Never list an address clients can connect from directly: whoever connects from it can name any client. memory-core reads every `X-Forwarded-For` header (a proxy may add its own instead of appending to the one it received) and drops a port a load balancer adds to a hop.
+
+Every refusal, every lockout and every key issued with the server API key goes to the audit log: time, address, the `X-Forwarded-For` chain, user agent, department, path, and for a user key the first 8 characters of its digest (never the key). It lives beside the departments (`audit.db` in the data directory on SQLite, `agent_memory.audit_events` on Postgres), is kept 90 days (`AGENT_MEMORY_AUDIT_RETENTION_DAYS`), and survives `department/destroy`. A department's system admins see its events on Panel → Metadata → Audit (`/v3/audit/list`); the operator sees every department's, including names that do not exist, with `/v3/internal/audit/list` and the server API key ([API](API.md#credential-audit-log)).
+
+#### Rootless Docker: every client shows one address
+
+> [!IMPORTANT]
+> **If Docker runs rootless, decide this before upgrading (or right after installing).** With rootless Docker's default port driver, memory-core sees every client, on this machine or another, as one internal address: the gateway of the rootless network, as Panel → Metadata → Audit shows it. The Compose `tls` profile does not change this, because Caddy runs inside the same Docker and sees that address too. With the default limits, 20 wrong keys from anyone in 15 minutes lock **everyone** out for 15 minutes.
+
+Do one of these:
+
+1. **Turn off the lock; keep the delays and the audit log.** Add `AGENT_MEMORY_THROTTLE_LOCK_AFTER=0` to `.env` and run `docker compose up -d`. Refusals are still answered later from the 5th on and still recorded; only refused requests wait, so other people are not slowed, and nobody is locked out.
+2. **Put a reverse proxy on the host that sees the real address.** nginx or Caddy installed on the host itself (not in Docker) listens on the address clients use, forwards `/v3/` and `/health` to `127.0.0.1:8420` and the rest to `127.0.0.1:8125`, and sets `X-Forwarded-For` to the client's address (nginx: `proxy_set_header X-Forwarded-For $remote_addr;`). Then, in `.env`:
+   - keep `BIND_ADDR=127.0.0.1`. Every connection through the published ports shows the same gateway address, so anything that reached them directly could name any client in `X-Forwarded-For`; only processes on this machine, the proxy among them, may reach them;
+   - add that gateway address to the trusted proxies, e.g. `AGENT_MEMORY_TRUSTED_PROXIES=memory-panel,caddy,172.18.0.1` (use the address the audit log shows);
+   - run `docker compose up -d`, type a wrong key into the Panel once from another machine, and check that the audit log shows that machine's address.
+
+Switching rootless Docker to the `slirp4netns` port driver also keeps client addresses, but it changes every container on the host and is slower.
+
+### Where the ports listen
+
+`install.sh` now asks who reaches memory-core and the Panel: this machine only (ports on `127.0.0.1`, the default), other machines over plain HTTP (`0.0.0.0`), or other machines over HTTPS with Caddy (profile `tls`, [TLS](ops/TLS.md)). `docker-compose.yml` reads it from `BIND_ADDR`. **`upgrade.sh` adds `BIND_ADDR=0.0.0.0` to an existing `.env`, so the ports keep listening where they did.** User keys cross the network in plain text over HTTP; to stop that, set `BIND_ADDR=127.0.0.1` and follow [TLS](ops/TLS.md), then point the clients at the `https://` address with `amem login`.
+
+### The distillation model gets its input as JSON data
+
+L1 extraction and deduplication, L2 scenes and L3 persona now give the model one JSON object, as skill extraction did in 0.4.2: stored text is a JSON string, so a conversation cannot end the data or pose as the instructions. Each built-in prompt describes the fields (`new_messages`, `session_memories`, `candidate_pool`, `new_memories`, `existing_scenes`, `changed_scenes`, `existing_persona`, …) and says everything in them is data. A custom memory prompt that mentions the old text labels (`[Previous scene]`, `[New messages to extract]`, `### 1. New memories`, `## Changed scenes`) should name the JSON fields instead; one that only says what to remember needs nothing.
+
+### Also in this release
+
+These need no action. The [CHANGELOG](../CHANGELOG.md#unreleased) has the details.
+
+- **Panel:** the session key is kept per browser tab (closing the tab signs out; a key saved by an earlier version is removed), a revoked key stops working in the Panel within 10 s, and the Panel sends a Content-Security-Policy.
+- **`amem`** does not follow redirects, so a key never goes to another address: when a server moves to HTTPS, run `amem login` with the new address. Files it creates are readable by the owner only. A query after `--` is never read as an option.
+- **Errors:** an internal or unavailable error answers with its code and the request id; the detail (paths, hosts) is only in memory-core's log.
+- An agent's owner who left its team can no longer change the agent; a binding records who set it; `init-admin` creates one first admin even when called twice at once; name filters match `%` and `_` literally; tasks whose skill proposals all expired are closed hourly.
 
 ## To 0.4.2
 
@@ -345,7 +420,7 @@ curl -sS -X POST "$CORE/v3/internal/upgrade" "${H[@]}" \
   -d '{"agent_name": "hermes", "issue_key": true}'
 ```
 
-Note `team_id`, `agent_id` and `user_key` from the answer. The key is shown only once, and it also logs you in to the Panel. Running the command again is harmless: there is nothing left to move, and the existing team and agent are reused. Each run with `issue_key` adds another key, and you can revoke spare keys in the Panel.
+Note `team_id`, `agent_id` and `user_key` from the answer. The key is shown only once, and it also logs you in to the Panel. Running the command again is harmless: there is nothing left to move, and the existing team and agent are reused. From 0.4.3, `issue_key` is refused once nothing is left to move, unless `AGENT_MEMORY_ALLOW_KEY_RECOVERY=true` is set ([To 0.4.3](#user-keys-are-stored-as-digests)); spare keys can be revoked in the Panel.
 
 You can also choose the exact target yourself. Create the team, user and agent in the Panel, then call:
 

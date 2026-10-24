@@ -359,6 +359,24 @@ async fn migrate(tx: &mut Transaction<'_, Postgres>) -> DomainResult<()> {
     if applied < 3 {
         import_profile_files(tx, &registry).await?;
     }
+    if applied < 6 {
+        // Same digest as `digest_user_key`: lowercase hex of the UTF-8 key.
+        let departments = update_departments(tx, &registry, |s| {
+            vec![(
+                "meta_user_keys",
+                format!(
+                    "UPDATE {s}.meta_user_keys
+                     SET key_value = 'sha256:' || encode(sha256(convert_to(key_value, 'UTF8')), 'hex'),
+                         doc = doc || jsonb_build_object(
+                             'key_value', 'sha256:' || encode(sha256(convert_to(key_value, 'UTF8')), 'hex'),
+                             'key_hint', right(key_value, 4))
+                     WHERE key_value NOT LIKE 'sha256:%'"
+                ),
+            )]
+        })
+        .await?;
+        info!(departments, "stored user keys as digests");
+    }
     for (version, name) in schema::MIGRATIONS.iter().filter(|(v, _)| *v > applied) {
         execute(
             tx,

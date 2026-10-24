@@ -12,7 +12,7 @@ use serde_json::Value;
 const USAGE: &str = "amem — Agent Memory client
 
 USAGE:
-  amem login --server-url URL --user-key KEY|- --team-id ID --agent-id ID [--department-id ID] [--no-verify]
+  amem login --server-url URL --user-key KEY|- --team-id ID --agent-id ID [--department-id ID] [--ca-cert PEM] [--no-verify]
   amem status                      Show configuration (key masked) and queue size
   amem recall [--json] QUERY...    Recall memories for QUERY
   amem capture --format openai --session ID < messages.json
@@ -74,6 +74,7 @@ fn login(args: &[String]) -> Result<(), String> {
         agent_id: pick("--agent-id", &existing.agent_id),
         skip_prompt_prefixes: existing.skip_prompt_prefixes.clone(),
         system_context_every: existing.system_context_every.clone(),
+        ca_cert: pick("--ca-cert", &existing.ca_cert),
     };
     if let Some(missing) = cfg.missing().first() {
         return Err(format!("missing --{}", missing.replace('_', "-")));
@@ -121,13 +122,22 @@ fn status() -> Result<(), String> {
     Ok(())
 }
 
+/// `recall [--json] [--] QUERY…`: after `--` every word is the query, so a
+/// query that starts with `-` (or is `--json`) is never read as an option.
 fn recall(args: &[String]) -> Result<(), String> {
-    let json = args.iter().any(|a| a == "--json");
-    let query: Vec<&str> = args
-        .iter()
-        .filter(|a| *a != "--json")
-        .map(String::as_str)
-        .collect();
+    let (json, query): (bool, Vec<&str>) = match args.iter().position(|a| a == "--") {
+        Some(i) => (
+            args[..i].iter().any(|a| a == "--json"),
+            args[i + 1..].iter().map(String::as_str).collect(),
+        ),
+        None => (
+            args.iter().any(|a| a == "--json"),
+            args.iter()
+                .filter(|a| *a != "--json")
+                .map(String::as_str)
+                .collect(),
+        ),
+    };
     let api = Api::new(Config::load()?, Duration::from_secs(15))?;
     let data = api
         .recall(&query.join(" "), None)

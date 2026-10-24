@@ -129,7 +129,7 @@ impl Queue {
 
     fn park(&self, file: &Path) {
         let failed = self.failed_dir();
-        let _ = std::fs::create_dir_all(&failed);
+        let _ = crate::config::create_private_dir(&failed);
         if let Some(name) = file.file_name() {
             let _ = std::fs::rename(file, failed.join(name));
         }
@@ -144,7 +144,7 @@ impl FlushLock {
     const STALE: std::time::Duration = std::time::Duration::from_secs(120);
 
     fn acquire(dir: &Path) -> Option<Self> {
-        std::fs::create_dir_all(dir).ok()?;
+        crate::config::create_private_dir(dir).ok()?;
         let path = dir.join(".flush.lock");
         for _ in 0..2 {
             match std::fs::OpenOptions::new()

@@ -6,12 +6,20 @@ export interface CoreCallContext {
   /** Browser-supplied user key, forwarded as `x-memory-user-key`. */
   readonly userKey?: string;
   readonly requestId: string;
+  /**
+   * `X-Forwarded-For` for Core: what this request arrived with plus the
+   * browser's address. Core counts failed keys per client and trusts the
+   * chain only from proxies it is configured to trust.
+   */
+  readonly forwardedFor?: string;
 }
 
 export interface CoreResponse {
   readonly status: number;
   /** Parsed JSON body (envelope for /v3, bare object for /health). */
   readonly body: unknown;
+  /** Core's `Retry-After`, e.g. on a 429 lockout. */
+  readonly retryAfter?: string;
 }
 
 export interface CoreClient {

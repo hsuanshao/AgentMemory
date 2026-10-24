@@ -173,6 +173,17 @@ pub struct ServerConfig {
     pub cors_origins: Vec<String>,
     pub max_body_bytes: usize,
     pub max_session_body_bytes: usize,
+    /// Proxies whose `X-Forwarded-For` names the client: addresses, CIDR
+    /// ranges or host names (resolved, e.g. the Compose service
+    /// `memory-panel`). Anyone else is the client themselves.
+    pub trusted_proxies: Vec<String>,
+    /// Days the credential audit log keeps an event.
+    pub audit_retention_days: u32,
+    /// How refused credentials are answered, per client address.
+    pub throttle: ThrottleConfig,
+    /// Lets `internal/upgrade` issue a user key without moving legacy data:
+    /// recovery of a lost administrator key. Off by default.
+    pub allow_key_recovery: bool,
 }
 
 impl Default for ServerConfig {
@@ -184,6 +195,34 @@ impl Default for ServerConfig {
             cors_origins: Vec::new(),
             max_body_bytes: 1024 * 1024,
             max_session_body_bytes: 32 * 1024 * 1024,
+            trusted_proxies: Vec::new(),
+            audit_retention_days: 90,
+            throttle: ThrottleConfig::default(),
+            allow_key_recovery: false,
+        }
+    }
+}
+
+/// From the `delayAfter`-th failure within `windowMinutes`, each refusal
+/// waits longer (250 ms, doubling up to 5 s); the `lockAfter`-th refuses
+/// the address outright for `lockMinutes`. 0 turns delays or locks off,
+/// e.g. where every client shows the same address.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ThrottleConfig {
+    pub window_minutes: u64,
+    pub delay_after: u32,
+    pub lock_after: u32,
+    pub lock_minutes: u64,
+}
+
+impl Default for ThrottleConfig {
+    fn default() -> Self {
+        Self {
+            window_minutes: 15,
+            delay_after: 5,
+            lock_after: 20,
+            lock_minutes: 15,
         }
     }
 }
@@ -660,6 +699,28 @@ impl Config {
                 .map(|o| o.trim().to_owned())
                 .filter(|o| !o.is_empty())
                 .collect();
+        }
+        if let Some(proxies) = env("AGENT_MEMORY_TRUSTED_PROXIES") {
+            self.server.trusted_proxies = proxies
+                .split(',')
+                .map(|p| p.trim().to_owned())
+                .filter(|p| !p.is_empty())
+                .collect();
+        }
+        if let Some(days) = env_number("AGENT_MEMORY_AUDIT_RETENTION_DAYS", &mut self.env_errors) {
+            self.server.audit_retention_days = days;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_THROTTLE_DELAY_AFTER", &mut self.env_errors) {
+            self.server.throttle.delay_after = n;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_THROTTLE_LOCK_AFTER", &mut self.env_errors) {
+            self.server.throttle.lock_after = n;
+        }
+        if let Some(n) = env_number("AGENT_MEMORY_THROTTLE_LOCK_MINUTES", &mut self.env_errors) {
+            self.server.throttle.lock_minutes = n;
+        }
+        if let Some(allow) = env("AGENT_MEMORY_ALLOW_KEY_RECOVERY") {
+            self.server.allow_key_recovery = matches!(allow.as_str(), "1" | "true" | "on" | "yes");
         }
         set(&mut self.data.base_dir, "AGENT_MEMORY_DATA_DIR");
         set(&mut self.llm.api_key, "AGENT_MEMORY_LLM_API_KEY");

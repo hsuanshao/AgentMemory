@@ -1,0 +1,16 @@
+# HTTPS in front of memory-core and the Panel (Compose profile `tls`).
+#
+# TLS_SITE is the address clients use: a domain name gets a certificate
+# from Let's Encrypt (ports 80 and 443 reachable from the internet); an IP
+# address or `localhost` gets one from Caddy's own CA, which clients must
+# trust (docs/ops/TLS.md).
+{$TLS_SITE:localhost} {
+	encode gzip
+
+	# memory-core: the API and its health check.
+	@core path /v3/* /health
+	reverse_proxy @core memory-core:8420
+
+	# Everything else is the Panel.
+	reverse_proxy memory-panel:8125
+}

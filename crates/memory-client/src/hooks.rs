@@ -26,8 +26,8 @@ pub fn log(message: &str) {
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1_000_000) {
         let _ = std::fs::remove_file(&path);
     }
-    let _ = std::fs::create_dir_all(data_dir());
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    let _ = crate::config::create_private_dir(&data_dir());
+    if let Ok(mut f) = crate::config::private_file()
         .create(true)
         .append(true)
         .open(&path)
@@ -50,11 +50,44 @@ fn api(timeout: Duration) -> Result<Api, String> {
     Api::new(Config::load()?, timeout)
 }
 
+/// The blocks recall wraps its parts in. Stored text cannot contain these
+/// tags (the server escapes them), so each one in the context is a wrapper.
+const CONTEXT_BLOCKS: [&str; 3] = ["relevant-memories", "user-persona", "scene-navigation"];
+const CLIPPED: &str = "\n…[truncated]";
+
+/// At most `max` characters of `text`. A cut never leaves a recall block
+/// open: whatever follows in the host's prompt must not read as part of the
+/// recalled data.
 fn clip(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        None => text.to_owned(),
-        Some((cut, _)) => text[..cut].to_owned(),
+    if text.chars().count() <= max {
+        return text.to_owned();
     }
+    let closers = |kept: &str| -> String {
+        CONTEXT_BLOCKS
+            .iter()
+            .filter(|tag| {
+                kept.matches(&format!("<{tag}>")).count()
+                    > kept.matches(&format!("</{tag}>")).count()
+            })
+            .map(|tag| format!("\n</{tag}>"))
+            .collect()
+    };
+    // Room for the marker and every closing tag, whichever blocks are open.
+    let reserve =
+        CLIPPED.chars().count() + CONTEXT_BLOCKS.iter().map(|t| t.len() + 4).sum::<usize>();
+    let cut = text
+        .char_indices()
+        .nth(max.saturating_sub(reserve))
+        .map_or(text.len(), |(i, _)| i);
+    let mut kept = text[..cut].to_owned();
+    // Never end inside a tag.
+    if let Some(open) = kept.rfind('<').filter(|&i| !kept[i..].contains('>')) {
+        kept.truncate(open);
+    }
+    let close = closers(&kept);
+    kept.push_str(CLIPPED);
+    kept.push_str(&close);
+    kept
 }
 
 /// Host session ids become file names.
@@ -145,16 +178,13 @@ impl CursorLock {
 
     fn open(path: &Path) -> std::io::Result<std::fs::File> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            crate::config::create_private_dir(dir)?;
         }
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).truncate(false).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        options.open(path)
+        crate::config::private_file()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
     }
 
     /// How long a hook waits for the lock. A holder only reads and writes
@@ -350,11 +380,11 @@ fn prompt_context(state: &mut Value, memories: &str, system: &str, every: u64) -
     let send_system = system_context_due(state, system, every);
     let full = compose_context(memories, system, send_system);
     let context = clip(&full, MAX_CONTEXT_CHARS);
-    if send_system && context.len() < full.len() {
+    if send_system && context != full {
         // The host got a cut persona: try again next prompt.
         forget_system_context(state);
     }
-    context.to_owned()
+    context
 }
 
 /// The memories, then the fixed part when it is due.
@@ -570,6 +600,33 @@ pub fn codex_stop() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_clipped_context_closes_its_open_blocks() {
+        let memories = format!(
+            "<relevant-memories>\n{}\n</relevant-memories>",
+            "m".repeat(200)
+        );
+        let persona = format!("<user-persona>\n{}\n</user-persona>", "p".repeat(200));
+        let full = format!("{memories}\n\n{persona}");
+        assert_eq!(clip(&full, 1000), full, "short enough: unchanged");
+
+        for max in [150, 300, 330, 420] {
+            let out = clip(&full, max);
+            assert!(out.chars().count() <= max, "{max}: {}", out.chars().count());
+            for tag in CONTEXT_BLOCKS {
+                assert_eq!(
+                    out.matches(&format!("<{tag}>")).count(),
+                    out.matches(&format!("</{tag}>")).count(),
+                    "{max}: {out}"
+                );
+            }
+            assert!(out.contains("[truncated]"));
+        }
+        // Cut inside the second opening tag: it is dropped, not left half-written.
+        let out = clip(&full, memories.len() + 2 + 5 + 80);
+        assert!(!out.contains("<user-pe\n"), "{out}");
+    }
 
     /// Times a writer gave up on the lock, for failure messages. Global:
     /// the held-lock test gives up once on purpose.

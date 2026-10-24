@@ -1,5 +1,6 @@
 import type { UserPublic } from "../../api/types";
 import { useStore } from "../../hooks/useStore";
+import { remove } from "../../lib/storage";
 import { createPersistedStore } from "../../lib/store";
 
 export interface Session {
@@ -15,7 +16,13 @@ function isSession(v: unknown): v is Session | null {
   return typeof s.userKey === "string" && typeof s.user === "object" && s.user !== null && typeof s.user.user_id === "string";
 }
 
-export const sessionStore = createPersistedStore<Session | null>("memory-panel.session", null, isSession);
+const SESSION_KEY = "memory-panel.session";
+
+// Before 0.4.3 the key was kept in localStorage, where it outlived the tab.
+remove(SESSION_KEY, "local");
+
+/** The user key stays in this tab: closing it signs out. */
+export const sessionStore = createPersistedStore<Session | null>(SESSION_KEY, null, isSession, "session");
 
 export function isSystemAdmin(session: Session | null | undefined): boolean {
   return session?.user.user_type === "system_admin";

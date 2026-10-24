@@ -5,6 +5,7 @@ pub mod cli_llm;
 pub mod fs;
 pub mod lifecycle;
 pub mod local_lock;
+pub mod local_throttle;
 pub mod openai;
 pub mod postgres;
 pub mod profile_versions;

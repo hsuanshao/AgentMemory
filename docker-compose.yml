@@ -7,6 +7,10 @@
 # PostgreSQL + pgvector storage (profile `postgres`, off by default):
 #   POSTGRES_PASSWORD=… AGENT_MEMORY_STORAGE_BACKEND=postgres \
 #     docker compose --profile postgres up -d --build
+#
+# HTTPS with Caddy (profile `tls`, off by default): set TLS_SITE (a domain
+# or IP address) and BIND_ADDR=127.0.0.1, then
+#   docker compose --profile tls up -d
 services:
   memory-core:
     build:
@@ -52,6 +56,14 @@ services:
       # sqlite (default) or postgres (needs the `postgres` profile).
       AGENT_MEMORY_STORAGE_BACKEND: ${AGENT_MEMORY_STORAGE_BACKEND:-sqlite}
       AGENT_MEMORY_POSTGRES_URL: ${AGENT_MEMORY_POSTGRES_URL:-postgres://${POSTGRES_USER:-memory}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-memory}}
+      # Refused keys are counted per client address; these proxies' (and
+      # only these) X-Forwarded-For names the client.
+      AGENT_MEMORY_TRUSTED_PROXIES: ${AGENT_MEMORY_TRUSTED_PROXIES:-memory-panel,caddy}
+      AGENT_MEMORY_AUDIT_RETENTION_DAYS: ${AGENT_MEMORY_AUDIT_RETENTION_DAYS:-}
+      # Refused-key limits (0 turns delays / locks off); empty keeps 5 / 20 / 15.
+      AGENT_MEMORY_THROTTLE_DELAY_AFTER: ${AGENT_MEMORY_THROTTLE_DELAY_AFTER:-}
+      AGENT_MEMORY_THROTTLE_LOCK_AFTER: ${AGENT_MEMORY_THROTTLE_LOCK_AFTER:-}
+      AGENT_MEMORY_THROTTLE_LOCK_MINUTES: ${AGENT_MEMORY_THROTTLE_LOCK_MINUTES:-}
     depends_on:
       # Each dependency only applies when its profile is enabled.
       postgres:
@@ -64,8 +76,10 @@ services:
     # host.docker.internal (Linux needs the explicit mapping).
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # BIND_ADDR=127.0.0.1 keeps the ports on this machine (install.sh's
+    # default); an older .env without it keeps listening on every network.
     ports:
-      - "${CORE_PORT:-8420}:8420"
+      - "${BIND_ADDR:-0.0.0.0}:${CORE_PORT:-8420}:8420"
     volumes:
       - memory-core-data:/data
       # Project the CLI runs in (read by the tool as its working directory).
@@ -84,10 +98,29 @@ services:
       CORE_URL: http://memory-core:8420
       CORE_DEPARTMENT_ID: ${CORE_DEPARTMENT_ID:-default}
     ports:
-      - "${PANEL_PORT:-8125}:8125"
+      - "${BIND_ADDR:-0.0.0.0}:${PANEL_PORT:-8125}:8125"
     depends_on:
       memory-core:
         condition: service_healthy
+    restart: unless-stopped
+
+  # HTTPS for clients on other machines: /v3 and /health go to memory-core,
+  # the rest to the Panel. Opt-in: `docker compose --profile tls up -d`.
+  caddy:
+    image: caddy:2.10.2
+    profiles: [tls]
+    environment:
+      TLS_SITE: ${TLS_SITE:-localhost}
+    ports:
+      - "${TLS_HTTP_PORT:-80}:80"
+      - "${TLS_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - memory-core
+      - memory-panel
     restart: unless-stopped
 
   # Shared pipeline state, job queue and locks for several memory-core
@@ -127,6 +160,8 @@ volumes:
   memory-core-data:
   redis-data:
   postgres-data:
+  caddy-data:
+  caddy-config:
   claude-config:
   antigravity-config:
   codex-config:

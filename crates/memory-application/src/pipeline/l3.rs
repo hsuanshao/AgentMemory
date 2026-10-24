@@ -57,20 +57,28 @@ impl PersonaGenerator {
         }
 
         let system_prompt = prompts::compose(Layer::L3, strategy);
-        let mut input = format!(
-            "Update time: {}\nMode: {}\nTrigger: {trigger}\nScenes: {} total, {} changed\n\n## Changed scenes\n",
-            self.clock.now().to_rfc3339(),
-            if existing.is_some() { "iterative update" } else { "first generation" },
-            scenes.len(),
-            changed.len()
+        let changed_scenes: Vec<serde_json::Value> = changed
+            .iter()
+            .map(|s| {
+                let (_, body) = parse_scene(&s.file.content);
+                serde_json::json!({"file": s.relative_path, "body": body})
+            })
+            .collect();
+        let input = prompts::data_input(
+            &serde_json::json!({
+                "update_time": self.clock.now().to_rfc3339(),
+                "mode": if existing.is_some() { "iterative update" } else { "first generation" },
+                "trigger": trigger,
+                "scene_count": scenes.len(),
+                "changed_scenes": changed_scenes,
+                "existing_persona": existing,
+            }),
+            if existing.is_some() {
+                "Keep what is still true in existing_persona, integrate the changed scenes, stay within the limit."
+            } else {
+                "Write the profile from the changed scenes, within the limit."
+            },
         );
-        for s in &changed {
-            let (_, body) = parse_scene(&s.file.content);
-            input.push_str(&format!("### {}\n{}\n\n", s.relative_path, body));
-        }
-        if let Some(p) = &existing {
-            input.push_str(&format!("## Existing persona\n{p}\n\nKeep what is still true, integrate the changes, stay within the limit.\n"));
-        }
 
         let reply = self
             .llm

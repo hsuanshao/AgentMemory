@@ -12,13 +12,16 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use memory_application::admin::DepartmentDirectory;
+use memory_application::audit::CredentialGuard;
 use memory_application::memory::backfill::EmbeddingBackfill;
 use memory_application::pipeline::service::{JobFailure, PipelineService};
 use memory_application::ports::coordination::KeyLock;
+use memory_application::ports::memory::AtomRepository;
 use memory_application::ports::pipeline::{
     failure_is_deterministic, DeadLetter, DeadLetterAction, DeadLetterFilter, DeadLetterPolicy,
     JobQueue, PipelineJob, QueueStats,
 };
+use memory_application::skill::extraction::SkillExtractionService;
 use memory_domain::error::{DomainError, DomainResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Semaphore};
@@ -642,6 +645,48 @@ pub fn spawn_embedding_backfill(
                 ),
                 Ok(_) => {}
                 Err(err) => warn!(error = %err, "embedding backfill failed"),
+            }
+        }
+    })
+}
+
+/// Hourly, closes skill-extraction tasks whose proposals all expired.
+pub fn spawn_proposal_sweeper(
+    extraction: Arc<SkillExtractionService>,
+    departments: Arc<dyn AtomRepository>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+        loop {
+            ticker.tick().await;
+            let list = match departments.departments().await {
+                Ok(list) => list,
+                Err(err) => {
+                    warn!(error = %err, "proposal sweep: cannot list departments");
+                    continue;
+                }
+            };
+            for department in list {
+                match extraction.sweep_expired(&department).await {
+                    Ok(0) => {}
+                    Ok(n) => info!(%department, closed = n, "expired skill proposals closed"),
+                    Err(err) => warn!(%department, error = %err, "proposal sweep failed"),
+                }
+            }
+        }
+    })
+}
+
+/// Hourly, drops audit events past their retention period.
+pub fn spawn_audit_pruner(guard: Arc<CredentialGuard>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(3600));
+        loop {
+            ticker.tick().await;
+            match guard.prune().await {
+                Ok(0) => {}
+                Ok(n) => info!(removed = n, "audit log pruned"),
+                Err(err) => warn!(error = %err, "audit log pruning failed"),
             }
         }
     })

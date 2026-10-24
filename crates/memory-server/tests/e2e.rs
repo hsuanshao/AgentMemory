@@ -58,9 +58,9 @@ async fn fake_llm(Json(req): Json<Value>) -> Json<Value> {
         "[]"
     } else if system.starts_with("You are a Memory Consolidation") {
         let input = req["messages"][1]["content"].as_str().unwrap_or_default();
-        if input.contains("### Legacy-Release.md") {
+        if input.contains(r#""file":"Legacy-Release.md""#) {
             L2_MERGE_REPLY
-        } else if input.contains("### Race-Seed.md") {
+        } else if input.contains(r#""file":"Race-Seed.md""#) {
             let race = RACE.lock().unwrap().take();
             if let Some((base, department, key, team, agent, writes)) = race {
                 let http = reqwest::Client::new();
@@ -217,6 +217,9 @@ async fn start_with(configure: impl FnOnce(&mut Config)) -> (tempfile::TempDir, 
     let mut config = Config::default();
     config.data.base_dir = data.path().to_string_lossy().into_owned();
     config.server.api_key = Some("test-key".into());
+    // Tests refuse credentials on purpose; only the throttling test throttles.
+    config.server.throttle.delay_after = 10_000;
+    config.server.throttle.lock_after = 10_000;
     configure(&mut config);
     config.memory.pipeline.l2_delay_after_l1_seconds = 0;
     config.memory.pipeline.l2_min_interval_seconds = 0;
@@ -2021,6 +2024,7 @@ async fn the_amem_client_redacts_queues_and_delivers() {
         agent_id: client.agent_id.clone(),
         skip_prompt_prefixes: String::new(),
         system_context_every: String::new(),
+        ca_cert: String::new(),
     };
     let msg = |role: &'static str, content: &str| Msg {
         role,
@@ -2561,6 +2565,9 @@ async fn a_job_failing_after_its_department_was_destroyed_is_dropped() {
     let mut config = Config::default();
     config.data.base_dir = data_b.path().to_string_lossy().into_owned();
     config.server.api_key = Some("test-key".into());
+    // Tests refuse credentials on purpose; only the throttling test throttles.
+    config.server.throttle.delay_after = 10_000;
+    config.server.throttle.lock_after = 10_000;
     configure(&mut config);
     config.worker.scan_interval_ms = 50;
     let app = wiring::build(&config).await.unwrap();
@@ -3240,10 +3247,16 @@ async fn superseding_l1(Json(req): Json<Value>) -> Json<Value> {
     }
     let input = req["messages"][1]["content"].as_str().unwrap_or_default();
     let reply = if input.contains("The pilot is complete") {
-        let listed = input
-            .split_once("record_id=")
-            .and_then(|(_, rest)| rest.split_whitespace().next())
+        // The input's JSON object is the line after its heading.
+        let data: Value = input
+            .lines()
+            .nth(1)
+            .and_then(|line| serde_json::from_str(line).ok())
             .unwrap_or_default();
+        let listed = data["session_memories"][0]["record_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         json!([{"scene_name": "I (the AI) am running a pilot with the user", "memories": [
             {"content": "The pilot was completed on Tuesday", "type": "episodic", "priority": 85,
              "source_message_ids": [], "supersedes": [listed]},
@@ -3330,4 +3343,283 @@ async fn a_later_turn_supersedes_an_out_of_date_atom_of_the_session() {
     // An id the model was not shown is ignored: that memory is stored as new.
     assert!(atoms.iter().any(|a| a["id"] != in_progress.as_str()
         && a["content"] == "The team adopted kebab-case file names"));
+}
+
+/// Refused credentials are counted per client address: from a trusted proxy
+/// the address is the one it forwards. `auth/verify` counts too; the last
+/// allowed failure locks the address out (429), not its neighbours. Every
+/// refusal is in the audit log: a department's own events for its system
+/// admins, every event for the operator. A key is issued by
+/// `internal/upgrade` only with legacy data to move.
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_credentials_are_throttled_and_audited() {
+    let base_url = spawn_fake_llm().await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.server.throttle.lock_after = 4;
+        config.server.trusted_proxies = vec!["127.0.0.1".into()];
+    })
+    .await;
+    let send = |path: &str, key: Option<&str>, forwarded: Option<&str>, body: Value| {
+        let mut req = client
+            .http
+            .post(format!("{}{path}", client.base))
+            .header("x-memory-department-id", &client.department);
+        if let Some(key) = key {
+            req = req.header("x-memory-user-key", key);
+        }
+        if let Some(ip) = forwarded {
+            req = req.header("x-forwarded-for", ip);
+        }
+        req.json(&body).send()
+    };
+    let far = Some("203.0.113.9");
+    // Built at runtime: tracked files hold nothing shaped like a key.
+    let wrong = &format!("sk-mem-{}", "0".repeat(40));
+
+    // No legacy data: the server API key alone mints no admin key.
+    let issued = client
+        .http
+        .post(format!("{}/v3/internal/upgrade", client.base))
+        .bearer_auth("test-key")
+        .header("x-memory-department-id", &client.department)
+        .json(&json!({"issue_key": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(issued.status(), 403);
+
+    // A member is refused the audit log (403 is not a failed credential).
+    let member = send("/v3/audit/list", Some(&client.member_key), None, json!({}));
+    assert_eq!(member.await.unwrap().status(), 403);
+
+    for _ in 0..2 {
+        let r = send("/v3/stats/overview", Some(wrong), far, json!({}));
+        assert_eq!(r.await.unwrap().status(), 401);
+    }
+    let verify = send(
+        "/v3/meta/auth/verify",
+        None,
+        far,
+        json!({"user_key": wrong}),
+    );
+    let verify: Value = verify.await.unwrap().json().await.unwrap();
+    assert_eq!(verify["data"]["valid"], false);
+    let fourth = send("/v3/recall", Some(wrong), far, json!({"query": "x"}));
+    assert_eq!(fourth.await.unwrap().status(), 401);
+
+    // Locked out, even with a good key; the proxy's other clients are not.
+    let locked = send(
+        "/v3/stats/overview",
+        Some(&client.admin_key),
+        far,
+        json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(locked.status(), 429);
+    assert!(locked.headers().contains_key("retry-after"));
+    let near = send(
+        "/v3/stats/overview",
+        Some(&client.admin_key),
+        None,
+        json!({}),
+    );
+    assert_eq!(near.await.unwrap().status(), 200);
+
+    let listed: Value = send("/v3/audit/list", Some(&client.admin_key), None, json!({}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = listed["data"]["items"].as_array().unwrap();
+    // Newest first; events of the same millisecond in any order.
+    let mut kinds: Vec<&str> = items.iter().map(|e| e["kind"].as_str().unwrap()).collect();
+    kinds.sort_unstable();
+    assert_eq!(
+        kinds,
+        [
+            "credential_rejected",
+            "credential_rejected",
+            "credential_rejected",
+            "credential_rejected",
+            "key_issued",
+            "source_locked"
+        ],
+        "{listed}"
+    );
+    assert_eq!(items.last().unwrap()["kind"], "key_issued", "init-admin");
+    let rejected = items
+        .iter()
+        .find(|e| e["path"] == "/v3/recall")
+        .expect("the fourth failure");
+    assert_eq!(rejected["source"], "203.0.113.9");
+    let credential = rejected["credential"].as_str().unwrap();
+    assert!(credential.starts_with("user key sha256:"), "{credential}");
+    assert!(!listed.to_string().contains(wrong), "never the key itself");
+
+    // The operator filters any department's events.
+    let operator = client
+        .http
+        .post(format!("{}/v3/internal/audit/list", client.base))
+        .bearer_auth("test-key")
+        .json(&json!({"department_id": client.department, "kind": "source_locked"}))
+        .send()
+        .await
+        .unwrap();
+    let operator: Value = operator.json().await.unwrap();
+    assert_eq!(
+        operator["data"]["items"].as_array().unwrap().len(),
+        1,
+        "{operator}"
+    );
+}
+
+/// A new department gets exactly one first administrator, however many
+/// `init-admin` calls arrive at once (they are serialised per department;
+/// the window this closes is too narrow to hit reliably from a test), and
+/// a chosen key must be as strong as a generated one.
+#[tokio::test(flavor = "multi_thread")]
+async fn init_admin_creates_one_administrator_with_a_strong_key() {
+    let (_data, client) = start().await;
+    let department = format!("{}-race", client.department);
+    let init = |username: String, key: Option<&'static str>| {
+        let mut body = json!({ "username": username });
+        if let Some(key) = key {
+            body["user_key"] = json!(key);
+        }
+        client
+            .http
+            .post(format!("{}/v3/internal/meta/user/init-admin", client.base))
+            .bearer_auth("test-key")
+            .header("x-memory-department-id", &department)
+            .json(&body)
+            .send()
+    };
+    let weak = init("weak".into(), Some("sk-mem-short")).await.unwrap();
+    assert_eq!(weak.status(), 400);
+
+    let mut calls = tokio::task::JoinSet::new();
+    for i in 0..8 {
+        calls.spawn(init(format!("admin{i}"), None));
+    }
+    let mut statuses = Vec::new();
+    while let Some(done) = calls.join_next().await {
+        statuses.push(done.unwrap().unwrap().status().as_u16());
+    }
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 200).count(),
+        1,
+        "{statuses:?}"
+    );
+    assert!(
+        statuses.iter().all(|s| matches!(s, 200 | 409)),
+        "{statuses:?}"
+    );
+}
+
+/// A binding records who set it, whatever the request says; an agent's
+/// owner who left its team can no longer change the agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_owners_manage_their_agents_only_while_in_the_team() {
+    let (_data, client) = start().await;
+    let (owner, key) = client.create_member("owner1").await;
+    let team = &client.team_id;
+    let agent = client
+        .call_as(
+            "/v3/meta/agent/create",
+            &key,
+            json!({"team_id": team, "owner_user_id": owner, "name": "mine"}),
+        )
+        .await;
+    let agent_id = agent["data"]["agent_id"].as_str().unwrap().to_owned();
+    let asset = client
+        .call_as(
+            "/v3/meta/asset/create",
+            &key,
+            json!({"asset_id": "ast-e2e-binding", "team_id": team, "asset_type": "skill", "name": "a",
+                   "owner_user_id": owner, "source_type": "manual", "visibility": "team"}),
+        )
+        .await;
+    assert_eq!(asset["code"], 0, "{asset}");
+    let set = |agent_id: String| {
+        client.call_as(
+            "/v3/meta/agent-fixed-asset/set",
+            &key,
+            json!({"agent_id": agent_id, "bindings": [
+                {"asset_id": "ast-e2e-binding", "asset_type": "skill", "created_by": client.user_id}]}),
+        )
+    };
+    let bound = set(agent_id.clone()).await;
+    assert_eq!(bound["data"][0]["created_by"], owner.as_str(), "{bound}");
+
+    let removed = client
+        .call_as(
+            "/v3/meta/team-member/remove",
+            &client.admin_key,
+            json!({"team_id": team, "user_id": owner}),
+        )
+        .await;
+    assert_eq!(removed["code"], 0, "{removed}");
+    assert_eq!(set(agent_id.clone()).await["code"], 403);
+    let renamed = client
+        .call_as(
+            "/v3/meta/agent/update",
+            &key,
+            json!({"agent_id": agent_id, "name": "still mine?"}),
+        )
+        .await;
+    assert_eq!(renamed["code"], 403, "{renamed}");
+}
+
+/// A task whose proposals all went undecided past the TTL is closed by the
+/// sweeper: it leaves the review list, and a second sweep finds nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sweeper_closes_expired_proposals() {
+    let (_data, client) = start().await;
+    let tool_calls: Vec<Value> = (0..10)
+        .flat_map(|i| {
+            [
+                json!({"role": "tool_call", "content": format!("run step {i}"), "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+                json!({"role": "tool_result", "content": "ok", "tool_name": "shell", "tool_call_id": format!("c{i}")}),
+            ]
+        })
+        .collect();
+    client
+        .call(
+            "/v3/skill/conversation/add",
+            client.scoped(json!({"session_id": "s-sweep", "messages": tool_calls})),
+        )
+        .await;
+    wait_for_proposal(&client).await;
+    let extraction = &client.state.services.skill_extraction;
+    let department =
+        memory_domain::scope::SegmentId::parse("department", &client.department).unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    assert_eq!(
+        extraction.sweep_expired_at(&department, now).await.unwrap(),
+        0,
+        "not yet"
+    );
+    let later = now + 31 * 86_400_000;
+    assert_eq!(
+        extraction
+            .sweep_expired_at(&department, later)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        extraction
+            .sweep_expired_at(&department, later)
+            .await
+            .unwrap(),
+        0
+    );
+    let listed = client
+        .call("/v3/skill/proposal/list", client.scoped(json!({})))
+        .await;
+    assert_eq!(listed["data"]["items"], json!([]), "{listed}");
 }

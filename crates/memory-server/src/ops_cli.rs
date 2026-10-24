@@ -86,8 +86,10 @@ impl Core {
             h => h.to_owned(),
         };
         Ok(Self {
+            // Not following redirects keeps the server API key here.
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             base: format!("http://{host}:{}", config.server.port),
             api_key: config.server.api_key,

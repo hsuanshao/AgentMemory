@@ -1,6 +1,7 @@
 //! DDL. Hot query fields are real columns; metadata entities additionally
 //! keep their full serialized form in `doc` so the mapping stays in serde.
 
+use memory_domain::meta::{digest_user_key, key_hint};
 use memory_domain::profile::{import_legacy_files, LegacyProfileFile};
 use rusqlite::{params, Connection};
 
@@ -191,7 +192,10 @@ CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_
 /// 5. Administrators' redaction rules (`meta_redaction_rules`). Nothing to
 ///    convert, but an older memory-server must not run on it: it would store
 ///    what those rules hide.
-pub const SCHEMA_VERSION: i64 = 5;
+/// 6. User keys are stored as SHA-256 digests (`sha256:<hex>`) with their
+///    last four characters (`key_hint`); existing keys are converted in
+///    place and keep working.
+pub const SCHEMA_VERSION: i64 = 6;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -246,7 +250,31 @@ pub fn migrate_department(conn: &Connection) -> rusqlite::Result<()> {
     if user_version(conn)? < 3 {
         import_profile_files(conn)?;
     }
+    if user_version(conn)? < 6 {
+        digest_user_keys(conn)?;
+    }
     conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
+}
+
+/// Migration 6: every stored user key becomes its digest. Rows already
+/// converted are left alone, so a repeated run changes nothing.
+fn digest_user_keys(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let plain: Vec<(String, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT key_id, key_value FROM meta_user_keys WHERE key_value NOT LIKE 'sha256:%'",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for (key_id, value) in &plain {
+        let digest = digest_user_key(value);
+        tx.execute(
+            "UPDATE meta_user_keys SET key_value = ?1, doc = json_set(doc, '$.key_value', ?1, '$.key_hint', ?2) WHERE key_id = ?3",
+            params![digest, key_hint(value), key_id],
+        )?;
+    }
+    tx.commit()
 }
 
 /// Migration 3: every stored file version becomes a scene or persona
@@ -438,6 +466,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(indexed, 1);
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn department_db_from_0_4_2_stores_key_digests() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(DEPARTMENT_SCHEMA).unwrap();
+        conn.execute_batch(
+            r#"INSERT INTO meta_user_keys VALUES ('k-1', 'u-1', 'sk-mem-plain0001', '', '{"key_id":"k-1","user_id":"u-1","key_value":"sk-mem-plain0001"}');
+             PRAGMA user_version = 5;"#,
+        )
+        .unwrap();
+
+        migrate_department(&conn).unwrap();
+        conn.execute_batch("PRAGMA user_version = 5").unwrap();
+        migrate_department(&conn).unwrap();
+
+        let (value, doc_value, hint): (String, String, String) = conn
+            .query_row(
+                "SELECT key_value, json_extract(doc, '$.key_value'), json_extract(doc, '$.key_hint') FROM meta_user_keys",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(value, digest_user_key("sk-mem-plain0001"));
+        assert_eq!(doc_value, value);
+        assert_eq!(hint, "0001");
         assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
     }
 

@@ -283,6 +283,7 @@ fn key(id: &str, user: &str, value: &str, default: bool, created: &str) -> UserK
         key_id: id.into(),
         user_id: user.into(),
         key_value: value.into(),
+        key_hint: None,
         name: None,
         status: KeyStatus::Active,
         is_default: default,
@@ -713,5 +714,113 @@ async fn redaction_rules_are_kept_and_replaced_by_id() {
         return;
     };
     redaction_rules::exercise(&PostgresMetaStore::new(Arc::clone(&db)), &department).await;
+    teardown(&db, &department).await;
+}
+
+/// The audit log lives in the registry: filtered by department and kind,
+/// newest first, pruned by age, and kept when the department is destroyed.
+#[tokio::test]
+async fn audit_events_are_kept_beside_the_registry() {
+    use memory_application::common::Page;
+    use memory_application::ports::audit::{AuditEvent, AuditFilter, AuditKind, AuditLog};
+    use memory_infrastructure::postgres::audit_store::PostgresAuditLog;
+
+    let Some((db, department)) = setup().await else {
+        return;
+    };
+    let log = PostgresAuditLog::new(Arc::clone(&db));
+    let event = |id: &str, at_ms: i64, kind: AuditKind, dept: Option<&str>| AuditEvent {
+        event_id: format!("{id}-{}", department.as_str()),
+        at_ms,
+        kind,
+        department: dept.map(str::to_owned),
+        source: "203.0.113.9".into(),
+        forwarded_for: None,
+        user_agent: Some("curl/8".into()),
+        path: "/v3/recall".into(),
+        credential: Some("user key sha256:00000000".into()),
+        request_id: "req-1".into(),
+        detail: None,
+    };
+    let mine = Some(department.as_str());
+    log.record(&event("a", 1_000, AuditKind::CredentialRejected, mine))
+        .await
+        .unwrap();
+    log.record(&event("b", 2_000, AuditKind::SourceLocked, mine))
+        .await
+        .unwrap();
+    log.record(&event(
+        "c",
+        3_000,
+        AuditKind::CredentialRejected,
+        Some("elsewhere-x"),
+    ))
+    .await
+    .unwrap();
+    teardown(&db, &department).await;
+
+    let page = Page {
+        limit: 10,
+        offset: 0,
+    };
+    let filter = AuditFilter {
+        department: mine.map(str::to_owned),
+        ..Default::default()
+    };
+    let listed = log.list(&filter, page).await.unwrap();
+    assert_eq!(
+        listed.iter().map(|e| e.at_ms).collect::<Vec<_>>(),
+        [2_000, 1_000]
+    );
+    let locked = AuditFilter {
+        kind: Some(AuditKind::SourceLocked),
+        ..filter.clone()
+    };
+    assert_eq!(log.list(&locked, page).await.unwrap().len(), 1);
+    // Old test rows of earlier runs go too: everything before 2,500 ms.
+    assert!(log.prune(2_500).await.unwrap() >= 2);
+    assert!(log.list(&filter, page).await.unwrap().is_empty());
+    let rest = AuditFilter {
+        department: Some("elsewhere-x".into()),
+        ..Default::default()
+    };
+    assert!(!log.list(&rest, page).await.unwrap().is_empty());
+    log.prune(3_500).await.unwrap();
+}
+
+/// A name filter matches the characters typed: `_` and `%` are not
+/// wildcards.
+#[tokio::test]
+async fn name_filters_match_literally() {
+    let Some((db, department)) = setup().await else {
+        return;
+    };
+    let store = PostgresMetaStore::new(Arc::clone(&db));
+    for (id, name) in [("usr-1", "a_b"), ("usr-2", "axb"), ("usr-3", "100%")] {
+        let k = key(&format!("k-{id}"), id, &format!("sk-mem-{id}"), true, "1");
+        store
+            .create_user(&department, &user(id, name), &k)
+            .await
+            .unwrap();
+    }
+    let page = memory_application::common::Page {
+        limit: 10,
+        offset: 0,
+    };
+    let names = |filter: &str| {
+        let filter = memory_application::ports::meta::UserFilter {
+            username: Some(filter.to_owned()),
+            ..Default::default()
+        };
+        let store = &store;
+        let department = &department;
+        async move {
+            let (users, _) = store.list_users(department, &filter, page).await.unwrap();
+            users.into_iter().map(|u| u.username).collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(names("a_b").await, ["a_b"]);
+    assert_eq!(names("0%").await, ["100%"]);
+    assert_eq!(names("%").await, ["100%"]);
     teardown(&db, &department).await;
 }

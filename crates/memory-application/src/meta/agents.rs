@@ -178,10 +178,13 @@ impl MetaService {
         agent_id: &str,
     ) -> DomainResult<Agent> {
         let agent = self.get_agent(department, agent_id).await?;
-        if agent.owner_user_id != caller.user_id && !caller.is_system_admin {
-            return Err(denied("only the agent owner can do this"));
+        if caller.is_system_admin || self.is_active_owner(department, &agent, caller).await? {
+            Ok(agent)
+        } else {
+            Err(denied(
+                "only the agent's owner, as a member of its team, can do this",
+            ))
         }
-        Ok(agent)
     }
 
     pub async fn update_agent(

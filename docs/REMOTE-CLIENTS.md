@@ -60,17 +60,9 @@ Every memory call names a **team** and an **agent**:
 
 Install as described in the [README](../README.md#quick-start) (`./install.sh`). For remote clients, the core API must be reachable from the client machines.
 
-1. **Put TLS in front of port 8420.** User keys travel in a header; do not send them over plain HTTP outside a trusted network. A minimal [Caddy](https://caddyserver.com/) site:
+1. **Put TLS in front of port 8420.** User keys travel in a header; do not send them over plain HTTP outside a trusted network. The Compose profile `tls` runs Caddy for this (`BIND_ADDR=127.0.0.1`, `TLS_SITE=memory.example.com`, `COMPOSE_PROFILES=tls`; [TLS](ops/TLS.md), which also covers an IP address and other reverse proxies). Alternatively keep the server on a private network (VPN, Tailscale, WireGuard) and use its private address.
 
-   ```caddyfile
-   memory.example.com {
-       reverse_proxy 127.0.0.1:8420
-   }
-   ```
-
-   Alternatively keep the server on a private network (VPN, Tailscale, WireGuard) and use its private address.
-
-2. **Bind address.** With `docker compose` the port is already published. Running the binary directly, set `AGENT_MEMORY_HOST=0.0.0.0`; the server refuses non-loopback binds without `AGENT_MEMORY_API_KEY`.
+2. **Bind address.** With `docker compose`, `BIND_ADDR` in `.env` decides where ports 8420 and 8125 listen: `127.0.0.1` (this machine only, the default of new installs; other machines come in through the `tls` profile) or `0.0.0.0` (every network). Running the binary directly, set `AGENT_MEMORY_HOST=0.0.0.0`; the server refuses non-loopback binds without `AGENT_MEMORY_API_KEY`.
 
 3. **Keep the Panel private.** Only admins need it (port 8125). Publish it on an internal address or behind your SSO/VPN rather than the open internet.
 
@@ -275,6 +267,9 @@ To remove the client from a machine later, run `./uninstall.sh client` from a ch
 | Symptom | Cause / fix |
 | --- | --- |
 | `amem login` → `HTTP 401` | Wrong or revoked user key. Issue a new key in the Panel (Users → Keys). |
+| `HTTP 429 too_many_failures` | Too many refused keys from this address (or from others behind the same NAT); it is locked out for up to 15 minutes. Fix the key, then wait for `Retry-After`. An admin sees the attempts on Panel → Metadata → Audit. |
+| `the server redirects to https://…` | The server moved to HTTPS. `amem` does not follow redirects (the key would go along); run `amem login --server-url https://…` again. |
+| `amem login` → certificate error | The server's certificate comes from a private CA (Caddy's own, for an IP address). Log in with `--ca-cert caddy-root.crt` ([TLS §3](ops/TLS.md#3-trust-caddys-ca-ip-address-or-internal-name)). |
 | `HTTP 403 agent does not belong to the team` | `agent_id` is from another team. Check the Agents table of your team. |
 | `HTTP 403 not an active member of the team` | Ask an admin to assign you to the team. |
 | `HTTP 400 team_id is required` | A client without team/agent settings. Run `amem login` or fill in the plugin settings. |

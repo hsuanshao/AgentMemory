@@ -619,6 +619,51 @@ impl SkillExtractionService {
         Ok(out)
     }
 
+    /// Closes the department's tasks whose proposals all went undecided past
+    /// the TTL, so they stop being read on every list. Each is re-read and
+    /// written under its lock, like `decide`. Returns how many closed.
+    pub async fn sweep_expired(&self, department: &DepartmentId) -> DomainResult<usize> {
+        self.sweep_expired_at(department, self.clock.now().timestamp_millis())
+            .await
+    }
+
+    /// [`Self::sweep_expired`] as of `now` (ms).
+    pub async fn sweep_expired_at(
+        &self,
+        department: &DepartmentId,
+        now: i64,
+    ) -> DomainResult<usize> {
+        let mut closed = 0;
+        for task in self.buffers.list_tasks(department, PROPOSED).await? {
+            let mut proposals = proposals_of(&task)?;
+            if !self.expire(&mut proposals, task.archived_at_ms, now) {
+                continue;
+            }
+            let _guard = self
+                .locks
+                .lock(&format!("skill-proposal:{department}:{}", task.task_id))
+                .await?;
+            let Some(mut task) = self
+                .buffers
+                .get_task(department, &task.task_id)
+                .await?
+                .filter(|t| t.status == PROPOSED)
+            else {
+                continue;
+            };
+            let mut proposals = proposals_of(&task)?;
+            if !self.expire(&mut proposals, task.archived_at_ms, now) {
+                continue;
+            }
+            task.status = EXPIRED.into();
+            task.candidates = serde_json::to_value(&proposals)
+                .map_err(|e| DomainError::internal(e.to_string()))?;
+            self.buffers.put_task(department, &task).await?;
+            closed += 1;
+        }
+        Ok(closed)
+    }
+
     fn expire(&self, proposals: &mut [SkillProposal], archived_at_ms: i64, now_ms: i64) -> bool {
         expire_pending(
             proposals,
