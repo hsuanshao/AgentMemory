@@ -87,7 +87,7 @@ L1 extraction and deduplication, L2 scenes and L3 persona now give the model one
 
 ### Also in this release
 
-These need no action. The [CHANGELOG](../CHANGELOG.md#unreleased) has the details.
+These need no action. The [CHANGELOG](../CHANGELOG.md#043---2026-10-24) has the details.
 
 - **Panel:** the session key is kept per browser tab (closing the tab signs out; a key saved by an earlier version is removed), a revoked key stops working in the Panel within 10 s, and the Panel sends a Content-Security-Policy.
 - **`amem`** does not follow redirects, so a key never goes to another address: when a server moves to HTTPS, run `amem login` with the new address. Files it creates are readable by the owner only. A query after `--` is never read as an option.

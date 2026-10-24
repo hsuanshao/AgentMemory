@@ -87,7 +87,7 @@ L1 萃取與去重、L2 場景、L3 persona 現在都把輸入交給模型成一
 
 ### 這一版的其他改動
 
-以下不需要做任何事。細節見 [CHANGELOG](../CHANGELOG.zh-tw.md#未發布)。
+以下不需要做任何事。細節見 [CHANGELOG](../CHANGELOG.zh-tw.md#043---2026-10-24)。
 
 - **Panel：** 登入的 key 只留在這個瀏覽器分頁（關掉分頁就登出；舊版存下的 key 會被移除），撤銷的 key 在 Panel 裡 10 秒內失效，Panel 會送出 Content-Security-Policy。
 - **`amem`** 不跟隨轉址，key 不會被送到別的位址：伺服器改用 HTTPS 時，用新位址執行 `amem login`。它建立的檔案只有擁有者能讀。`--` 之後的查詢字串不會被當成選項。

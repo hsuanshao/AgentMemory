@@ -6,7 +6,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
-**Read [UPGRADE → To 0.4.3](docs/UPGRADE.md#to-043) before upgrading.** Going back to 0.4.2 needs the backup restored (schema migration 6).
+## [0.4.3] - 2026-10-24
+
+**Read [UPGRADE → To 0.4.3](docs/UPGRADE.md#to-043) before upgrading.** This release finishes the October security review: user keys are stored as digests, refused credentials are throttled per client address and recorded in an audit log, new installs keep their ports on this machine (with an optional HTTPS profile), and the distillation model gets all its input as JSON data. Rootless Docker shows every client as one address: decide on the lockout before upgrading ([UPGRADE](docs/UPGRADE.md#rootless-docker-every-client-shows-one-address)). Going back to 0.4.2 needs the backup restored (schema migration 6).
 
 ### Security
 - **User keys are stored as SHA-256 digests.** Schema migration 6 converts the stored keys in place; existing keys keep working, and the Panel shows their last four characters. A key chosen by the caller (`init-admin`, `user/create-with-key`) must be `sk-mem-` and at least 32 letters, digits, `-` or `_` ([UPGRADE](docs/UPGRADE.md#user-keys-are-stored-as-digests)).
@@ -154,7 +156,8 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 First public release: memory-core, the L0→L3 distillation pipeline, hybrid recall, the metadata plane, the Monitor Panel, `amem` with plugins for Claude Code, Codex, Antigravity and Hermes, and `install.sh`. Clients authenticate with per-user keys.
 
-[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.3
 [0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
 [0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
 [0.4.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.0
