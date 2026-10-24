@@ -70,6 +70,19 @@ fn header_text(req: &Request, name: impl header::AsHeaderName) -> Option<String>
         .map(|v| v.chars().take(256).collect())
 }
 
+/// Every `X-Forwarded-For` header, in order, as one chain: a proxy may add
+/// its own header instead of appending to the one it received, and the hop
+/// it wrote is then in the last one.
+fn forwarded_for(req: &Request) -> Option<String> {
+    let parts: Vec<&str> = req
+        .headers()
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
 pub async fn guard_credentials(
     State(s): State<SharedState>,
     ctx: Ctx,
@@ -85,7 +98,7 @@ pub async fn guard_credentials(
     else {
         return next.run(req).await;
     };
-    let forwarded = header_text(&req, "x-forwarded-for");
+    let forwarded = forwarded_for(&req);
     let client = client::resolve(&s.settings.trusted_proxies, peer, forwarded.as_deref()).await;
     let source = client.source();
     let guard = &s.services.guard;
@@ -145,4 +158,22 @@ pub async fn guard_credentials(
         tokio::time::sleep(delay).await;
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+
+    #[test]
+    fn every_forwarded_for_header_is_read_in_order() {
+        let req = Request::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .header("x-forwarded-for", "203.0.113.9")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(forwarded_for(&req).as_deref(), Some("1.2.3.4, 203.0.113.9"));
+        let none = Request::builder().body(Body::empty()).unwrap();
+        assert_eq!(forwarded_for(&none), None);
+    }
 }

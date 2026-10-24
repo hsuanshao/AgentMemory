@@ -3,7 +3,7 @@
 //! only when the peer is a configured proxy, and only as far back as the
 //! chain stays within trusted proxies.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -128,8 +128,19 @@ impl Client {
     }
 }
 
+/// One hop of `X-Forwarded-For`. Some load balancers add the port
+/// (`203.0.113.9:5678`, `[2001:db8::1]:443`); it is dropped.
+fn parse_hop(hop: &str) -> Option<IpAddr> {
+    let hop = hop.trim();
+    hop.parse::<IpAddr>()
+        .or_else(|_| hop.parse::<SocketAddr>().map(|a| a.ip()))
+        .ok()
+        .or_else(|| hop.strip_prefix('[')?.strip_suffix(']')?.parse().ok())
+}
+
 /// Walks `X-Forwarded-For` from the right while each hop is a trusted
-/// proxy; the first untrusted hop is the client.
+/// proxy; the first untrusted hop is the client. `xff` is every
+/// `X-Forwarded-For` header of the request joined with commas, in order.
 pub async fn resolve(proxies: &TrustedProxies, peer: IpAddr, xff: Option<&str>) -> Client {
     let peer = peer.to_canonical();
     let mut hosts = None;
@@ -147,7 +158,7 @@ pub async fn resolve(proxies: &TrustedProxies, peer: IpAddr, xff: Option<&str>) 
     }
     let mut address = peer;
     for hop in xff.rsplit(',') {
-        let Ok(ip) = hop.trim().parse::<IpAddr>() else {
+        let Some(ip) = parse_hop(hop) else {
             break;
         };
         address = ip.to_canonical();
@@ -157,8 +168,20 @@ pub async fn resolve(proxies: &TrustedProxies, peer: IpAddr, xff: Option<&str>) 
     }
     Client {
         address,
-        forwarded_for: Some(xff.to_owned()),
+        forwarded_for: Some(keep_right(xff, FORWARDED_FOR_KEPT)),
     }
+}
+
+/// How much of `X-Forwarded-For` the audit log keeps: the right end, which
+/// the trusted proxies wrote.
+const FORWARDED_FOR_KEPT: usize = 256;
+
+fn keep_right(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_owned();
+    }
+    format!("…{}", s.chars().skip(n - max).collect::<String>())
 }
 
 #[cfg(test)]
@@ -200,6 +223,30 @@ mod tests {
         assert_eq!(c.address, ip("203.0.113.9"));
         let junk = resolve(&p, ip("172.18.0.3"), Some("1.2.3.4, not-an-ip")).await;
         assert_eq!(junk.address, ip("172.18.0.3"));
+    }
+
+    #[tokio::test]
+    async fn ports_are_dropped_from_hops() {
+        let p = proxies(&["172.18.0.0/16"]);
+        for (xff, want) in [
+            ("203.0.113.9:5678", "203.0.113.9"),
+            ("[2001:db8::1]:443", "2001:db8::1"),
+            ("[2001:db8::1]", "2001:db8::1"),
+            ("1.2.3.4, 203.0.113.9:5678, 172.18.0.2:40000", "203.0.113.9"),
+        ] {
+            let c = resolve(&p, ip("172.18.0.3"), Some(xff)).await;
+            assert_eq!(c.address, ip(want), "{xff}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_long_forged_chain_does_not_push_out_the_proxys_hop() {
+        let p = proxies(&["172.18.0.0/16"]);
+        let forged = "9.9.9.9, ".repeat(200);
+        let c = resolve(&p, ip("172.18.0.3"), Some(&format!("{forged}203.0.113.9"))).await;
+        assert_eq!(c.address, ip("203.0.113.9"));
+        let kept = c.forwarded_for.unwrap();
+        assert!(kept.ends_with("203.0.113.9") && kept.chars().count() <= 257);
     }
 
     #[tokio::test]
