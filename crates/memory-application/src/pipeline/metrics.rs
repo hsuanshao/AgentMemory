@@ -35,6 +35,8 @@ pub struct MetricsSnapshot {
     /// Dead letters the sweeper removed (too old or redriven too often).
     pub dead_letters_expired: u64,
     pub last_task_at: Option<String>,
+    /// The error of the last job that was dead-lettered. A failed attempt
+    /// that is retried only counts in `tasks_retried`.
     pub last_error: Option<String>,
 }
 
@@ -56,7 +58,9 @@ impl PipelineMetrics {
             &self.dead_lettered
         };
         counter.fetch_add(1, Ordering::Relaxed);
-        self.last.lock().expect("metrics lock").last_error = Some(error);
+        if !will_retry {
+            self.last.lock().expect("metrics lock").last_error = Some(error);
+        }
     }
 
     pub fn swept(&self, redriven: usize, expired: usize) {
@@ -77,5 +81,30 @@ impl PipelineMetrics {
             last_task_at: last.last_task_at,
             last_error: last.last_error,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_retried_attempt_leaves_last_error_alone() {
+        let m = PipelineMetrics::default();
+        m.failed("skill job failed: timeout".into(), true);
+        m.completed("2026-10-25T09:43:50Z".into());
+        let s = m.snapshot();
+        assert_eq!((s.tasks_failed, s.tasks_retried), (1, 1));
+        assert_eq!(s.last_error, None);
+    }
+
+    #[test]
+    fn a_dead_lettered_job_sets_last_error() {
+        let m = PipelineMetrics::default();
+        m.failed("l1 job failed: first".into(), false);
+        m.failed("l1 job failed: retried".into(), true);
+        let s = m.snapshot();
+        assert_eq!(s.tasks_dead_lettered, 1);
+        assert_eq!(s.last_error.as_deref(), Some("l1 job failed: first"));
     }
 }

@@ -6,6 +6,9 @@
 
 ## [未發布]
 
+### 修正
+- Worker 的 `last_error`（pipeline status、Panel dashboard）只顯示進入 dead letter 的 job 的錯誤。會再重試的失敗不再寫入，因此之後成功的 job 不會留下一筆 dead letter 列表裡找不到的錯誤。
+
 ## [0.4.3] - 2026-10-24
 
 **升級前請先閱讀 [UPGRADE → 升級到 0.4.3](docs/UPGRADE.zh-tw.md#升級到-043)。** 這一版完成十月的安全審查：user key 改存雜湊；被拒絕的憑證依 client 位址節流，並寫進稽核紀錄；新安裝的 port 只聽在這台機器上（另有可選的 HTTPS profile）；蒸餾模型的輸入全部改成 JSON 資料。Rootless Docker 會讓所有 client 顯示同一個位址：升級前請先決定封鎖的設定（[UPGRADE](docs/UPGRADE.zh-tw.md#rootless-docker所有-client-都是同一個位址)）。退回 0.4.2 必須還原備份（schema 遷移 6）。

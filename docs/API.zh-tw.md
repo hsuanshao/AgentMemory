@@ -81,7 +81,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 | POST | `/v3/pipeline/dead-letter/list` | `{kind?, limit?}`（`l1`、`l2`、`l3`、`skill`；預設 50，最多 500）→ `{items: [{kind, job, attempt, error, dead_at_ms, redrives, first_dead_at_ms, model}]}`，新的在前，只列此部門 |
 | POST | `/v3/pipeline/dead-letter/redrive` | `{kind?, limit?}`（預設 10，最多 1000）→ `{requeued}`：把最舊的符合條件 dead letter 重新排回佇列，從第一次嘗試開始。帶 user key 時只有系統管理者可以執行 |
 
-`WorkerMetrics`：`{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`。
+`WorkerMetrics`：`{tasks_enqueued, tasks_completed, tasks_failed, tasks_retried, tasks_dead_lettered, last_task_at, last_error}`。`last_error` 是最後一個進入 dead letter 的 job 的錯誤；會再重試的失敗只計入 `tasks_retried`。
 `ScopeState`：`{scope, team_id, agent_id, user_id, session_id, conversation_count, warmup_threshold, l1_cursor, l2_pending, last_l1_at, last_l2_at, last_l3_at, memories_since_persona}`。
 
 每一次呼叫到 LLM 的 L1、L2、L3 執行，都會留下一筆生成紀錄，帶有 `status`：

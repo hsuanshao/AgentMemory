@@ -6,6 +6,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Fixed
+- The worker's `last_error` (pipeline status, Panel dashboard) only shows the error of a job that was dead-lettered. A failed attempt that is retried no longer sets it, so a job that later succeeded no longer leaves an error behind that the dead-letter list does not have.
+
 ## [0.4.3] - 2026-10-24
 
 **Read [UPGRADE → To 0.4.3](docs/UPGRADE.md#to-043) before upgrading.** This release finishes the October security review: user keys are stored as digests, refused credentials are throttled per client address and recorded in an audit log, new installs keep their ports on this machine (with an optional HTTPS profile), and the distillation model gets all its input as JSON data. Rootless Docker shows every client as one address: decide on the lockout before upgrading ([UPGRADE](docs/UPGRADE.md#rootless-docker-every-client-shows-one-address)). Going back to 0.4.2 needs the backup restored (schema migration 6).
