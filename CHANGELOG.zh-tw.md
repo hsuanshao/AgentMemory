@@ -6,6 +6,9 @@
 
 ## [未發布]
 
+### 新增
+- `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` 設定 `llm.timeoutMs`，也就是每次呼叫蒸餾 LLM 的逾時（預設 180000），不必改設定檔。自架模型做 skill extraction 要好幾分鐘時，不會每次都逾時（[DISTILLATION](docs/ops/DISTILLATION.zh-tw.md)）。
+
 ### 修正
 - Worker 的 `last_error`（pipeline status、Panel dashboard）只顯示進入 dead letter 的 job 的錯誤。會再重試的失敗不再寫入，因此之後成功的 job 不會留下一筆 dead letter 列表裡找不到的錯誤。
 

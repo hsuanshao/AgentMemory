@@ -6,6 +6,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Added
+- `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` sets `llm.timeoutMs`, the timeout of each call to the distillation LLM (default 180000), without editing the config file. A self-hosted model that needs minutes for skill extraction no longer times out on every attempt ([DISTILLATION](docs/ops/DISTILLATION.md)).
+
 ### Fixed
 - The worker's `last_error` (pipeline status, Panel dashboard) only shows the error of a job that was dead-lettered. A failed attempt that is retried no longer sets it, so a job that later succeeded no longer leaves an error behind that the dead-letter list does not have.
 

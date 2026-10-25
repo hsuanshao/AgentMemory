@@ -279,11 +279,12 @@ docker compose exec memory-core memory-server reembed --department default --lim
 | `memory.embedding.maxConcurrency` | `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY` | 4 | 同時進行的請求數，超過的排隊等候 |
 | `memory.embedding.backfillIntervalSecs` | `AGENT_MEMORY_EMBEDDING_BACKFILL_INTERVAL_SECS` | 600 | `0` 關閉背景補向量；`reembed` 仍可使用 |
 | `memory.embedding.backfillBatch` | | 200 | 每個部門每次背景補算的 atom 數 |
+| `llm.timeoutMs` | `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` | 180000 | 每次呼叫蒸餾 LLM（L1/L2/L3、skill extraction）的逾時，CLI provider 也適用 |
 | `worker.concurrency` | `AGENT_MEMORY_WORKER_CONCURRENCY` | 8 | 同時執行的 pipeline 工作（L1/L2/L3/skill） |
 | `llm.cli.maxConcurrency` | `AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY` | 2 | 同時執行的 CLI 模型程序 |
 
 補向量和 L1、`atomic/update` 共用 `maxConcurrency`：服務中斷後大量補算的期間，它們的 embedding 呼叫可能要排隊。補向量每次請求送 32 個 atom。
 
-embedding 伺服器規格小或與其他服務共用、負載高時會逾時：先調低 `maxConcurrency`，再調高 `timeoutMs`。服務中斷後有大量 atom 沒有向量：等服務恢復後跑一次 `reembed`。
+embedding 伺服器規格小或與其他服務共用、負載高時會逾時：先調低 `maxConcurrency`，再調高 `timeoutMs`。自架的蒸餾模型產生長回答要好幾分鐘時（skill extraction 輸出最長），到了逾時會以 `LLM_UNAVAILABLE` 失敗並重試：調高 `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS`，模型前面若有 proxy，它的逾時也不能比這個短。服務中斷後有大量 atom 沒有向量：等服務恢復後跑一次 `reembed`。
 
 數值型的環境變數無法解析時（例如 `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY=abc`），memory-core 會在啟動時停止並指出是哪一個；`memory-server check-config` 也會回報。
