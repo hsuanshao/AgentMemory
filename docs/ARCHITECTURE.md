@@ -73,7 +73,7 @@ flowchart TD
   infra --> domain
 ```
 
-Dependencies point inward only. `memory-domain` does no I/O. `memory-application` defines the ports (traits) that `memory-infrastructure` implements. The gateway calls use cases but never touches a database. `memory-server` is the only crate that knows which adapters are wired, chosen in `crates/memory-server/src/backends.rs`. `memory-client` shares no code with the server; its only contract is the HTTP API.
+Dependencies point inward only. `memory-domain` does no I/O. `memory-application` defines the ports (traits) that `memory-infrastructure` implements. The gateway calls use cases but never touches a database. `memory-server` is the only crate that knows which adapters are wired, chosen in `crates/memory-server/src/backends.rs`. `memory-client` and the server share only `memory-redact` (`crates/memory-client/redact`), so a secret is redacted by the same rules on both sides; otherwise their only contract is the HTTP API.
 
 Where to look:
 

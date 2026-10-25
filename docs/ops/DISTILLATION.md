@@ -279,11 +279,12 @@ docker compose exec memory-core memory-server reembed --department default --lim
 | `memory.embedding.maxConcurrency` | `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY` | 4 | Requests in flight at once; more wait their turn |
 | `memory.embedding.backfillIntervalSecs` | `AGENT_MEMORY_EMBEDDING_BACKFILL_INTERVAL_SECS` | 600 | `0` turns the background run off; `reembed` still works |
 | `memory.embedding.backfillBatch` | | 200 | Atoms per department per background run |
+| `llm.timeoutMs` | `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` | 180000 | Per call to the distillation LLM (L1/L2/L3, skill extraction), CLI provider included |
 | `worker.concurrency` | `AGENT_MEMORY_WORKER_CONCURRENCY` | 8 | Pipeline jobs (L1/L2/L3/skills) at once |
 | `llm.cli.maxConcurrency` | `AGENT_MEMORY_LLM_CLI_MAX_CONCURRENCY` | 2 | CLI model processes at once |
 
 The backfill shares `maxConcurrency` with L1 and `atomic/update`: while it catches up after an outage, their embedding calls may wait for a free slot. It sends 32 atoms per request.
 
-A small or shared embedding server that times out under load: lower `maxConcurrency` first, then raise `timeoutMs`. Many embeddings missing after an outage: run `reembed` once the service is back.
+A small or shared embedding server that times out under load: lower `maxConcurrency` first, then raise `timeoutMs`. A self-hosted distillation model that needs minutes for a long answer (skill extraction writes the most) fails with `LLM_UNAVAILABLE` at the timeout and is retried: raise `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS`, and keep any proxy in front of the model at least as patient. Many embeddings missing after an outage: run `reembed` once the service is back.
 
 A numeric variable that does not parse (`AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY=abc`) stops memory-core at startup with its name; `memory-server check-config` reports it too.

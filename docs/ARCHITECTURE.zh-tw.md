@@ -80,7 +80,7 @@ flowchart TD
 - `memory-application` 定義 port（trait），由 `memory-infrastructure` 實作。
 - gateway 只呼叫 use case，從不直接碰資料庫。
 - 只有 `memory-server` 知道接上的是哪些 adapter，選擇集中在 `crates/memory-server/src/backends.rs`。
-- `memory-client` 與 server 不共用程式碼，兩者之間唯一的契約是 HTTP API。
+- `memory-client` 與 server 只共用 `memory-redact`（`crates/memory-client/redact`），讓兩邊用同一套規則遮蔽機密；除此之外，兩者之間唯一的契約是 HTTP API。
 
 去哪裡找程式碼：
 

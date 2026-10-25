@@ -779,6 +779,12 @@ impl Config {
         ) {
             e.backfill_interval_secs = secs;
         }
+        if let Some(ms) = env_number(
+            "AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS",
+            &mut self.env_errors,
+        ) {
+            self.llm.timeout_ms = ms;
+        }
         if let Some(n) = env_number("AGENT_MEMORY_WORKER_CONCURRENCY", &mut self.env_errors) {
             self.worker.concurrency = n;
         }
@@ -949,6 +955,17 @@ mod tests {
         assert_eq!(c.llm.provider, "openai");
         assert_eq!(c.llm.cli.prompt_mode, "stdin");
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn the_distillation_llm_timeout_comes_from_its_variable() {
+        // No other test reads this variable.
+        std::env::set_var("AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS", "720000");
+        let mut c = Config::default();
+        c.apply_env();
+        std::env::remove_var("AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS");
+        assert_eq!(c.llm.timeout_ms, 720_000);
+        assert!(c.env_errors.is_empty(), "{:?}", c.env_errors);
     }
 
     #[test]
