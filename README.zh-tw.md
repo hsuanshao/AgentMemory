@@ -20,8 +20,6 @@
 
 **自架、為團隊設計的 AI agent 長期記憶。** AgentMemory 讓 Claude Code、Codex、Antigravity、Hermes 以及任何 MCP client 擁有跨 session 的記憶：擷取每一次對話，在背景蒸餾成事實、場景與 persona，並在每次輸入 prompt 前召回相關內容。全部都在你自己的伺服器上執行。
 
-![AgentMemory 讓 Claude Code、Antigravity、Hermes 等 agent 共用同一份長期記憶](./docs/imgs/agent-memory.jpg)
-
 ## 為什麼選擇 AgentMemory
 
 - **資料留在你手上。** 記憶、資料庫，甚至蒸餾用的模型，都可以全部在內網執行。不依賴任何廠商的雲端服務：可以使用任何 OpenAI 相容端點（包括自架模型），也可以直接使用本機的 `claude`、`codex`、`agy` 等 CLI。
