@@ -34,8 +34,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && cp target/release/memory-server /usr/local/bin/memory-server
 
 FROM debian:bookworm-slim AS runtime
+# apt goes over HTTPS, as some networks block outbound HTTP. The slim image
+# has no CA certificates until ca-certificates is installed, so the build
+# stage's bundle verifies the mirror for this install; apt checks every
+# package's signature either way.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # curl downloads the CLI installers; git is used by coding CLIs inside a project.
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --home-dir /home/memory --uid 10001 --shell /bin/bash memory \
