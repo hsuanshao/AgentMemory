@@ -14,12 +14,14 @@ import { scopeStore } from "../memory/scope";
 import { ScopePicker } from "../memory/ScopePicker";
 import { SkillDetailPanel } from "./SkillDetail";
 import { SkillProposals } from "./SkillProposals";
+import { useT, withCount } from "../../i18n";
 
 const PAGE = 50;
 
 type Row = SkillSummary & Partial<Pick<SkillSearchHit, "score" | "snippet">>;
 
 export function SkillsPage() {
+  const t = useT();
   const scope = useStore(scopeStore);
   const [query, setQuery] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -36,7 +38,7 @@ export function SkillsPage() {
   const columns: ReadonlyArray<Column<Row>> = [
     {
       key: "name",
-      header: "Name",
+      header: t("common.name"),
       render: (s) => (
         <div>
           <div className="font-medium">{s.name}</div>
@@ -44,29 +46,29 @@ export function SkillsPage() {
         </div>
       ),
     },
-    { key: "v", header: "Ver", render: (s) => <span className="mono">v{s.version}</span> },
-    { key: "status", header: "Status", render: (s) => <Badge tone={s.status === "active" ? "ok" : "neutral"}>{s.status}</Badge> },
-    ...(query ? [{ key: "score", header: "Score", render: (s: Row) => <span className="mono">{s.score?.toFixed(3) ?? "—"}</span> }] : []),
+    { key: "v", header: t("common.versionShort"), render: (s) => <span className="mono">v{s.version}</span> },
+    { key: "status", header: t("common.status"), render: (s) => <Badge tone={s.status === "active" ? "ok" : "neutral"}>{s.status}</Badge> },
+    ...(query ? [{ key: "score", header: t("common.score"), render: (s: Row) => <span className="mono">{s.score?.toFixed(3) ?? "—"}</span> }] : []),
   ];
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Skills" subtitle="Team skills with versions (identity fields from the scope below)" />
+      <PageHeader title={t("skills.title")} subtitle={t("skills.subtitle")} />
       <ScopePicker value={scope} onChange={scopeStore.set} />
       <SkillProposals scope={scope} onDecided={list.reload} />
       <div className="grid gap-4 xl:grid-cols-[minmax(360px,1fr)_2fr]">
         <Card
-          title={`Skills${list.data?.total !== undefined ? ` (${list.data.total})` : ""}`}
+          title={withCount(t("skills.title"), list.data?.total)}
           bodyClassName="p-0"
           actions={
             <label className="flex items-center gap-1 text-xs text-muted">
               <input type="checkbox" checked={includeArchived} onChange={(e) => (setIncludeArchived(e.target.checked), setOffset(0))} />
-              archived
+              {t("skills.archived")}
             </label>
           }
         >
           <div className="border-b border-line p-2">
-            <SearchBox value={query} onSearch={(q) => (setQuery(q), setOffset(0))} placeholder="Search skills" />
+            <SearchBox value={query} onSearch={(q) => (setQuery(q), setOffset(0))} placeholder={t("skills.search")} />
           </div>
           <ErrorBanner error={list.error} onRetry={list.reload} className="m-2" />
           <DataTable
@@ -74,7 +76,7 @@ export function SkillsPage() {
             rows={list.data?.rows}
             rowKey={(s) => s.skill_id}
             loading={list.loading}
-            empty="No skills"
+            empty={t("skills.empty")}
             onRowClick={(s) => setSelected(s.skill_id)}
             selectedKey={selected}
           />
@@ -86,7 +88,7 @@ export function SkillsPage() {
           <SkillDetailPanel key={selected} scope={scope} skillId={selected} />
         ) : (
           <Card>
-            <EmptyState>Select a skill to view its SKILL.md and versions.</EmptyState>
+            <EmptyState>{t("skills.selectHint")}</EmptyState>
           </Card>
         )}
       </div>

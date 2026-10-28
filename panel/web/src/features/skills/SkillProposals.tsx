@@ -7,6 +7,7 @@ import { ErrorBanner } from "../../components/Feedback";
 import { useAction } from "../../hooks/useAction";
 import { useAsync } from "../../hooks/useAsync";
 import { formatTime } from "../../lib/format";
+import { useT, withCount } from "../../i18n";
 
 /**
  * Changes skill extraction proposed for the scope's agent. Extraction reads
@@ -15,6 +16,7 @@ import { formatTime } from "../../lib/format";
  * approves it here. Core decides who may.
  */
 export function SkillProposals({ scope, onDecided }: { scope: Scope; onDecided: () => void }) {
+  const t = useT();
   const list = useAsync(() => api.skill.proposals(scope), [scope]);
   const decide = useAction(async (task: SkillProposalTask, p: SkillProposal, approve: boolean) => {
     await api.skill.decide(scope, task.task_id, p.index, approve);
@@ -23,32 +25,31 @@ export function SkillProposals({ scope, onDecided }: { scope: Scope; onDecided: 
   });
 
   const tasks = list.data?.items ?? [];
-  const pending = tasks.flatMap((t) => t.proposals.filter((p) => p.state === "pending").map((p) => ({ t, p })));
+  const pending = tasks.flatMap((task) => task.proposals.filter((p) => p.state === "pending").map((p) => ({ task, p })));
   if (!list.loading && !list.error && pending.length === 0) return null;
 
   return (
-    <Card title={`Proposed by skill extraction (${pending.length})`}>
+    <Card title={withCount(t("skill.proposed"), pending.length)}>
       <div className="space-y-3">
         <ErrorBanner error={list.error ?? decide.error} onRetry={list.reload} />
         <p className="text-xxs text-muted">
-          Extraction reads conversations, including web pages and tool output, so its changes wait here. Read each one before
-          approving it: approved changes become the team's skills.
+          {t("skill.proposedNote")}
         </p>
-        {pending.map(({ t, p }) => (
-          <div key={`${t.task_id}-${p.index}`} className="space-y-2 rounded-sm border border-line p-2">
+        {pending.map(({ task, p }) => (
+          <div key={`${task.task_id}-${p.index}`} className="space-y-2 rounded-sm border border-line p-2">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <Badge tone="accent">{p.change.action}</Badge>
               <span className="mono">{p.change.action === "create" ? p.change.name : p.change.skill_id}</span>
-              {p.base_version !== undefined && <span className="mono text-muted">from v{p.base_version}</span>}
+              {p.base_version !== undefined && <span className="mono text-muted">{t("skill.fromVersion", { version: p.base_version })}</span>}
               <span className="text-muted">
-                {t.user_id} · {t.session_id} · {formatTime(t.archived_at_ms)}
+                {task.user_id} · {task.session_id} · {formatTime(task.archived_at_ms)}
               </span>
               <span className="ml-auto flex gap-1">
-                <Button size="sm" variant="primary" busy={decide.busy} onClick={() => void decide.run(t, p, true)}>
-                  Approve
+                <Button size="sm" variant="primary" busy={decide.busy} onClick={() => void decide.run(task, p, true)}>
+                  {t("skill.approve")}
                 </Button>
-                <Button size="sm" variant="secondary" busy={decide.busy} onClick={() => void decide.run(t, p, false)}>
-                  Reject
+                <Button size="sm" variant="secondary" busy={decide.busy} onClick={() => void decide.run(task, p, false)}>
+                  {t("skill.reject")}
                 </Button>
               </span>
             </div>

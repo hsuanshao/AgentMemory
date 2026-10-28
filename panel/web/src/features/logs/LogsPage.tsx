@@ -13,39 +13,40 @@ import { useAsync } from "../../hooks/useAsync";
 import { statusTone } from "../../lib/distillation";
 import { formatRelative, formatTime } from "../../lib/format";
 import { LogDetail } from "./LogDetail";
+import { useT, type Translate } from "../../i18n";
 
 const PAGE = 50;
 
-const LAYERS = [
-  { value: "", label: "All layers" },
+const layers = (t: Translate) => [
+  { value: "", label: t("logs.allLayers") },
   { value: "l1", label: "L1" },
   { value: "l2", label: "L2" },
   { value: "l3", label: "L3" },
-] as const;
+];
 
-const STATUSES = [
-  { value: "", label: "All statuses" },
+const statuses = (t: Translate) => [
+  { value: "", label: t("logs.allStatuses") },
   { value: "succeeded", label: "succeeded" },
-  { value: "empty", label: "empty (nothing written)" },
+  { value: "empty", label: t("logs.statusEmpty") },
   { value: "failed", label: "failed" },
-  { value: "dropped", label: "dropped (input skipped)" },
-] as const;
+  { value: "dropped", label: t("logs.statusDropped") },
+];
 
-const COLUMNS: ReadonlyArray<Column<GenerationLogItem>> = [
-  { key: "time", header: "Finished", render: (l) => <span className="mono whitespace-nowrap" title={formatRelative(l.finished_at_ms)}>{formatTime(l.finished_at_ms)}</span> },
-  { key: "layer", header: "Layer", render: (l) => <Badge>{l.layer}</Badge> },
-  { key: "status", header: "Status", render: (l) => <Badge tone={statusTone(l.status)}>{l.status}</Badge> },
-  { key: "model", header: "Model", render: (l) => <span className="mono text-muted">{l.model ?? "—"}</span> },
+const columns = (t: Translate): ReadonlyArray<Column<GenerationLogItem>> => [
+  { key: "time", header: t("logs.finished"), render: (l) => <span className="mono whitespace-nowrap" title={formatRelative(l.finished_at_ms)}>{formatTime(l.finished_at_ms)}</span> },
+  { key: "layer", header: t("common.layer"), render: (l) => <Badge>{l.layer}</Badge> },
+  { key: "status", header: t("common.status"), render: (l) => <Badge tone={statusTone(l.status)}>{l.status}</Badge> },
+  { key: "model", header: t("logs.model"), render: (l) => <span className="mono text-muted">{l.model ?? "—"}</span> },
   {
     key: "latency",
-    header: "Latency",
+    header: t("logs.latency"),
     className: "text-right",
     render: (l) => <span className="mono text-muted">{l.latency_ms !== undefined ? `${(l.latency_ms / 1000).toFixed(1)} s` : "—"}</span>,
   },
-  { key: "session", header: "Session", render: (l) => <span className="mono text-muted">{l.session_id ?? "—"}</span> },
+  { key: "session", header: t("common.session"), render: (l) => <span className="mono text-muted">{l.session_id ?? "—"}</span> },
   {
     key: "error",
-    header: "Error",
+    header: t("logs.error"),
     render: (l) =>
       l.error_message ? (
         <span className="mono block max-w-md truncate text-err" title={l.error_message}>
@@ -56,6 +57,7 @@ const COLUMNS: ReadonlyArray<Column<GenerationLogItem>> = [
 ];
 
 export function LogsPage() {
+  const t = useT();
   const [layer, setLayer] = useState<GenerationLayer | "">("");
   const [params] = useSearchParams();
   const [status, setStatus] = useState<GenerationStatus | "">(() => {
@@ -80,18 +82,18 @@ export function LogsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Generation logs"
-        subtitle="Every L1/L2/L3 distillation run: succeeded, empty (nothing written), failed with its error, or dropped (the last attempt failed and the input was skipped so later input could go on; its dead letter redoes it) (Core default window: last 7 days)"
+        title={t("logs.title")}
+        subtitle={t("logs.subtitle")}
         actions={
           <>
-            <Field label="Layer">
-              <Select options={LAYERS} value={layer} onChange={(e) => setLayer(e.target.value as GenerationLayer | "")} />
+            <Field label={t("common.layer")}>
+              <Select options={layers(t)} value={layer} onChange={(e) => setLayer(e.target.value as GenerationLayer | "")} />
             </Field>
-            <Field label="Status">
-              <Select options={STATUSES} value={status} onChange={(e) => setStatus(e.target.value as GenerationStatus | "")} />
+            <Field label={t("common.status")}>
+              <Select options={statuses(t)} value={status} onChange={(e) => setStatus(e.target.value as GenerationStatus | "")} />
             </Field>
             <Button className="self-end" onClick={() => void first.reload()} busy={first.loading}>
-              ↻ Refresh
+              {t("common.refresh")}
             </Button>
           </>
         }
@@ -99,18 +101,18 @@ export function LogsPage() {
       <ErrorBanner error={first.error ?? loadMore.error} onRetry={() => void first.reload()} />
       <Card bodyClassName="p-0">
         <DataTable
-          columns={COLUMNS}
+          columns={columns(t)}
           rows={items}
           rowKey={(l) => l.log_id}
           loading={first.loading}
-          empty="No generation logs in this window"
+          empty={t("logs.empty")}
           onRowClick={(l) => setSelected(l.log_id)}
           selectedKey={selected}
         />
         {cursor && (
           <div className="flex justify-center border-t border-line p-2">
             <Button size="sm" busy={loadMore.busy} onClick={() => void loadMore.run()}>
-              Load more
+              {t("logs.loadMore")}
             </Button>
           </div>
         )}

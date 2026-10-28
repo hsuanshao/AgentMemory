@@ -1,5 +1,6 @@
 import type { DeadLetter, GenerationLayer, GenerationStatus, GenerationSummary, JobKind } from "../api/types";
 import type { BadgeTone } from "../components/Badge";
+import { t } from "../i18n";
 
 export const GENERATION_LAYERS: readonly GenerationLayer[] = ["l1", "l2", "l3"];
 export const JOB_KINDS: readonly JobKind[] = ["l1", "l2", "l3", "skill"];
@@ -37,11 +38,12 @@ export function layerRows(summary: GenerationSummary | undefined): LayerRow[] {
 export function deadLetterSubject(letter: DeadLetter): string {
   const job = Object.values(letter.job)[0] ?? {};
   const range = job.range as { first?: number; last?: number } | undefined;
-  const dropped = range?.first !== undefined && range.last !== undefined ? ` · dropped seq ${range.first}–${range.last}` : "";
-  if (typeof job.session_id === "string") return `session ${job.session_id}${dropped}`;
-  if (typeof job.task_id === "string") return `task ${job.task_id}`;
+  const dropped =
+    range?.first !== undefined && range.last !== undefined ? t("dead.subjectDropped", { first: range.first, last: range.last }) : "";
+  if (typeof job.session_id === "string") return t("dead.subjectSession", { id: job.session_id }) + dropped;
+  if (typeof job.task_id === "string") return t("dead.subjectTask", { id: job.task_id });
   const profile = job.profile as { team_id?: string; agent_id?: string } | undefined;
-  if (profile?.agent_id) return `agent ${profile.agent_id}${dropped}`;
+  if (profile?.agent_id) return t("dead.subjectAgent", { id: profile.agent_id }) + dropped;
   return "—";
 }
 

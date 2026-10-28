@@ -1,25 +1,27 @@
 import type { StatsOverview } from "../../api";
 import { Card, Stat } from "../../components/Card";
 import { ErrorBanner } from "../../components/Feedback";
+import { useT } from "../../i18n";
 import { formatNumber } from "../../lib/format";
 import type { Slot } from "./useDashboardData";
 
 export function LayerCounts({ slot }: { slot: Slot<StatsOverview> }) {
+  const t = useT();
   const s = slot.data;
   return (
-    <Card title="Memory layers">
+    <Card title={t("layers.title")}>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-        <Stat label="L0 conversations" value={formatNumber(s?.l0)} />
+        <Stat label={t("layers.l0")} value={formatNumber(s?.l0)} />
         <Stat
-          label="L1 atoms"
+          label={t("layers.l1")}
           value={formatNumber(s?.l1.total)}
           tone="accent"
-          hint={s ? `ep ${s.l1.episodic} · persona ${s.l1.persona} · instr ${s.l1.instruction}` : undefined}
+          hint={s ? t("layers.l1Hint", s.l1) : undefined}
         />
-        <Stat label="L2 scenarios" value={formatNumber(s?.l2)} />
-        <Stat label="L3 personas" value={formatNumber(s?.l3)} />
-        <Stat label="Skills" value={formatNumber(s?.skills)} />
-        <Stat label="Generation logs" value={formatNumber(s?.generation_logs)} />
+        <Stat label={t("layers.l2")} value={formatNumber(s?.l2)} />
+        <Stat label={t("layers.l3")} value={formatNumber(s?.l3)} />
+        <Stat label={t("layers.skills")} value={formatNumber(s?.skills)} />
+        <Stat label={t("layers.logs")} value={formatNumber(s?.generation_logs)} />
       </div>
       {s && <L1Breakdown l1={s.l1} />}
       <ErrorBanner error={slot.error} className="mt-3" />

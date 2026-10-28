@@ -8,8 +8,11 @@ import { MemoryPage } from "./features/memory/MemoryPage";
 import { MetaPage } from "./features/meta/MetaPage";
 import { SkillsPage } from "./features/skills/SkillsPage";
 import { useStore } from "./hooks/useStore";
+import { useLocale } from "./i18n";
 
 export function App() {
+  // Subscribing here re-renders the whole tree when the language changes.
+  useLocale();
   const session = useStore(sessionStore);
   if (!session) return <LoginPage />;
 

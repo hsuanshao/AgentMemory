@@ -10,6 +10,8 @@ import { Field, Input, TextArea } from "../../components/Field";
 import { useAction } from "../../hooks/useAction";
 import { useAsync } from "../../hooks/useAsync";
 import { mono, time } from "./shared";
+import { useT } from "../../i18n";
+import { rich } from "../../i18n/rich";
 
 /**
  * System admins only: the redaction rules the department's writes go through.
@@ -17,6 +19,7 @@ import { mono, time } from "./shared";
  * department's own can be added, changed or disabled here (#57).
  */
 export function RedactionPanel() {
+  const t = useT();
   const listing = useAsync(() => api.admin.redactionRules(), []);
   const [kind, setKind] = useState("");
   const [pattern, setPattern] = useState("");
@@ -51,11 +54,15 @@ export function RedactionPanel() {
   }
 
   const columns: ReadonlyArray<Column<RedactionRule>> = [
-    { key: "kind", header: "Kind", render: (r) => <Badge tone="accent">{r.kind}</Badge> },
-    { key: "pattern", header: "Pattern", render: (r) => <span className="mono break-all">{r.pattern}</span> },
-    { key: "desc", header: "Description", render: (r) => r.description || "—" },
-    { key: "status", header: "Status", render: (r) => <Badge tone={r.enabled ? "ok" : "neutral"}>{r.enabled ? "enabled" : "disabled"}</Badge> },
-    { key: "updated", header: "Changed", render: (r) => <>{time(r.updated_at)} {mono(r.updated_by)}</> },
+    { key: "kind", header: t("common.kind"), render: (r) => <Badge tone="accent">{r.kind}</Badge> },
+    { key: "pattern", header: t("redaction.pattern"), render: (r) => <span className="mono break-all">{r.pattern}</span> },
+    { key: "desc", header: t("common.description"), render: (r) => r.description || "—" },
+    {
+      key: "status",
+      header: t("common.status"),
+      render: (r) => <Badge tone={r.enabled ? "ok" : "neutral"}>{r.enabled ? t("redaction.enabled") : t("redaction.disabled")}</Badge>,
+    },
+    { key: "updated", header: t("redaction.changed"), render: (r) => <>{time(r.updated_at)} {mono(r.updated_by)}</> },
     {
       key: "actions",
       header: "",
@@ -65,11 +72,11 @@ export function RedactionPanel() {
           size="sm"
           variant={r.enabled ? "danger" : "secondary"}
           onClick={() =>
-            (!r.enabled || window.confirm(`Disable ${r.kind}? Writes from now on are no longer redacted by it; stored data is not changed.`)) &&
+            (!r.enabled || window.confirm(t("redaction.confirmDisable", { kind: r.kind }))) &&
             void toggle.run(r)
           }
         >
-          {r.enabled ? "Disable" : "Enable"}
+          {r.enabled ? t("redaction.disable") : t("redaction.enable")}
         </Button>
       ),
     },
@@ -78,64 +85,67 @@ export function RedactionPanel() {
   const data = listing.data;
   return (
     <div className="space-y-4">
-      <Card title={`Department rules${data ? ` (${data.department.filter((r) => r.enabled).length} enabled)` : ""}`} bodyClassName="p-0">
+      <Card title={
+          data
+            ? t("redaction.departmentRulesEnabled", { count: data.department.filter((r) => r.enabled).length })
+            : t("redaction.departmentRules")
+        } bodyClassName="p-0">
         <ErrorBanner error={listing.error ?? create.error ?? toggle.error} onRetry={listing.reload} className="m-3" />
         <form onSubmit={submit} className="space-y-2 border-b border-line p-3">
           <div className="flex flex-wrap items-end gap-2">
-            <Field label="Kind">
-              <Input value={kind} onChange={(e) => setKind(e.target.value)} placeholder="e.g. employee-id" className="w-44" />
+            <Field label={t("common.kind")}>
+              <Input value={kind} onChange={(e) => setKind(e.target.value)} placeholder={t("redaction.kindPlaceholder")} className="w-44" />
             </Field>
-            <Field label="Pattern (Rust regex)">
+            <Field label={t("redaction.patternLabel")}>
               <Input value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder={String.raw`\bEMP-\d{6}\b`} className="mono w-80" />
             </Field>
-            <Field label="Description">
-              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" className="w-56" />
+            <Field label={t("common.description")}>
+              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("common.optional")} className="w-56" />
             </Field>
             <Button type="submit" variant="primary" busy={create.busy} disabled={!kind.trim() || !pattern}>
-              Add rule
+              {t("redaction.addRule")}
             </Button>
           </div>
           <span className="text-xxs text-muted">
-            Applies to writes from now on, on top of the built-in and deployment rules; stored data is not changed. Matches become
-            [REDACTED:kind]. A <span className="mono">keep</span> group keeps that part of the match.
+            {rich(t("redaction.applyNote"), { keep: <span className="mono">keep</span> })}
           </span>
         </form>
-        <DataTable columns={columns} rows={data?.department} rowKey={(r) => r.rule_id} loading={listing.loading} empty="No department rules" />
+        <DataTable columns={columns} rows={data?.department} rowKey={(r) => r.rule_id} loading={listing.loading} empty={t("redaction.empty")} />
       </Card>
 
-      <Card title="Try it">
+      <Card title={t("redaction.tryIt")}>
         <div className="space-y-2">
           <ErrorBanner error={test.error} />
-          <TextArea value={sample} onChange={(e) => setSample(e.target.value)} rows={3} placeholder="Sample text; it is not stored" className="w-full" />
+          <TextArea value={sample} onChange={(e) => setSample(e.target.value)} rows={3} placeholder={t("redaction.samplePlaceholder")} className="w-full" />
           <div className="flex items-center gap-2">
             <Button busy={test.busy} disabled={!sample} onClick={() => void test.run()}>
-              Test
+              {t("redaction.test")}
             </Button>
             <span className="text-xxs text-muted">
-              {pattern ? "With the pattern above, before adding it." : "With the rules as they are."}
+              {pattern ? t("redaction.withPattern") : t("redaction.withRules")}
             </span>
           </div>
           {preview && (
             <>
               {preview.refused ? (
                 <div role="alert" className="rounded-sm border border-err/40 bg-err/10 px-3 py-2 text-xs text-err">
-                  This pattern would not be saved: {preview.refused}. Rules apply before anything is stored, so a broad one would erase every write.
+                  {t("redaction.refused", { reason: preview.refused })}
                 </div>
               ) : (
                 preview.pattern_share != null &&
                 preview.pattern_share > 0.2 && (
                   <div role="alert" className="rounded-sm border border-warn/40 bg-warn/10 px-3 py-2 text-xs">
-                    The pattern matches {Math.round(preview.pattern_share * 100)}% of this sample. Check it is meant to.
+                    {t("redaction.shareWarning", { percent: Math.round(preview.pattern_share * 100) })}
                   </div>
                 )
               )}
               {preview.pattern_share != null && (
-                <span className="text-xxs text-muted">Pattern matches {Math.round(preview.pattern_share * 100)}% of the sample.</span>
+                <span className="text-xxs text-muted">{t("redaction.share", { percent: Math.round(preview.pattern_share * 100) })}</span>
               )}
               <CodeBlock>{preview.redacted}</CodeBlock>
               <div className="flex flex-wrap gap-1">
                 {preview.hits.length === 0 ? (
-                  <span className="text-xxs text-muted">Nothing redacted</span>
+                  <span className="text-xxs text-muted">{t("redaction.nothing")}</span>
                 ) : (
                   preview.hits.map((h) => (
                     <Badge key={h.kind} tone="accent">
@@ -150,7 +160,7 @@ export function RedactionPanel() {
       </Card>
 
       {data && (
-        <Card title="Built-in and deployment rules (read-only)">
+        <Card title={t("redaction.builtin")}>
           <div className="space-y-2 text-xs">
             <div className="flex flex-wrap gap-1">
               {data.builtin
@@ -168,7 +178,7 @@ export function RedactionPanel() {
                 ))}
               </ul>
             ) : (
-              <span className="text-muted">No deployment patterns (redaction.patterns).</span>
+              <span className="text-muted">{t("redaction.noDeployment")}</span>
             )}
           </div>
         </Card>

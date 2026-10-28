@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cx } from "./cx";
+import { useT } from "../i18n";
 import { EmptyState, Spinner } from "./Feedback";
 
 export interface Column<T> {
@@ -19,7 +20,8 @@ export interface DataTableProps<T> {
   selectedKey?: string;
 }
 
-export function DataTable<T>({ columns, rows, rowKey, loading, empty = "No data", onRowClick, selectedKey }: DataTableProps<T>) {
+export function DataTable<T>({ columns, rows, rowKey, loading, empty, onRowClick, selectedKey }: DataTableProps<T>) {
+  const t = useT();
   return (
     <div className="relative overflow-x-auto">
       <table className="w-full border-collapse text-left">
@@ -55,7 +57,7 @@ export function DataTable<T>({ columns, rows, rowKey, loading, empty = "No data"
           })}
         </tbody>
       </table>
-      {!loading && rows?.length === 0 && <EmptyState>{empty}</EmptyState>}
+      {!loading && rows?.length === 0 && <EmptyState>{empty ?? t("common.noData")}</EmptyState>}
       {loading && !rows && (
         <div className="flex justify-center py-6">
           <Spinner />

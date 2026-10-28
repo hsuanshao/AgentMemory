@@ -6,8 +6,10 @@ import { ErrorBanner, Spinner } from "../../components/Feedback";
 import { useAsync } from "../../hooks/useAsync";
 import { statusTone } from "../../lib/distillation";
 import { formatTime } from "../../lib/format";
+import { useT } from "../../i18n";
 
 export function LogDetail({ logId, onClose }: { logId: string | undefined; onClose: () => void }) {
+  const t = useT();
   const log = useAsync(() => api.generationLog.get(logId ?? ""), [logId], !!logId);
   const d = log.data;
 
@@ -19,22 +21,22 @@ export function LogDetail({ logId, onClose }: { logId: string | undefined; onClo
         <div className="space-y-4">
           <KeyValues
             entries={[
-              ["layer", <Badge key="l">{d.layer}</Badge>],
-              ["status", <Badge key="s" tone={statusTone(d.status)}>{d.status}</Badge>],
-              ["scope", [d.team_id, d.agent_id, d.user_id, d.session_id].map((v) => v ?? "·").join(" / ")],
-              ["model", d.model],
-              ["prompt", d.memory_prompt_id],
-              ["prompt sha256", d.prompt_sha256 ? <span key="h" className="mono break-all">{d.prompt_sha256}</span> : undefined],
-              ["started", formatTime(d.started_at_ms)],
-              ["finished", formatTime(d.finished_at_ms)],
-              ["latency", d.latency_ms !== undefined ? `${d.latency_ms} ms` : undefined],
+              [t("logs.layerKey"), <Badge key="l">{d.layer}</Badge>],
+              [t("logs.statusKey"), <Badge key="s" tone={statusTone(d.status)}>{d.status}</Badge>],
+              [t("logs.scope"), [d.team_id, d.agent_id, d.user_id, d.session_id].map((v) => v ?? "·").join(" / ")],
+              [t("logs.modelKey"), d.model],
+              [t("logs.prompt"), d.memory_prompt_id],
+              [t("logs.promptSha"), d.prompt_sha256 ? <span key="h" className="mono break-all">{d.prompt_sha256}</span> : undefined],
+              [t("logs.started"), formatTime(d.started_at_ms)],
+              [t("logs.finishedKey"), formatTime(d.finished_at_ms)],
+              [t("logs.latencyKey"), d.latency_ms !== undefined ? `${d.latency_ms} ms` : undefined],
             ]}
           />
           {d.error_message && <CodeBlock className="border-err/40 text-err">{d.error_message}</CodeBlock>}
-          <RefList title="Inputs" refs={d.input_refs} />
-          <RefList title="Outputs" refs={d.output_refs} />
+          <RefList title={t("logs.inputs")} refs={d.input_refs} />
+          <RefList title={t("logs.outputs")} refs={d.output_refs} />
           <details>
-            <summary className="label cursor-pointer">Raw JSON</summary>
+            <summary className="label cursor-pointer">{t("logs.rawJson")}</summary>
             <JsonView value={d} className="mt-2" />
           </details>
         </div>

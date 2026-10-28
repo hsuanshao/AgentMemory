@@ -7,13 +7,14 @@ import { ErrorBanner } from "../../components/Feedback";
 import { Select } from "../../components/Field";
 import { useAsync } from "../../hooks/useAsync";
 import { LIST_LIMIT, mono, time } from "./shared";
+import { useT, type Translate } from "../../i18n";
 
-const KINDS = [
-  { value: "", label: "All events" },
-  { value: "credential_rejected", label: "Refused credentials" },
-  { value: "source_locked", label: "Locked-out addresses" },
-  { value: "key_issued", label: "Keys issued by the operator" },
-] as const;
+const kinds = (t: Translate) => [
+  { value: "", label: t("audit.allEvents") },
+  { value: "credential_rejected", label: t("audit.credentialRejected") },
+  { value: "source_locked", label: t("audit.sourceLocked") },
+  { value: "key_issued", label: t("audit.keyIssued") },
+];
 
 const TONE: Record<AuditKind, BadgeTone> = {
   credential_rejected: "warn",
@@ -21,20 +22,20 @@ const TONE: Record<AuditKind, BadgeTone> = {
   key_issued: "accent",
 };
 
-const COLUMNS: ReadonlyArray<Column<AuditEvent>> = [
-  { key: "at", header: "Time", render: (e) => time(new Date(e.at_ms).toISOString()) },
-  { key: "kind", header: "Event", render: (e) => <Badge tone={TONE[e.kind]}>{e.kind}</Badge> },
+const columns = (t: Translate): ReadonlyArray<Column<AuditEvent>> => [
+  { key: "at", header: t("common.time"), render: (e) => time(new Date(e.at_ms).toISOString()) },
+  { key: "kind", header: t("audit.event"), render: (e) => <Badge tone={TONE[e.kind]}>{e.kind}</Badge> },
   {
     key: "source",
-    header: "Address",
+    header: t("audit.address"),
     render: (e) => (
       <span title={e.forwarded_for ? `X-Forwarded-For: ${e.forwarded_for}` : undefined}>{mono(e.source)}</span>
     ),
   },
-  { key: "path", header: "Path", render: (e) => mono(e.path) },
-  { key: "credential", header: "Credential", render: (e) => mono(e.credential) },
-  { key: "agent", header: "Client", render: (e) => <span className="break-all text-muted">{e.user_agent ?? "—"}</span> },
-  { key: "detail", header: "Detail", render: (e) => e.detail ?? "—" },
+  { key: "path", header: t("audit.path"), render: (e) => mono(e.path) },
+  { key: "credential", header: t("audit.credential"), render: (e) => mono(e.credential) },
+  { key: "agent", header: t("audit.client"), render: (e) => <span className="break-all text-muted">{e.user_agent ?? "—"}</span> },
+  { key: "detail", header: t("audit.detail"), render: (e) => e.detail ?? "—" },
 ];
 
 /**
@@ -43,22 +44,22 @@ const COLUMNS: ReadonlyArray<Column<AuditEvent>> = [
  * start of its digest.
  */
 export function AuditPanel() {
+  const t = useT();
   const [kind, setKind] = useState<AuditKind | "">("");
   const events = useAsync(() => api.admin.auditEvents({ kind: kind || undefined, limit: LIST_LIMIT }), [kind]);
   return (
     <Card
-      title="Credential audit log"
+      title={t("audit.title")}
       bodyClassName="p-0"
       actions={
-        <Select aria-label="Event" options={KINDS} value={kind} onChange={(e) => setKind(e.target.value as AuditKind | "")} />
+        <Select aria-label={t("audit.event")} options={kinds(t)} value={kind} onChange={(e) => setKind(e.target.value as AuditKind | "")} />
       }
     >
       <p className="px-3 pt-3 text-xs text-muted">
-        By default, from the 5th refused credential in 15 minutes an address waits longer for each answer, and the 20th locks
-        it out for 15 minutes. Events are kept 90 days.
+        {t("audit.note")}
       </p>
       <ErrorBanner error={events.error} onRetry={events.reload} className="m-3" />
-      <DataTable columns={COLUMNS} rows={events.data?.items} rowKey={(e) => e.event_id} loading={events.loading} empty="No events" />
+      <DataTable columns={columns(t)} rows={events.data?.items} rowKey={(e) => e.event_id} loading={events.loading} empty={t("audit.empty")} />
     </Card>
   );
 }

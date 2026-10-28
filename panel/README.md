@@ -17,6 +17,7 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 * `web/`: React 18, Vite, Tailwind and react-router (hash router).
   * `api/` is the typed client.
   * `features/<page>/` holds the pages; `components/` and `hooks/` are shared.
+  * `i18n/` holds the translations (see [Languages](#languages)).
 
 ## Pages
 
@@ -28,6 +29,12 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 | Generation logs (`#/logs?status=failed` opens filtered) | `memory-generation-log/{list,get}` |
 | Skills | `skill/{list,search,get,versions}` |
 | Metadata: Teams / Users / Assets | Everyone: `meta/team/list`, `meta/team-member/list`, `meta/agent/list`, `meta/asset/list-accessible`<br>System admins: `meta/user/{list,create,delete}`, `meta/user-key/{list,create,revoke}`, `meta/team/{create,update,delete}` (+ `list` with `all`), `meta/team-member/{add,remove}`, `meta/agent/{create,update,delete}` |
+
+## Languages
+
+The Panel speaks English, 繁體中文, 简体中文, Français, Tiếng Việt, Español and Deutsch. It starts in the browser's language (`zh-CN`, `zh-SG` and `zh-Hans` are Simplified Chinese; any other Chinese tag, plain `zh` included, is Traditional Chinese; a regional variant such as `fr-CA` falls back to its language) and keeps the one picked from the menu (sidebar and sign-in page) in this browser. Numbers and relative times follow the language; timestamps stay `YYYY-MM-DD HH:MM:SS`. What Core sends (statuses, kinds, roles, error messages) and identifiers such as `user_id` are shown as they are.
+
+`web/src/i18n/messages/en.ts` is the source: every other catalog is typed against it, so a missing key fails the build, and `test/i18n.test.ts` checks that each message keeps its `{placeholders}`. To add a string, add it to `en.ts` and to every catalog; to add a language, add a catalog and list it in `i18n/locales.ts`.
 
 ## BFF endpoints
 
