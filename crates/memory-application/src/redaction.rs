@@ -503,6 +503,7 @@ impl RedactionService {
         let level = RuleLevel::of(&rule);
         self.authorize(department, caller, &level, Access::Manage)
             .await?;
+        let old_kind = rule.kind.clone();
         if let Some(kind) = input.kind {
             rule.kind = kind;
         }
@@ -513,7 +514,11 @@ impl RedactionService {
             rule.description = description;
         }
         self.check(&rule.kind, &rule.pattern, &rule.description)?;
-        check_kind_level(&rules, &rule.kind, &level)?;
+        // Only a new kind is checked: one the rules for all teams took later
+        // must not lock the rule's owner out of changing anything else.
+        if rule.kind != old_kind {
+            check_kind_level(&rules, &rule.kind, &level)?;
+        }
         self.touch(&mut rule, caller);
         self.save(department, &rule).await?;
         Ok(rule)
@@ -1237,6 +1242,50 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.detail.contains("for all teams"), "{err:?}");
+
+        // The user's own `phone` came first: it stays editable.
+        let mine = service
+            .list(
+                &department,
+                &member,
+                RuleLevel {
+                    team_id: None,
+                    user_id: Some("usr-m".into()),
+                },
+            )
+            .await
+            .unwrap()
+            .user
+            .unwrap()[0]
+            .rule_id
+            .clone();
+        let update = |kind: Option<&str>| UpdateRedactionRuleInput {
+            rule_id: mine.clone(),
+            kind: kind.map(Into::into),
+            pattern: None,
+            description: Some("my phone".into()),
+        };
+        assert!(service
+            .update(&department, &member, update(None))
+            .await
+            .is_ok());
+        assert!(service
+            .update(&department, &member, update(Some("phone")))
+            .await
+            .is_ok());
+        // Renaming to a kind of the rules for all teams is still refused.
+        service
+            .create(
+                &department,
+                &admin,
+                create_at("badge", r"\bB-\d{6}\b", None, None),
+            )
+            .await
+            .unwrap();
+        assert!(service
+            .update(&department, &member, update(Some("badge")))
+            .await
+            .is_err());
     }
 
     #[tokio::test]

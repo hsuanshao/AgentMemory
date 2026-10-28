@@ -32,6 +32,10 @@ export function RedactionPage() {
     !!self,
   );
   const users = useAsync(() => api.admin.users({ limit: LIST_LIMIT }), [], admin);
+  // A user's writes go through the rules of the teams they are in: Try it
+  // offers those (for system admins too, looking at someone else).
+  const testUser = userId || self;
+  const userTeams = useAsync(() => api.meta.teams(testUser, { limit: LIST_LIMIT }), [testUser], tab === "user" && !!testUser);
 
   // Keep the team pointing at one that exists.
   useEffect(() => {
@@ -83,7 +87,7 @@ export function RedactionPage() {
           key={`${tab}:${level.team_id ?? ""}:${level.user_id ?? ""}`}
           level={level}
           title={title}
-          teams={tab === "user" ? teamOptions : undefined}
+          teams={tab === "user" ? (userTeams.data?.items ?? []).map((x) => ({ value: x.team_id, label: x.name })) : undefined}
         />
       )}
     </div>
