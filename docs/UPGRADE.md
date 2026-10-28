@@ -4,6 +4,7 @@
 
 ## Contents
 
+- [To 0.5.0](#to-050)
 - [To 0.4.3](#to-043)
 - [To 0.4.2](#to-042)
 - [To 0.4.1](#to-041)
@@ -19,6 +20,44 @@
   - [D. Check the result](#d-check-the-result)
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
+
+## To 0.5.0
+
+```bash
+git fetch --tags && git checkout v0.5.0
+./upgrade.sh
+```
+
+> [!WARNING]
+> **Going back to 0.4.3 means restoring the backup** ([E. Roll back](#e-roll-back)). When it starts, memory-core runs schema migration 7. Nothing is converted, but 0.4.3 refuses data at schema version 7: it would apply a team's or a user's redaction rules to every team, and drop their level when it saved one.
+
+**Check before upgrading.** Each row links to its section below.
+
+| If … | Then … |
+| --- | --- |
+| `redaction.patterns` (`AGENT_MEMORY_REDACTION_PATTERNS`) holds patterns that should stay with administrators | Every member can now read them, with the rules for all teams ([who reads the rules](#who-reads-the-rules)) |
+| A script calls `/v3/meta/redaction-rule/*` | Nothing to change: without `team_id` or `user_id` it works on the rules for all teams, as before; `list` answers with two more fields ([rules for a team or a user](#rules-for-a-team-or-a-user)) |
+| People open Redaction under Metadata in the Panel | It has its own entry in the menu now |
+
+### Rules for a team or a user
+
+On top of the rules for all teams (the department's, added in 0.4.2), a team's admins add rules for their team, which apply to its members' writes and its shared scenes and persona, and each user adds their own, which apply to their writes in every team. A level only adds redaction. [DISTILLATION §7](ops/DISTILLATION.md#7-secrets-and-redaction) has the table of who changes and reads each level.
+
+- `redaction-rule/list`, `create` and `test` take an optional `team_id` or `user_id`; `test` takes both for a user's writes in that team. `list` also returns `team` or `user` (the level asked for) and `can_edit`.
+- Only the kinds of the rules for all teams are unique: a team or a user may use the same kind as another, so `[REDACTED:phone]` may come from any level.
+- Existing rules stay rules for all teams.
+
+### Who reads the rules
+
+In 0.4.3 only system admins could list redaction rules. Now every member of the department reads the rules for all teams and the deployment's (`redaction.patterns`), a team's members its rules, and a user their own. Changing them stays with system admins (all teams), the team's admins (a team) and the user (their own). The Panel no longer stops other users before Core: Core checks each level.
+
+### Also in this release
+
+These need no action. The [CHANGELOG](../CHANGELOG.md#050---2026-10-28) has the details.
+
+- **Panel languages:** English, Traditional Chinese, Simplified Chinese, French, Vietnamese, Spanish and German, from the browser's language or the menu ([Panel README](../panel/README.md#languages)).
+- **`AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS`** sets `llm.timeoutMs` without editing the config file.
+- **Worker `last_error`** shows only the error of a job that was dead-lettered.
 
 ## To 0.4.3
 

@@ -12,7 +12,7 @@ body:
     attributes:
       label: Version / 版本
       description: "`version` from `curl -s http://<server>:8420/health`, and `amem --version` if a client is involved."
-      placeholder: "memory-core 0.4.3, amem 0.4.3"
+      placeholder: "memory-core 0.5.0, amem 0.5.0"
     validations:
       required: true
   - type: dropdown

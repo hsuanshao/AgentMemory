@@ -6,6 +6,10 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-28
+
+**Read [UPGRADE → To 0.5.0](docs/UPGRADE.md#to-050) before upgrading.** Redaction rules gain a team and a user level, and the Panel gets its own Redaction page and seven languages. Going back to 0.4.3 needs the backup restored (schema migration 7). Members can now read the rules for all teams and their teams' through `redaction-rule/list`.
+
 ### Added
 - Redaction rules for one team or one user, on top of the rules for all teams. A team's admins manage its rules, which apply to its members' writes and its shared scenes and persona; each user manages their own, which apply to their writes in every team. Members can read the rules for all teams and their teams'. Redaction has its own page in the Panel's menu ([DISTILLATION](docs/ops/DISTILLATION.md#7-secrets-and-redaction)). Schema migration 7: going back to an earlier version needs the backup restored.
 - The Panel is available in English, Traditional Chinese, Simplified Chinese, French, Vietnamese, Spanish and German. It starts in the browser's language; the menu in the sidebar and on the sign-in page changes it, and the browser remembers the choice ([Panel README](panel/README.md#languages)).
@@ -164,7 +168,8 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 First public release: memory-core, the L0→L3 distillation pipeline, hybrid recall, the metadata plane, the Monitor Panel, `amem` with plugins for Claude Code, Codex, Antigravity and Hermes, and `install.sh`. Clients authenticate with per-user keys.
 
-[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.5.0
 [0.4.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.3
 [0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
 [0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
