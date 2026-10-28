@@ -6,6 +6,9 @@
 
 ## [未發布]
 
+### 修正
+- memory-core 的 image 在擋住對外 HTTP 的網路也能 build：runtime 階段改用 HTTPS 下載 Debian 套件，不再走 `http://deb.debian.org`。`upgrade.sh` 和 `install.sh` 都會 build 這個 image，所以在這種網路上原本會失敗。
+
 ## [0.5.0] - 2026-10-28
 
 **升級前請先閱讀 [UPGRADE → 升級到 0.5.0](docs/UPGRADE.zh-tw.md#升級到-050)。** 遮罩規則新增團隊與使用者兩層，Panel 有了獨立的「遮罩」頁和七種語言。退回 0.4.3 必須還原備份（schema 遷移 7）。成員現在可以透過 `redaction-rule/list` 檢視全部團隊與所屬團隊的規則。
