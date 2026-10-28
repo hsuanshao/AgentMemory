@@ -244,11 +244,14 @@ flowchart LR
   V --> RRF
   RRF --> CAP["cap by count,<br/>char budget, timeout"]
   CAP --> OUT["memories[]<br/>+ append_system_context:<br/>persona, scene navigation"]
+  CAP -. "include_sources" .-> SRC["source L0 messages<br/>of each atom<br/>(caller's scope, capped)"]
+  SRC -.-> OUT
 ```
 
 - 文件和查詢共用同一個 tokenizer：小寫的拉丁字詞，加上重疊的 CJK bigram。關鍵字分數以最佳結果為基準正規化，所以門檻值不受資料量影響。
 - 沒有 embedding provider 時（`AGENT_MEMORY_EMBEDDING_PROVIDER=none`），召回只用 BM25；回應中的 `strategy` 會標明實際使用的方式。
 - 各整合注入的就是 `append_system_context`：`<user-persona>`、`<scene-navigation>`，以及一段使用說明。
+- **原始對話，只在要求時附上。** 召回搜尋的是 atom，不是原始對話；每個 atom 記著它萃取自哪些 L0 訊息（`source_message_ids`）。帶 `include_sources` 時，每筆召回的 atom 會再附上這些訊息（`ConversationRepository::get_by_ids`）：只在呼叫者自己的範圍（team + agent + user）內讀取，所以蒸餾模型編出來的 id、其他使用者的訊息、已經刪除的訊息都會略過；由舊到新；每個 atom 最多取最近的 `maxMessagesPerMemory` 則、每則最多 `maxCharsPerMessage` 字元、一次召回最多 `maxTotalChars` 字元（`memory.recall.sources`，預設 6／2,000／12,000；`sources_omitted` 是被上限略過的數量）。原文會引用在 `<relevant-memories>` 裡對應的 atom 下面，跳脫方式和其他內容相同。每次送出訊息前的自動召回不會要求原文；agent 在使用者想看當時實際怎麼說時，透過 `memory_recall`（MCP）或 `agentmemory_search`（Hermes）要求，人可以用 `amem recall --sources` 或 Panel 的召回測試。
 - 放進這些區塊的儲存內容（persona、scene 路徑與 summary、atom），凡是可能開始一個標籤的 `<` 都會寫成 `&lt;`：跳過空白與零寬空格這類不可見的格式字元之後，下一個字元是字母、`/`、`!` 或 `?` 的（全形 `＜` 也算）；`x<1` 則維持原樣；每個區塊也標明它是資料、不是指令。所以成員存進共用 agent 的內容，對其他人來說只是被引用的資料：無法關閉區塊，也無法開出一個看起來像系統脈絡的區塊。儲存的內容不變，轉義是在輸出時做。透過 API 新建的 scene 路徑只能是以 `/` 分隔、由字母、數字、`-`、`_`、`.` 組成的片段；summary 最多 500 字元。已經存在的 scene 保留原名稱，仍然可以更新。
 
 ## 6. `amem` client 與各整合
@@ -287,7 +290,7 @@ sequenceDiagram
 | 游標 | 每個 host 和 session 各一份，存在 `~/.local/share/agent-memory/state`，每次 Stop 只送新的內容 | `hooks.rs` |
 | 遮蔽 | 比對 API key、token、私鑰、`password=` 這類字串、以自然語言提到的密碼（英文與亞洲主要語言），以及長得像密碼的字串，替換成 `[REDACTED:<種類>]`。遮蔽在截斷之前執行，避免截斷後留下半個秘密。memory-core 在每條寫入路徑上執行同一個 crate | `memory-redact`（`crates/memory-client/redact`，MIT） |
 | 佇列 | 每個請求一個 JSON 檔，放在 `…/agent-memory/queue`，從最舊的開始重送；`.flush.lock`（超過 120 秒視為失效）避免重複送出 | `queue.rs` |
-| MCP | stdio server，提供 `memory_recall` 工具，讓 agent 能主動搜尋記憶 | `mcp.rs` |
+| MCP | stdio server，提供 `memory_recall` 工具，讓 agent 能主動搜尋記憶；`include_sources` 會附上每筆記憶的原始對話 | `mcp.rs` |
 
 各 host 的對接方式：
 

@@ -237,11 +237,14 @@ flowchart LR
   V --> RRF
   RRF --> CAP["cap by count,<br/>char budget, timeout"]
   CAP --> OUT["memories[]<br/>+ append_system_context:<br/>persona, scene navigation"]
+  CAP -. "include_sources" .-> SRC["source L0 messages<br/>of each atom<br/>(caller's scope, capped)"]
+  SRC -.-> OUT
 ```
 
 - Documents and queries share one tokenizer: lower-cased Latin words plus overlapping CJK bigrams. Keyword scores are normalized against the best hit, so the threshold doesn't depend on corpus size.
 - Without an embedding provider (`AGENT_MEMORY_EMBEDDING_PROVIDER=none`), recall is BM25 only; `strategy` in the response says which was used.
 - `append_system_context` is what the integrations inject: `<user-persona>`, `<scene-navigation>`, and a short guide on how to use them.
+- **Source conversation, only when asked.** Recall searches atoms, not raw turns; an atom keeps the ids of the L0 messages it was distilled from (`source_message_ids`). With `include_sources`, each recalled atom also gets those messages (`ConversationRepository::get_by_ids`): read only in the caller's own scope (team + agent + user), so an id the extractor made up, another user's message or one deleted since is skipped; oldest first; at most the most recent `maxMessagesPerMemory` per atom, `maxCharsPerMessage` each and `maxTotalChars` per recall (`memory.recall.sources`, default 6 / 2,000 / 12,000; `sources_omitted` counts what the limits left out). They are quoted under their atom in `<relevant-memories>`, escaped like everything else. The automatic recall before every prompt never asks for them; agents ask through `memory_recall` (MCP) or `agentmemory_search` (Hermes) when the user wants what was actually said, people through `amem recall --sources` or the Panel's recall test.
 - Everything stored that goes into these blocks (the persona, scene paths and summaries, atoms) has every `<` that could start a tag written as `&lt;`: one whose next character, skipping whitespace and invisible formatting such as zero-width spaces, is a letter, `/`, `!` or `?` (fullwidth `＜` too); `x<1` stays as written and each block says it is data, not instructions. What a member stores in a shared agent therefore reaches the others as quoted data: it cannot close a block or open one that looks like system context. Stored text is unchanged; escaping happens at output. New scene paths written through the API are letters, digits, `-`, `_` and `.` in `/`-separated segments; summaries are at most 500 characters. An existing scene keeps its name and can still be updated.
 
 ## 6. The `amem` client and integrations
@@ -280,7 +283,7 @@ sequenceDiagram
 | Cursors | Per host and session under `~/.local/share/agent-memory/state`, so each Stop sends only new lines | `hooks.rs` |
 | Redaction | Rules for API keys, tokens, private keys, `password=`-style pairs, passwords named in natural language (English and the major languages of Asia) and password-shaped strings → `[REDACTED:<kind>]`. Runs before truncation, so a cut can't expose half a secret. memory-core runs the same crate on every write path | `memory-redact` (`crates/memory-client/redact`, MIT) |
 | Queue | One JSON file per request in `…/agent-memory/queue`, replayed oldest first; `.flush.lock` (stale after 120 s) prevents double sends | `queue.rs` |
-| MCP | stdio server exposing `memory_recall`, so the agent can search on purpose | `mcp.rs` |
+| MCP | stdio server exposing `memory_recall`, so the agent can search on purpose; `include_sources` adds each memory's source conversation | `mcp.rs` |
 
 Host adapters:
 

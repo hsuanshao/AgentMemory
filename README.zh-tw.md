@@ -133,7 +133,7 @@ cd panel && npm install && npm run dev # Panel（Vite + Hono）
    L3 Persona（persona.md + 自動附加 Scene Navigation）
 ```
 
-召回（`/v3/recall`）：清理先前注入的區塊 → L1 混合檢索（BM25 + 向量 + RRF k=60，無 embedding 時降級 BM25）→ 門檻、筆數與字元預算 → 輸出 `<relevant-memories>` 與 `<user-persona>`、`<scene-navigation>`。
+召回（`/v3/recall`）：清理先前注入的區塊 → L1 混合檢索（BM25 + 向量 + RRF k=60，無 embedding 時降級 BM25）→ 門檻、筆數與字元預算 → 輸出 `<relevant-memories>` 與 `<user-persona>`、`<scene-navigation>`。帶 `include_sources` 時，每個 atom 會附上它萃取自呼叫者哪些 L0 訊息（有上限；自動召回不會附上）。
 
 中文全文檢索：以「CJK 重疊雙字詞 + 拉丁字詞」切詞後交給 FTS5，免字典且結果可預測。
 

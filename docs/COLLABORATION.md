@@ -246,7 +246,7 @@ flowchart LR
 
 - **L1** runs per user session (`MemoryScope`): it reads that user's new conversation rows and writes that user's facts.
 - **L2** runs per profile (`ProfileScope`). It reads new facts with `after_seq(profile, …)`, which means the facts of **every user** of that team and agent, and merges them into the agent's scenes. **L3** rebuilds the persona from those scenes.
-- **Recall** combines both scopes. It searches the **caller's** L1 facts (`AtomSelector::Scope`) and appends the **agent's** persona and scene navigation (`ProfileScope`). This is the mechanism behind the sharing rule in §2.
+- **Recall** combines both scopes. It searches the **caller's** L1 facts (`AtomSelector::Scope`) and appends the **agent's** persona and scene navigation (`ProfileScope`). This is the mechanism behind the sharing rule in §2. Asked for the source conversation of its facts (`include_sources`), it reads only the **caller's** own L0 messages: another member's raw conversation never appears, even when a shared scene or persona was built from it.
 - **Skills** are stored per team with an owner agent and owner user. Members of the team can read and search them (`team_scope` searches the whole team; the default listing shows the calling agent's skills). Only the owner agent can change one (`SKILL_NOT_OWNER`). What skill extraction proposes for an agent waits until the conversation's user (on an agent they may use), an admin of the team, or a system admin approves it (Panel → Skills).
 
 ## 11. Metadata-plane rules

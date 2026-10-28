@@ -133,7 +133,7 @@ cd panel && npm install && npm run dev # Panel (Vite + Hono)
    L3 Persona (persona.md + auto-appended Scene Navigation)
 ```
 
-Recall (`/v3/recall`): strip previously injected blocks → L1 hybrid retrieval (BM25 + vector + RRF k=60, falls back to BM25 without embeddings) → thresholds, count and character budgets → output `<relevant-memories>` plus `<user-persona>` and `<scene-navigation>`.
+Recall (`/v3/recall`): strip previously injected blocks → L1 hybrid retrieval (BM25 + vector + RRF k=60, falls back to BM25 without embeddings) → thresholds, count and character budgets → output `<relevant-memories>` plus `<user-persona>` and `<scene-navigation>`. With `include_sources`, each atom also carries the caller's L0 messages it was distilled from (capped; never in the automatic recall).
 
 Chinese full-text search: text is tokenized into "overlapping CJK bigrams + Latin words" before going to FTS5 — no dictionary needed, and results are predictable.
 
