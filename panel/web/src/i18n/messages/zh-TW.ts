@@ -201,6 +201,11 @@ export const zhTW: Messages = {
   "recall.memories": "記憶",
   "recall.strategy": "策略：{strategy}",
   "recall.nothing": "沒有召回任何內容",
+  "recall.includeSources": "附上原始對話",
+  "recall.includeSourcesHint": "同時顯示每筆記憶萃取自哪段對話。自動召回不會附上。",
+  "recall.sourcesTitle": "原始對話",
+  "recall.sourceCut": "（已截斷）",
+  "recall.sourcesOmitted": "另有 {count} 則來源訊息未顯示",
 
   // Generation logs
   "logs.title": "生成紀錄",

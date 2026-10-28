@@ -65,6 +65,14 @@ pub trait ConversationRepository: Send + Sync {
         filter: &ConversationFilter,
         limit: usize,
     ) -> DomainResult<Vec<Scored<ConversationMessage>>>;
+    /// The scope's messages among `ids`, oldest first. An id of another
+    /// scope, or of a message no longer stored, is left out.
+    async fn get_by_ids(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        ids: &[String],
+    ) -> DomainResult<Vec<ConversationMessage>>;
     async fn count(
         &self,
         department: &DepartmentId,

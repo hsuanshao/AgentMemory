@@ -128,6 +128,7 @@ amem login --server-url https://memory.example.com \
 ```bash
 amem status                 # 顯示設定（key 會遮蔽）與佇列數量
 amem recall "release plan"  # 印出 agent 會收到的內容
+amem recall --sources "release plan"  # 同時附上每筆記憶來自的原始對話
 ```
 
 同一台機器上的所有工具共用這份設定。也可以用 `AMEM_SERVER_URL`、`AMEM_USER_KEY`、`AMEM_TEAM_ID`、`AMEM_AGENT_ID`、`AMEM_DEPARTMENT_ID` 針對單一程序覆寫。若要讓每個工具使用不同的 agent，請使用下面各 plugin 的設定，或在該工具的環境變數中設定 `AMEM_AGENT_ID`。
@@ -156,7 +157,7 @@ Plugin 的行為：
 | `SessionStart` | 記下這個 session 的 context 是新的（啟動、resume、`/clear`、fork、壓縮），下一個 prompt 會再附上 persona 和 scene 導覽。 |
 | `UserPromptSubmit` | 依你的 prompt 進行 recall，把記憶加入 context（最多約 9,500 字元）。persona 和 scene 導覽只在和這個 session 上次收到的不同時加入，另外每 20 個 prompt 加入一次（`AMEM_SYSTEM_CONTEXT_EVERY`）。 |
 | `Stop` | 送出這一輪：你的 prompt、回覆，以及所有 tool call 與結果。只送出上次 Stop 之後新增的內容。 |
-| MCP server `agent-memory` | 提供 `memory_recall` 工具，讓 Claude 可以主動搜尋記憶。 |
+| MCP server `agent-memory` | 提供 `memory_recall` 工具，讓 Claude 可以主動搜尋記憶；帶 `include_sources` 時會一併回傳每筆記憶來自的原始對話，用在你想看當時實際怎麼說的時候。 |
 
 伺服器出錯也不會卡住 Claude Code。hook 會安靜結束，錯誤寫入 `~/.local/share/agent-memory/amem.log`。
 

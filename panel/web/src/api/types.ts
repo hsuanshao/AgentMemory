@@ -198,11 +198,26 @@ export interface WriteResult {
 
 // ---------- recall ----------
 
+/** A message an atom was distilled from (recall with `include_sources`). */
+export interface RecallSource {
+  id: string;
+  role: string;
+  session_id: string;
+  timestamp: string;
+  content: string;
+  /** Cut at the per-message limit. */
+  truncated?: boolean;
+}
+
 export interface RecallMemory {
   id: string;
   type: string;
   content: string;
   score: number;
+  /** With `include_sources`: its source messages, oldest first. */
+  sources?: RecallSource[];
+  /** With `include_sources`: sources left out by the limits. */
+  sources_omitted?: number;
 }
 
 export interface RecallResult {

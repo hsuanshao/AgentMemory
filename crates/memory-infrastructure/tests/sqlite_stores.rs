@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+#[path = "support/conversations_by_ids.rs"]
+mod conversations_by_ids;
 #[path = "support/embedding_backfill.rs"]
 mod embedding_backfill;
 #[path = "support/profile_versions.rs"]
@@ -584,6 +586,12 @@ async fn a_service_that_refuses_every_input_stops_the_run_as_misconfigured() {
     embedder.refuse_all.store(false, Ordering::Relaxed);
     let fixed = backfill.department(&department, 200).await.unwrap();
     assert_eq!((fixed.embedded, fixed.complete), (100, true), "{fixed:?}");
+}
+
+#[tokio::test]
+async fn conversations_are_read_by_id_within_their_scope() {
+    let (_dir, pool, department) = setup();
+    conversations_by_ids::exercise(&SqliteMemoryStore::new(pool, None), &department).await;
 }
 
 #[tokio::test]

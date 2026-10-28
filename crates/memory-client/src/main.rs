@@ -14,7 +14,9 @@ const USAGE: &str = "amem — Agent Memory client
 USAGE:
   amem login --server-url URL --user-key KEY|- --team-id ID --agent-id ID [--department-id ID] [--ca-cert PEM] [--no-verify]
   amem status                      Show configuration (key masked) and queue size
-  amem recall [--json] QUERY...    Recall memories for QUERY
+  amem recall [--json] [--sources] QUERY...
+                                   Recall memories for QUERY; --sources adds the
+                                   conversation each one was distilled from
   amem capture --format openai --session ID < messages.json
   amem flush                       Send queued captures
   amem hook claude-code session-start|user-prompt-submit|stop
@@ -82,7 +84,7 @@ fn login(args: &[String]) -> Result<(), String> {
     if !args.iter().any(|a| a == "--no-verify") {
         // A recall exercises the key, the team membership and the agent.
         Api::new(cfg.clone(), Duration::from_secs(15))?
-            .recall("connection check", Some(1))
+            .recall("connection check", Some(1), false)
             .map_err(|e| format!("verification failed: {e}"))?;
     }
     let path = config_path();
@@ -122,25 +124,29 @@ fn status() -> Result<(), String> {
     Ok(())
 }
 
-/// `recall [--json] [--] QUERY…`: after `--` every word is the query, so a
-/// query that starts with `-` (or is `--json`) is never read as an option.
+/// `recall [--json] [--sources] [--] QUERY…`: after `--` every word is the
+/// query, so a query that starts with `-` (or is `--json`) is never read as
+/// an option.
 fn recall(args: &[String]) -> Result<(), String> {
-    let (json, query): (bool, Vec<&str>) = match args.iter().position(|a| a == "--") {
+    const FLAGS: [&str; 2] = ["--json", "--sources"];
+    let (options, query): (&[String], Vec<&str>) = match args.iter().position(|a| a == "--") {
         Some(i) => (
-            args[..i].iter().any(|a| a == "--json"),
+            &args[..i],
             args[i + 1..].iter().map(String::as_str).collect(),
         ),
         None => (
-            args.iter().any(|a| a == "--json"),
+            args,
             args.iter()
-                .filter(|a| *a != "--json")
+                .filter(|a| !FLAGS.contains(&a.as_str()))
                 .map(String::as_str)
                 .collect(),
         ),
     };
+    let json = options.iter().any(|a| a == "--json");
+    let sources = options.iter().any(|a| a == "--sources");
     let api = Api::new(Config::load()?, Duration::from_secs(15))?;
     let data = api
-        .recall(&query.join(" "), None)
+        .recall(&query.join(" "), None, sources)
         .map_err(|e| e.to_string())?;
     if json {
         println!("{data}");

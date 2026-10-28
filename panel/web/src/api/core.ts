@@ -71,8 +71,13 @@ export function createCoreApi(client: PanelClient) {
 
     verifyUserKey: (userKey: string) => call<AuthVerifyResult>("meta/auth/verify", { user_key: userKey }),
 
-    recall: (scope: Scope, query: string, maxResults?: number) =>
-      call<RecallResult>("recall", { ...scope, query, max_results: maxResults }),
+    recall: (scope: Scope, query: string, maxResults?: number, includeSources = false) =>
+      call<RecallResult>("recall", {
+        ...scope,
+        query,
+        max_results: maxResults,
+        ...(includeSources ? { include_sources: true } : {}),
+      }),
 
     conversation: {
       query: (scope: Scope, page: Page & { session_id?: string }) =>

@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+#[path = "support/conversations_by_ids.rs"]
+mod conversations_by_ids;
 #[path = "support/embedding_backfill.rs"]
 mod embedding_backfill;
 #[path = "support/profile_versions.rs"]
@@ -705,6 +707,15 @@ async fn atoms_without_an_embedding_get_one_later() {
         without,
     )
     .await;
+    teardown(&db, &department).await;
+}
+
+#[tokio::test]
+async fn conversations_are_read_by_id_within_their_scope() {
+    let Some((db, department)) = setup().await else {
+        return;
+    };
+    conversations_by_ids::exercise(&PostgresMemoryStore::new(Arc::clone(&db)), &department).await;
     teardown(&db, &department).await;
 }
 

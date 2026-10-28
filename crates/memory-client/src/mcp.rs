@@ -21,7 +21,13 @@ fn tools() -> Value {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "What to look for, in natural language or keywords"},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": 20}
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 20},
+                "include_sources": {
+                    "type": "boolean",
+                    "description": "Also return the original conversation each memory was distilled from. \
+                                    Set it only when the user asks what was actually said, for exact wording, \
+                                    or to see the original messages; it makes the answer much longer."
+                }
             },
             "required": ["query"]
         }
@@ -36,9 +42,10 @@ fn call_tool(params: &Value) -> Value {
     let args = &params["arguments"];
     let query = args["query"].as_str().unwrap_or_default();
     let max = args["max_results"].as_u64().map(|n| n.clamp(1, 20));
+    let sources = args["include_sources"].as_bool().unwrap_or(false);
     let result = Config::load()
         .and_then(|c| Api::new(c, Duration::from_secs(15)))
-        .and_then(|api| api.recall(query, max).map_err(|e| e.to_string()));
+        .and_then(|api| api.recall(query, max, sources).map_err(|e| e.to_string()));
     match result {
         Ok(data) => {
             let context = recall_context(&data);

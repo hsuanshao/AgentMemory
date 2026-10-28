@@ -98,7 +98,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 
 | 路徑 | 說明 |
 | --- | --- |
-| `/v3/recall` | Body `{query, max_results?, strategy?}` 加上範圍。回傳 `{strategy, memories: [{id, type, content, score}], prepend_context, append_system_context}`。各整合直接注入 `prepend_context` 與 `append_system_context`（persona、場景導覽） |
+| `/v3/recall` | Body `{query, max_results?, strategy?, include_sources?}` 加上範圍。回傳 `{strategy, memories: [{id, type, content, score}], prepend_context, append_system_context}`。各整合直接注入 `prepend_context` 與 `append_system_context`（persona、場景導覽）。`include_sources: true` 會在每筆記憶下附上它萃取自呼叫者的哪些訊息（`sources: [{id, role, session_id, timestamp, content, truncated?}]`，由舊到新；`sources_omitted` 是被 `memory.recall.sources` 上限略過的數量），也會引用在 `prepend_context` 裡；用在使用者想看原始說法的時候，不用於自動召回 |
 
 ### 資料平面（L0–L3）
 

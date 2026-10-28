@@ -201,6 +201,11 @@ export const vi: Messages = {
   "recall.memories": "Ký ức",
   "recall.strategy": "chiến lược: {strategy}",
   "recall.nothing": "Không truy hồi được gì",
+  "recall.includeSources": "Kèm cuộc trò chuyện gốc",
+  "recall.includeSourcesHint": "Hiển thị thêm cuộc trò chuyện mà mỗi ký ức được rút ra. Truy hồi tự động không bao giờ kèm theo.",
+  "recall.sourcesTitle": "Cuộc trò chuyện gốc",
+  "recall.sourceCut": "(đã cắt)",
+  "recall.sourcesOmitted": "Còn {count} tin nhắn nguồn không hiển thị",
 
   // Generation logs
   "logs.title": "Nhật ký tạo",

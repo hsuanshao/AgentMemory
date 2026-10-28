@@ -201,6 +201,11 @@ export const de: Messages = {
   "recall.memories": "Erinnerungen",
   "recall.strategy": "Strategie: {strategy}",
   "recall.nothing": "Nichts abgerufen",
+  "recall.includeSources": "Ursprüngliches Gespräch einbeziehen",
+  "recall.includeSourcesHint": "Zeigt zusätzlich das Gespräch, aus dem jede Erinnerung stammt. Der automatische Abruf tut das nie.",
+  "recall.sourcesTitle": "Ursprüngliches Gespräch",
+  "recall.sourceCut": "(gekürzt)",
+  "recall.sourcesOmitted": "{count} weitere Quellnachrichten nicht angezeigt",
 
   // Generation logs
   "logs.title": "Generierungsprotokolle",

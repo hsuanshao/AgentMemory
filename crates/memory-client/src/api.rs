@@ -98,10 +98,21 @@ impl Api {
         }
     }
 
-    pub fn recall(&self, query: &str, max_results: Option<u64>) -> Result<Value, ApiError> {
+    /// `include_sources` adds the conversation each memory was distilled
+    /// from: only when the user wants what was actually said, never for the
+    /// automatic recall of every prompt.
+    pub fn recall(
+        &self,
+        query: &str,
+        max_results: Option<u64>,
+        include_sources: bool,
+    ) -> Result<Value, ApiError> {
         let mut body = self.scoped(json!({"query": query}));
         if let Some(n) = max_results {
             body["max_results"] = json!(n);
+        }
+        if include_sources {
+            body["include_sources"] = json!(true);
         }
         self.post("recall", &body)
     }
@@ -160,7 +171,7 @@ mod tests {
             Duration::from_secs(5),
         )
         .unwrap();
-        let err = api.recall("q", None).unwrap_err();
+        let err = api.recall("q", None, false).unwrap_err();
         assert!(
             matches!(err, ApiError::Retryable(ref m) if m.contains("redirects to")),
             "{err}"
@@ -169,6 +180,30 @@ mod tests {
             reached.recv_timeout(Duration::from_millis(300)).is_err(),
             "the key went to the redirect"
         );
+    }
+
+    #[test]
+    fn sources_are_asked_for_only_when_wanted() {
+        for (wanted, expect) in [(false, false), (true, true)] {
+            let (server, request) = serve_once(
+                "HTTP/1.1 200 OK\r\ncontent-length: 25\r\n\r\n{\"code\":0,\"data\":{}}   ",
+            );
+            let api = Api::new(
+                Config {
+                    server_url: server,
+                    department_id: "default".into(),
+                    user_key: "sk-mem-secret".into(),
+                    team_id: "t".into(),
+                    agent_id: "a".into(),
+                    ..Config::default()
+                },
+                Duration::from_secs(5),
+            )
+            .unwrap();
+            let _ = api.recall("q", None, wanted);
+            let sent = request.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(sent.contains(r#""include_sources":true"#), expect, "{sent}");
+        }
     }
 
     #[test]

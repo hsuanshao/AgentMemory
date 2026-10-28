@@ -142,6 +142,12 @@ class AgentMemoryProvider(MemoryProvider):
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "what to look for"},
+                    "include_sources": {
+                        "type": "boolean",
+                        "description": ("also return the original conversation each memory was "
+                                        "distilled from; only when the user asks what was actually "
+                                        "said or for exact wording"),
+                    },
                 },
                 "required": ["query"],
             },
@@ -151,7 +157,8 @@ class AgentMemoryProvider(MemoryProvider):
         if tool_name != "agentmemory_search":
             return json.dumps({"error": f"unknown tool {tool_name}"})
         try:
-            data = json.loads(_run(["recall", "--json", "--", str(args.get("query", ""))],
+            sources = ["--sources"] if args.get("include_sources") is True else []
+            data = json.loads(_run(["recall", "--json", *sources, "--", str(args.get("query", ""))],
                                    timeout=_RECALL_TIMEOUT))
             return json.dumps({"memories": data.get("memories", []),
                                "strategy": data.get("strategy")}, ensure_ascii=False)

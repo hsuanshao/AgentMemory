@@ -44,13 +44,33 @@ const L3_REPLY: &str =
     "```markdown\n# User Narrative Profile\n> **Archetype**: careful shipper\n```";
 const SKILL_REPLY: &str = r###"{"actions":[{"action":"create","name":"release-checklist","content":"---\nname: release-checklist\ndescription: Checklist before shipping a release\n---\n1. Run integration tests\n2. Tag and release"}],"summary":"saved release checklist"}"###;
 
+/// L1's answer to a turn marked `sources-check`: one atom citing every
+/// message it was shown, plus an id that does not exist.
+fn l1_sources_reply(input: &str) -> String {
+    let ids: Vec<String> = input
+        .split(r#""message_id":""#)
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .map(str::to_owned)
+        .chain(["msg-made-up".to_owned()])
+        .collect();
+    json!([{"scene_name": "I (the AI) am setting up smoke tests with the user", "memories": [
+        {"content": "The smoke tests use port 28520", "type": "episodic", "priority": 85,
+         "source_message_ids": ids}]}])
+    .to_string()
+}
+
 /// Picks the canned reply by the system prompt's opening words.
 async fn fake_llm(Json(req): Json<Value>) -> Json<Value> {
     let system = req["messages"][0]["content"].as_str().unwrap_or_default();
+    let sources_reply;
     let reply = if system.starts_with("You are a scene-segmentation") {
         let input = req["messages"][1]["content"].as_str().unwrap_or_default();
         if input.contains("redaction-check") {
             L1_SECRET_REPLY
+        } else if input.contains("sources-check") {
+            sources_reply = l1_sources_reply(input);
+            &sources_reply
         } else {
             L1_REPLY
         }
@@ -961,6 +981,66 @@ async fn redaction_rules_for_every_team_a_team_and_a_user() {
         )
         .await;
     assert_ne!(others["code"], 0, "another user's rules: {others}");
+}
+
+/// A recall shows the conversation an atom was distilled from only when
+/// asked (`include_sources`), and skips a source id that does not exist.
+#[tokio::test(flavor = "multi_thread")]
+async fn recall_shows_the_source_conversation_only_when_asked() {
+    let (_data, client) = start().await;
+    let added = client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "src", "messages": [
+                {"role": "user", "content": "sources-check: the smoke tests use port 28520"},
+                {"role": "assistant", "content": "Noted, smoke tests on port 28520"}
+            ]})),
+        )
+        .await;
+    assert_eq!(added["code"], 0, "{added}");
+    client.wait_for(|s| s["l1"]["total"] == 1).await;
+
+    let plain = client
+        .call(
+            "/v3/recall",
+            client.scoped(json!({"query": "smoke tests port"})),
+        )
+        .await;
+    assert_eq!(plain["code"], 0, "{plain}");
+    assert!(
+        plain["data"]["memories"][0].get("sources").is_none(),
+        "{plain}"
+    );
+    let context = plain["data"]["prepend_context"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!context.contains("Original conversation"), "{context}");
+
+    let with = client
+        .call(
+            "/v3/recall",
+            client.scoped(json!({"query": "smoke tests port", "include_sources": true})),
+        )
+        .await;
+    assert_eq!(with["code"], 0, "{with}");
+    let memory = &with["data"]["memories"][0];
+    let sources = memory["sources"].as_array().expect("sources");
+    let roles: Vec<&str> = sources.iter().filter_map(|s| s["role"].as_str()).collect();
+    assert_eq!(roles, ["user", "assistant"], "{with}");
+    assert!(sources[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("port 28520"));
+    assert!(
+        memory.get("sources_omitted").is_none(),
+        "made-up id is skipped: {with}"
+    );
+    let context = with["data"]["prepend_context"].as_str().unwrap_or_default();
+    assert!(context.contains("Original conversation"), "{context}");
+    assert!(
+        context.contains("Noted, smoke tests on port 28520"),
+        "{context}"
+    );
 }
 
 /// Secrets are redacted on every server write path, whatever the client

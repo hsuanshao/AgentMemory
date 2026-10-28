@@ -258,6 +258,34 @@ impl ConversationRepository for SqliteMemoryStore {
             .await
     }
 
+    async fn get_by_ids(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        ids: &[String],
+    ) -> DomainResult<Vec<ConversationMessage>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut w = Where::default();
+        scope_where(&mut w, scope);
+        w.in_list("id", ids);
+        self.pool
+            .get(department)?
+            .call(move |conn| {
+                let sql = format!(
+                    "SELECT {CONV_COLUMNS} FROM conversations {} ORDER BY timestamp_ms, id",
+                    w.sql()
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt
+                    .query_map(params_from_iter(w.params.iter()), conversation_from_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+    }
+
     async fn delete_by_ids(
         &self,
         department: &DepartmentId,

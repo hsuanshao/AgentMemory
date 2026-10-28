@@ -201,6 +201,11 @@ export const es: Messages = {
   "recall.memories": "Memorias",
   "recall.strategy": "estrategia: {strategy}",
   "recall.nothing": "No se recuperó nada",
+  "recall.includeSources": "Incluir la conversación de origen",
+  "recall.includeSourcesHint": "Muestra también la conversación de la que se extrajo cada memoria. La recuperación automática nunca lo hace.",
+  "recall.sourcesTitle": "Conversación de origen",
+  "recall.sourceCut": "(recortado)",
+  "recall.sourcesOmitted": "{count} mensajes de origen más no se muestran",
 
   // Generation logs
   "logs.title": "Registros de generación",

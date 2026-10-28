@@ -181,6 +181,17 @@ impl MemoryService {
             .await
     }
 
+    /// Messages of `scope` among `ids`, oldest first: the sources a recall
+    /// shows under its atoms.
+    pub async fn conversation_by_ids(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        ids: &[String],
+    ) -> DomainResult<Vec<ConversationMessage>> {
+        self.conversations.get_by_ids(department, scope, ids).await
+    }
+
     pub async fn delete_conversation(
         &self,
         department: &DepartmentId,

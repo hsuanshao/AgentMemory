@@ -201,6 +201,11 @@ export const zhCN: Messages = {
   "recall.memories": "记忆",
   "recall.strategy": "策略：{strategy}",
   "recall.nothing": "未召回任何内容",
+  "recall.includeSources": "附上原始对话",
+  "recall.includeSourcesHint": "同时显示每条记忆提取自哪段对话。自动召回不会附上。",
+  "recall.sourcesTitle": "原始对话",
+  "recall.sourceCut": "（已截断）",
+  "recall.sourcesOmitted": "另有 {count} 条来源消息未显示",
 
   // Generation logs
   "logs.title": "生成日志",

@@ -205,6 +205,11 @@ export const en = {
   "recall.memories": "Memories",
   "recall.strategy": "strategy: {strategy}",
   "recall.nothing": "Nothing recalled",
+  "recall.includeSources": "Include source conversation",
+  "recall.includeSourcesHint": "Also show the conversation each memory was distilled from. Automatic recall never does.",
+  "recall.sourcesTitle": "Source conversation",
+  "recall.sourceCut": "(cut)",
+  "recall.sourcesOmitted": "{count} more source messages not shown",
 
   // Generation logs
   "logs.title": "Generation logs",

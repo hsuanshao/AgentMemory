@@ -128,6 +128,7 @@ amem login --server-url https://memory.example.com \
 ```bash
 amem status                 # settings (key masked) and queue size
 amem recall "release plan"  # prints what an agent would receive
+amem recall --sources "release plan"  # also the conversation each memory came from
 ```
 
 All hosts on this machine share these settings. You can override them per process with `AMEM_SERVER_URL`, `AMEM_USER_KEY`, `AMEM_TEAM_ID`, `AMEM_AGENT_ID` and `AMEM_DEPARTMENT_ID`. To give each tool its own agent, use the plugin settings below or set `AMEM_AGENT_ID` in that tool's environment.
@@ -156,7 +157,7 @@ What the plugin does:
 | `SessionStart` | Notes that the session's context is new (start, resume, `/clear`, fork, compaction), so the next prompt gets the persona and scene navigation again. |
 | `UserPromptSubmit` | Recalls memories for the prompt and adds them as context (at most ~9,500 characters). The persona and scene navigation are added only when they changed since this session last got them, and every 20 prompts (`AMEM_SYSTEM_CONTEXT_EVERY`). |
 | `Stop` | Sends the turn: your prompt, the replies, and every tool call and result. Only lines added since the last Stop are sent. |
-| MCP server `agent-memory` | Tool `memory_recall`, so Claude can search memory on purpose. |
+| MCP server `agent-memory` | Tool `memory_recall`, so Claude can search memory on purpose; with `include_sources` it also returns the conversation each memory was distilled from, for when you ask what was actually said. |
 
 A failing server never blocks Claude Code. The hooks exit silently and log to `~/.local/share/agent-memory/amem.log`.
 

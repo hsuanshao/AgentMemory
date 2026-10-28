@@ -394,6 +394,8 @@ pub struct RecallConfig {
     pub timeout_ms: u64,
     pub max_chars_per_memory: usize,
     pub max_total_recall_chars: usize,
+    /// Limits of a recall with `include_sources`.
+    pub sources: RecallSourcesConfig,
 }
 
 impl Default for RecallConfig {
@@ -405,6 +407,26 @@ impl Default for RecallConfig {
             timeout_ms: 5000,
             max_chars_per_memory: 0,
             max_total_recall_chars: 0,
+            sources: RecallSourcesConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RecallSourcesConfig {
+    pub max_messages_per_memory: usize,
+    pub max_chars_per_message: usize,
+    pub max_total_chars: usize,
+}
+
+impl Default for RecallSourcesConfig {
+    fn default() -> Self {
+        let d = memory_application::memory::recall::SourceLimits::default();
+        Self {
+            max_messages_per_memory: d.max_messages_per_memory,
+            max_chars_per_message: d.max_chars_per_message,
+            max_total_chars: d.max_total_chars,
         }
     }
 }

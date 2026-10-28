@@ -116,7 +116,7 @@ These routes need `x-memory-user-key`. Scopes, generation logs and dead letters 
 
 | Path | Notes |
 | --- | --- |
-| `/v3/recall` | Body `{query, max_results?, strategy?}` + scope. Returns `{strategy, memories: [{id, type, content, score}], prepend_context, append_system_context}`. Integrations inject `prepend_context` and `append_system_context` (persona, scene navigation) as they are |
+| `/v3/recall` | Body `{query, max_results?, strategy?, include_sources?}` + scope. Returns `{strategy, memories: [{id, type, content, score}], prepend_context, append_system_context}`. Integrations inject `prepend_context` and `append_system_context` (persona, scene navigation) as they are. `include_sources: true` adds, under each memory, the caller's messages it was distilled from (`sources: [{id, role, session_id, timestamp, content, truncated?}]`, oldest first; `sources_omitted` counts those left out by `memory.recall.sources`) and quotes them in `prepend_context`; for when the user wants what was actually said, not for automatic recall |
 
 ### Data plane (L0–L3)
 

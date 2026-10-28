@@ -6,6 +6,12 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Added
+- Recall can show the conversation each memory was distilled from: `include_sources` on `/v3/recall`, the MCP `memory_recall` tool and the Hermes `agentmemory_search` tool, `amem recall --sources`, and a checkbox in the Panel's recall test. Only the caller's own messages are shown, oldest first, within `memory.recall.sources` (6 messages per memory, 2,000 characters each, 12,000 in all by default). The automatic recall of every prompt never includes them ([API](docs/API.md)).
+
+### Changed
+- The recall tools guide no longer tells the agent to search conversations, which it had no tool for; it asks for the source conversation when the exact wording matters.
+
 ### Fixed
 - `skill/proposal/list` accepts a call without `agent_id`, as documented: a team admin lists the whole team's pending proposals in one call, and each caller still sees only the proposals they may review. The call used to be refused with `400 agent_id is required`. `skill/proposal/approve` and `reject` need only `task_id` and `index` (#77).
 - The `password-shape` redaction rule leaves git revisions of a commit SHA alone (`a1b2c3d^1`, `f433d90~1..f433d90`), so a distilled fact keeps the commit it refers to. Revisions of a ref name such as `v0.4.3^1` are still redacted: by their shape they cannot be told from a password ending in `^1` (#74).

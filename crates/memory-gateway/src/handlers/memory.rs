@@ -641,6 +641,12 @@ pub async fn recall(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
         .get("max_results")
         .and_then(Value::as_u64)
         .map(|v| v as usize);
+    // The source messages under each atom, only when asked: for when the
+    // user wants what was actually said.
+    let include_sources = body
+        .get("include_sources")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let result = s
         .services
         .recall
@@ -650,6 +656,7 @@ pub async fn recall(State(s): State<SharedState>, ctx: Ctx, JsonBody(body): Json
             &query_text(&ctx, &body)?,
             max,
             strategy,
+            include_sources,
         )
         .await
         .map_err(|e| ctx.err(e))?;

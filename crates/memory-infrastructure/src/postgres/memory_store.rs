@@ -258,6 +258,31 @@ impl ConversationRepository for PostgresMemoryStore {
         .await
     }
 
+    async fn get_by_ids(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        ids: &[String],
+    ) -> DomainResult<Vec<ConversationMessage>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let s = self.db.schema(department).await?;
+        let mut w = Where::default();
+        scope_where(&mut w, scope);
+        w.in_list("id", ids);
+        let rows = fetch_all(
+            &mut *self.db.conn().await?,
+            &format!(
+                "SELECT {CONV_COLUMNS} FROM {s}.conversations {} ORDER BY timestamp_ms, id",
+                w.sql()
+            ),
+            &w.params,
+        )
+        .await?;
+        rows.iter().map(conversation_from_row).collect()
+    }
+
     async fn delete_by_ids(
         &self,
         department: &DepartmentId,

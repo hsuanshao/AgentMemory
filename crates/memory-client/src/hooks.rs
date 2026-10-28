@@ -277,7 +277,7 @@ fn recall_data(host: &str, query: &str) -> Option<(Api, Value)> {
             return None;
         }
     };
-    match api.recall(query, None) {
+    match api.recall(query, None, false) {
         Ok(data) => Some((api, data)),
         Err(e) => {
             log(&format!("{host} recall: {e}"));

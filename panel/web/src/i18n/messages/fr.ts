@@ -201,6 +201,11 @@ export const fr: Messages = {
   "recall.memories": "Mémoires",
   "recall.strategy": "stratégie : {strategy}",
   "recall.nothing": "Aucun rappel",
+  "recall.includeSources": "Inclure la conversation source",
+  "recall.includeSourcesHint": "Affiche aussi la conversation dont chaque mémoire est issue. Le rappel automatique ne le fait jamais.",
+  "recall.sourcesTitle": "Conversation source",
+  "recall.sourceCut": "(coupé)",
+  "recall.sourcesOmitted": "{count} autres messages sources non affichés",
 
   // Generation logs
   "logs.title": "Journaux de génération",

@@ -9,7 +9,7 @@ use memory_application::admin::{
 };
 use memory_application::audit::{CredentialGuard, ThrottlePolicy};
 use memory_application::memory::backfill::EmbeddingBackfill;
-use memory_application::memory::recall::{RecallService, RecallSettings};
+use memory_application::memory::recall::{RecallService, RecallSettings, SourceLimits};
 use memory_application::memory::search::AtomSearcher;
 use memory_application::memory::service::{ConversationObserver, MemoryService};
 use memory_application::memory::session::SessionService;
@@ -155,6 +155,11 @@ fn recall_settings(config: &Config) -> RecallSettings {
         timeout: Duration::from_millis(r.timeout_ms),
         max_chars_per_memory: r.max_chars_per_memory,
         max_total_chars: r.max_total_recall_chars,
+        sources: SourceLimits {
+            max_messages_per_memory: r.sources.max_messages_per_memory,
+            max_chars_per_message: r.sources.max_chars_per_message,
+            max_total_chars: r.sources.max_total_chars,
+        },
     }
 }
 

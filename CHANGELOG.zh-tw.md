@@ -6,6 +6,12 @@
 
 ## [未發布]
 
+### 新增
+- 召回可以附上每筆記憶萃取自哪段原始對話：`/v3/recall` 的 `include_sources`、MCP 的 `memory_recall` 工具與 Hermes 的 `agentmemory_search` 工具、`amem recall --sources`，以及 Panel 召回測試的勾選框。只會顯示呼叫者自己的訊息，由舊到新，受 `memory.recall.sources` 限制（預設每筆記憶 6 則、每則 2,000 字元、總共 12,000 字元）。每次送出訊息時的自動召回不會附上原文（[API](docs/API.zh-tw.md)）。
+
+### 變更
+- 召回附帶的工具說明不再叫 agent 搜尋對話（agent 並沒有這個工具），改為在需要確切說法時要求附上原始對話。
+
 ### 修正
 - `skill/proposal/list` 照文件所寫，可以不帶 `agent_id`：team admin 一次就能列出整個 team 的待審提案，每個呼叫者仍然只看得到自己能審核的提案。原本會被拒絕並回 `400 agent_id is required`。`skill/proposal/approve` 與 `reject` 只需要 `task_id` 和 `index`（#77）。
 - `password-shape` 遮罩規則不再遮掉以 commit SHA 為基底的 git revision（`a1b2c3d^1`、`f433d90~1..f433d90`），蒸餾出來的事實會保留它指的 commit。以 ref 名稱為基底的 revision（例如 `v0.4.3^1`）仍然會被遮：從形狀上分不出它和結尾是 `^1` 的密碼（#74）。

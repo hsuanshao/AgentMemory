@@ -59,6 +59,10 @@ memory:
     scoreThreshold: 0.3
     strategy: "hybrid"        # bm25 | embedding | hybrid (degrades to bm25)
     timeoutMs: 5000
+    sources:                  # a recall with include_sources: each atom's source messages
+      maxMessagesPerMemory: 6 # the most recent of an atom's sources
+      maxCharsPerMessage: 2000
+      maxTotalChars: 12000    # of source text in one recall
   embedding:
     provider: "none"          # "none" = BM25 only; otherwise OpenAI-compatible
     # baseUrl: "https://api.openai.com/v1"
