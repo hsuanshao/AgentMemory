@@ -392,9 +392,10 @@ pub trait KnowledgeRepository: Send + Sync {
     ) -> DomainResult<(Vec<KnowledgeEntity>, usize)>;
 }
 
-/// A redaction pattern a system admin added to the department, on top of
-/// the built-in rules and the deployment's. Never deleted: removing one
-/// disables it, so the record of who added what stays.
+/// A redaction pattern added to the department, on top of the built-in
+/// rules and the deployment's: for every team (by a system admin), for one
+/// team (by its admins) or for one user (by that user). Never deleted:
+/// removing one disables it, so the record of who added what stays.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RedactionRule {
     pub rule_id: String,
@@ -403,6 +404,13 @@ pub struct RedactionRule {
     pub pattern: String,
     #[serde(default)]
     pub description: String,
+    /// The team the rule is for. With neither this nor `user_id`, the rule
+    /// is for every team of the department.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// The user the rule is for, in every team they write in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
     pub enabled: bool,
     pub created_by: String,
     pub created_at: String,

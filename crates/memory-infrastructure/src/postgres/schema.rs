@@ -27,6 +27,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
         6,
         "user keys stored as SHA-256 digests; credential audit log",
     ),
+    (7, "redaction rules for a team or a user"),
 ];
 
 /// The latest schema version.

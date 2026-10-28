@@ -12,13 +12,12 @@ import { useStore } from "../../hooks/useStore";
 import { isSystemAdmin, sessionStore } from "../auth/session";
 import { LIST_LIMIT, mono, time } from "./shared";
 import { AuditPanel } from "./AuditPanel";
-import { RedactionPanel } from "./RedactionPanel";
 import { TeamsPanel } from "./TeamsPanel";
 import { UsersPanel } from "./UsersPanel";
 import { useT, withCount, type Translate } from "../../i18n";
 import { rich } from "../../i18n/rich";
 
-type TabId = "teams" | "users" | "assets" | "redaction" | "audit";
+type TabId = "teams" | "users" | "assets" | "audit";
 
 const assetTypes = (t: Translate) => [
   { value: "", label: t("common.allTypes") },
@@ -49,7 +48,6 @@ export function MetaPage() {
     { id: "teams", label: t("meta.tabTeams") },
     ...(admin ? [{ id: "users" as const, label: t("meta.tabUsers") }] : []),
     { id: "assets", label: t("meta.tabAssets") },
-    ...(admin ? [{ id: "redaction" as const, label: t("meta.tabRedaction") }] : []),
     ...(admin ? [{ id: "audit" as const, label: t("meta.tabAudit") }] : []),
   ];
 
@@ -63,7 +61,6 @@ export function MetaPage() {
       {tab === "teams" && <TeamsPanel userId={userId} admin={admin} />}
       {tab === "users" && admin && <UsersPanel />}
       {tab === "assets" && <AssetsPanel userId={userId} />}
-      {tab === "redaction" && admin && <RedactionPanel />}
       {tab === "audit" && admin && <AuditPanel />}
     </div>
   );

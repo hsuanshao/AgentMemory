@@ -382,13 +382,21 @@ export interface AuditEvent {
   detail: string | null;
 }
 
-/** A redaction rule a system admin added to the department (#57). */
+/** Which rules: neither id for every team, `team_id` for one team, `user_id` for one user. */
+export interface RedactionLevel {
+  team_id?: string;
+  user_id?: string;
+}
+
+/** A redaction rule added to the department, for every team, one team or one user (#57). */
 export interface RedactionRule {
   rule_id: string;
   /** Shown as `[REDACTED:<kind>]`. */
   kind: string;
   pattern: string;
   description: string;
+  team_id?: string;
+  user_id?: string;
   enabled: boolean;
   created_by: string;
   created_at: string;
@@ -396,12 +404,19 @@ export interface RedactionRule {
   updated_at: string;
 }
 
-/** The three layers of rules, listed apart; only `department` is editable here. */
+/** The rules a write at the level asked for goes through, layer by layer. */
 export interface RedactionRuleListing {
   builtin: string[];
   deployment_password_shape: boolean;
   deployment: { kind: string; pattern: string }[];
+  /** For every team. */
   department: RedactionRule[];
+  /** Asked with a `team_id`: that team's. */
+  team?: RedactionRule[];
+  /** Asked with a `user_id`: that user's. */
+  user?: RedactionRule[];
+  /** Whether the caller may add and change rules at the level asked for. */
+  can_edit: boolean;
 }
 
 export interface RedactionTestResult {

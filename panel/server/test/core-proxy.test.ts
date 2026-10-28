@@ -124,9 +124,6 @@ describe("user key guard", () => {
       "atomic/delete",
       "core/write",
       "pipeline/dead-letter/redrive",
-      "meta/redaction-rule/list",
-      "meta/redaction-rule/create",
-      "meta/redaction-rule/test",
     ]) {
       const res = await app.request(`/api/core/${path}`, post("", {}, viewer));
       expect(res.status, path).toBe(403);
@@ -138,6 +135,10 @@ describe("user key guard", () => {
     expect(read.status).toBe(200);
     const deadLetters = await app.request("/api/core/pipeline/dead-letter/list", post("", {}, viewer));
     expect(deadLetters.status, "anyone may look at dead letters").toBe(200);
+    for (const path of ["meta/redaction-rule/list", "meta/redaction-rule/create", "meta/redaction-rule/test"]) {
+      const res = await app.request(`/api/core/${path}`, post("", {}, viewer));
+      expect(res.status, `${path}: Core decides per level`).toBe(200);
+    }
     const admin = await app.request("/api/core/meta/team/create", post("", { name: "t" }));
     expect(admin.status).toBe(200);
   });

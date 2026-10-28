@@ -7,6 +7,7 @@
 ## [未發布]
 
 ### 新增
+- 遮罩規則除了全部團隊一層，新增團隊與使用者兩層。團隊 admin 管理團隊的規則，套用到成員的寫入與團隊共用的場景、persona；使用者管理自己的規則，套用到自己在各團隊的寫入。成員可以檢視全部團隊與所屬團隊的規則。Panel 的左側選單新增獨立的「遮罩」頁（[DISTILLATION](docs/ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。Schema 遷移 7：退回舊版必須還原備份。
 - Panel 提供英文、繁體中文、簡體中文、法文、越南文、西班牙文與德文介面。預設跟隨瀏覽器語言；側欄與登入頁的選單可以切換，瀏覽器會記住選擇（[Panel README](panel/README.md#languages)）。
 - `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` 設定 `llm.timeoutMs`，也就是每次呼叫蒸餾 LLM 的逾時（預設 180000），不必改設定檔。自架模型做 skill extraction 要好幾分鐘時，不會每次都逾時（[DISTILLATION](docs/ops/DISTILLATION.zh-tw.md)）。
 

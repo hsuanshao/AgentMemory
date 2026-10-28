@@ -150,9 +150,9 @@ Skill 萃取只提案，在有人核准之前什麼都不會存下：
 `/v3/meta/acl/{grant,revoke,list,check}`、
 `/v3/meta/auth/verify`、`/v3/meta/department-quota/get`、
 `/v3/meta/config/user/{get,set}`、
-`/v3/meta/redaction-rule/{list,create,update,disable,enable,test}`（僅限系統管理者；見 [DISTILLATION §7](ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。
+`/v3/meta/redaction-rule/{list,create,update,disable,enable,test}`：`list`、`create`、`test` 不帶 id 為全部團隊的規則，帶 `team_id` 為該團隊的，帶 `user_id` 為該使用者的（`test` 可兩者都帶，代表該使用者在該團隊的寫入）；各層誰可以檢視與變更見 [DISTILLATION §7](ops/DISTILLATION.zh-tw.md#7-機密與遮罩)。
 
-Meta 的列表回應格式：`{items, total, limit, offset}`；`redaction-rule/list` 例外，回傳 `{builtin, deployment_password_shape, deployment, department}`。
+Meta 的列表回應格式：`{items, total, limit, offset}`；`redaction-rule/list` 例外，回傳 `{builtin, deployment_password_shape, deployment, department, team?, user?, can_edit}`（帶 `team_id` 時有 `team`，帶 `user_id` 時有 `user`；`can_edit`：呼叫者能否變更該層）。
 
 呼叫端自己指定的 user key（`user/create-with-key`、`init-admin` 的 `user_key`）必須是 `sk-mem-` 加上至少 32 個英數字、`-` 或 `_`。`agent-fixed-asset/set` 以呼叫者作為每個 binding 的 `created_by`。Agent 的擁有者只有在仍是該 team 的有效成員時，才能管理它（`agent/update`、`agent/delete`、`agent-fixed-asset/set`）。
 

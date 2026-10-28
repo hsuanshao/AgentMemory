@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::redaction::RedactionService;
+use crate::redaction::{RedactionService, WriteScope};
 use memory_redact::Redactor;
 
 use base64::Engine;
@@ -49,6 +49,14 @@ pub struct SkillIdentity {
 }
 
 impl SkillIdentity {
+    /// The redaction rules its writes go through: its team's and its user's.
+    fn write_scope(&self) -> WriteScope<'_> {
+        WriteScope {
+            team_id: self.team_id.as_deref(),
+            user_id: self.user_id.as_deref(),
+        }
+    }
+
     fn require_writer(&self) -> DomainResult<(&str, &str, &str)> {
         match (
             self.team_id.as_deref(),
@@ -340,8 +348,11 @@ impl SkillService {
         resources: Vec<ResourceInput>,
         metadata: Option<Value>,
     ) -> DomainResult<SkillSummary> {
-        let redactor = self.redaction.redactor(department).await?;
         let (team, agent, user) = who.require_writer()?;
+        let redactor = self
+            .redaction
+            .redactor(department, WriteScope::member(team, user))
+            .await?;
         let content = &redactor.redact(content);
         let fm = parse_frontmatter(content)?;
         if fm.name != name {
@@ -472,7 +483,10 @@ impl SkillService {
         writes: Vec<Resource>,
         removes: Vec<String>,
     ) -> DomainResult<SkillSummary> {
-        let redactor = self.redaction.redactor(department).await?;
+        let redactor = self
+            .redaction
+            .redactor(department, who.write_scope())
+            .await?;
         let content = match content {
             Some(c) => redactor.redact(&c),
             None => head.content.clone(),
@@ -646,7 +660,10 @@ impl SkillService {
         expected: u32,
         files: Vec<ResourceInput>,
     ) -> DomainResult<SkillSummary> {
-        let redactor = self.redaction.redactor(department).await?;
+        let redactor = self
+            .redaction
+            .redactor(department, who.write_scope())
+            .await?;
         if files.is_empty() {
             return Err(DomainError::invalid("files must not be empty"));
         }

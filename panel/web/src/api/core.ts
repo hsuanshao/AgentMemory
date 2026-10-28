@@ -27,6 +27,7 @@ import type {
   RecallResult,
   AuditEvent,
   AuditKind,
+  RedactionLevel,
   RedactionRule,
   RedactionRuleListing,
   RedactionTestResult,
@@ -143,6 +144,19 @@ export function createCoreApi(client: PanelClient) {
     },
 
     /** System-admin operations; the BFF refuses them for everyone else. */
+    /** Rules for every team, one team or one user; Core checks who may read and change each. */
+    redaction: {
+      list: (level: RedactionLevel) => call<RedactionRuleListing>("meta/redaction-rule/list", level),
+      create: (input: RedactionLevel & { kind: string; pattern: string; description?: string }) =>
+        call<RedactionRule>("meta/redaction-rule/create", input),
+      update: (input: { rule_id: string; kind?: string; pattern?: string; description?: string }) =>
+        call<RedactionRule>("meta/redaction-rule/update", input),
+      setEnabled: (ruleId: string, enabled: boolean) =>
+        call<RedactionRule>(`meta/redaction-rule/${enabled ? "enable" : "disable"}`, { rule_id: ruleId }),
+      test: (input: RedactionLevel & { text: string; kind?: string; pattern?: string }) =>
+        call<RedactionTestResult>("meta/redaction-rule/test", input),
+    },
+
     admin: {
       allTeams: (page: Page = {}) => call<MetaList<Team>>("meta/team/list", { all: true, ...page }),
       createTeam: (input: { name: string; owner_user_id: string; description?: string }) => call<Team>("meta/team/create", input),
@@ -166,16 +180,6 @@ export function createCoreApi(client: PanelClient) {
       keys: (userId: string, page: Page = {}) => call<MetaList<UserKeyInfo>>("meta/user-key/list", { user_id: userId, ...page }),
       createKey: (userId: string, name?: string) => call<UserKeyInfo>("meta/user-key/create", { user_id: userId, name }),
       revokeKey: (keyId: string) => call<unknown>("meta/user-key/revoke", { key_id: keyId }),
-
-      redactionRules: () => call<RedactionRuleListing>("meta/redaction-rule/list", {}),
-      createRedactionRule: (input: { kind: string; pattern: string; description?: string }) =>
-        call<RedactionRule>("meta/redaction-rule/create", input),
-      updateRedactionRule: (input: { rule_id: string; kind?: string; pattern?: string; description?: string }) =>
-        call<RedactionRule>("meta/redaction-rule/update", input),
-      setRedactionRuleEnabled: (ruleId: string, enabled: boolean) =>
-        call<RedactionRule>(`meta/redaction-rule/${enabled ? "enable" : "disable"}`, { rule_id: ruleId }),
-      testRedaction: (input: { text: string; kind?: string; pattern?: string }) =>
-        call<RedactionTestResult>("meta/redaction-rule/test", input),
 
       auditEvents: (input: { kind?: AuditKind; limit?: number; offset?: number } = {}) =>
         call<{ items: AuditEvent[] }>("audit/list", input),

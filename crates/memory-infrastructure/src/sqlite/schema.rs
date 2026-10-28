@@ -195,7 +195,11 @@ CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_
 /// 6. User keys are stored as SHA-256 digests (`sha256:<hex>`) with their
 ///    last four characters (`key_hint`); existing keys are converted in
 ///    place and keep working.
-pub const SCHEMA_VERSION: i64 = 6;
+/// 7. Redaction rules for one team or one user (`team_id`, `user_id` in
+///    `meta_redaction_rules.doc`). Nothing to convert, but an older
+///    memory-server must not run on it: it would apply them to every team
+///    and drop their level when it saves one.
+pub const SCHEMA_VERSION: i64 = 7;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
