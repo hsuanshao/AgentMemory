@@ -4,6 +4,7 @@
 
 ## Contents
 
+- [To 0.5.1](#to-051)
 - [To 0.5.0](#to-050)
 - [To 0.4.3](#to-043)
 - [To 0.4.2](#to-042)
@@ -21,12 +22,21 @@
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
 
-## To 0.5.0
+## To 0.5.1
 
 ```bash
-git fetch --tags && git checkout v0.5.0
+git fetch --tags && git checkout v0.5.1
 ./upgrade.sh
 ```
+
+0.5.1 replaces 0.5.0, whose release was withdrawn: the same changes, plus a memory-core image that builds where outbound HTTP is blocked (Debian packages come over HTTPS).
+
+- **From 0.4.3:** read [To 0.5.0](#to-050) below first; all of it applies, including schema migration 7 and going back only by restoring the backup.
+- **From 0.5.0** (built from main, or the `0.5.0` images): nothing to migrate.
+
+## To 0.5.0
+
+Its release was withdrawn; upgrade to [0.5.1](#to-051) instead. What changed in 0.5.0:
 
 > [!WARNING]
 > **Going back to 0.4.3 means restoring the backup** ([E. Roll back](#e-roll-back)). When it starts, memory-core runs schema migration 7. Nothing is converted, but 0.4.3 refuses data at schema version 7: it would apply a team's or a user's redaction rules to every team, and drop their level when it saved one.

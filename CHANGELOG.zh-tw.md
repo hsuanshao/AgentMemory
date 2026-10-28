@@ -6,7 +6,16 @@
 
 ## [未發布]
 
+## [0.5.1] - 2026-10-28
+
+**0.5.1 取代 0.5.0**，0.5.0 的 GitHub release 已撤下。內容是 0.5.0 再加上下面的修正。從 0.4.3 升級請閱讀 [UPGRADE → 升級到 0.5.1](docs/UPGRADE.zh-tw.md#升級到-051)：0.5.0 的所有說明都適用，包括 schema 遷移 7。
+
+### 修正
+- memory-core 的 image 在擋住對外 HTTP 的網路也能 build：runtime 階段改用 HTTPS 下載 Debian 套件，不再走 `http://deb.debian.org`。`upgrade.sh` 和 `install.sh` 都會 build 這個 image，所以在這種網路上原本會失敗。
+
 ## [0.5.0] - 2026-10-28
+
+它的 GitHub release 已在當天撤下，請改用 0.5.1。
 
 **升級前請先閱讀 [UPGRADE → 升級到 0.5.0](docs/UPGRADE.zh-tw.md#升級到-050)。** 遮罩規則新增團隊與使用者兩層，Panel 有了獨立的「遮罩」頁和七種語言。退回 0.4.3 必須還原備份（schema 遷移 7）。成員現在可以透過 `redaction-rule/list` 檢視全部團隊與所屬團隊的規則。
 
@@ -16,7 +25,6 @@
 - `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` 設定 `llm.timeoutMs`，也就是每次呼叫蒸餾 LLM 的逾時（預設 180000），不必改設定檔。自架模型做 skill extraction 要好幾分鐘時，不會每次都逾時（[DISTILLATION](docs/ops/DISTILLATION.zh-tw.md)）。
 
 ### 修正
-- memory-core 的 image 在擋住對外 HTTP 的網路也能 build：runtime 階段改用 HTTPS 下載 Debian 套件，不再走 `http://deb.debian.org`。`upgrade.sh` 和 `install.sh` 都會 build 這個 image，所以在這種網路上原本會失敗。
 - Worker 的 `last_error`（pipeline status、Panel dashboard）只顯示進入 dead letter 的 job 的錯誤。會再重試的失敗不再寫入，因此之後成功的 job 不會留下一筆 dead letter 列表裡找不到的錯誤。
 
 ## [0.4.3] - 2026-10-24
@@ -169,8 +177,9 @@
 
 第一個公開版本：memory-core、L0→L3 蒸餾管線、混合召回、metadata 平面、Monitor Panel、`amem` 以及 Claude Code、Codex、Antigravity、Hermes 的 plugin，還有 `install.sh`。client 使用每位使用者各自的 key 驗證。
 
-[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.5.0
+[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.5.1
+[0.5.0]: https://github.com/hsuanshao/AgentMemory/tree/87079c7
 [0.4.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.3
 [0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
 [0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1

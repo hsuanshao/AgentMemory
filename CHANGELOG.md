@@ -6,7 +6,16 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-28
+
+**0.5.1 replaces 0.5.0**, whose GitHub release was withdrawn. It is 0.5.0 plus the fix below. From 0.4.3, read [UPGRADE → To 0.5.1](docs/UPGRADE.md#to-051): everything about 0.5.0 applies, including schema migration 7.
+
+### Fixed
+- The memory-core image builds where outbound HTTP is blocked: its runtime stage fetches Debian packages over HTTPS instead of from `http://deb.debian.org`. `upgrade.sh` and `install.sh` build this image, so they failed on such networks.
+
 ## [0.5.0] - 2026-10-28
+
+Its GitHub release was withdrawn the same day; use 0.5.1.
 
 **Read [UPGRADE → To 0.5.0](docs/UPGRADE.md#to-050) before upgrading.** Redaction rules gain a team and a user level, and the Panel gets its own Redaction page and seven languages. Going back to 0.4.3 needs the backup restored (schema migration 7). Members can now read the rules for all teams and their teams' through `redaction-rule/list`.
 
@@ -16,7 +25,6 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 - `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` sets `llm.timeoutMs`, the timeout of each call to the distillation LLM (default 180000), without editing the config file. A self-hosted model that needs minutes for skill extraction no longer times out on every attempt ([DISTILLATION](docs/ops/DISTILLATION.md)).
 
 ### Fixed
-- The memory-core image builds where outbound HTTP is blocked: its runtime stage fetches Debian packages over HTTPS instead of from `http://deb.debian.org`. `upgrade.sh` and `install.sh` build this image, so they failed on such networks.
 - The worker's `last_error` (pipeline status, Panel dashboard) only shows the error of a job that was dead-lettered. A failed attempt that is retried no longer sets it, so a job that later succeeded no longer leaves an error behind that the dead-letter list does not have.
 
 ## [0.4.3] - 2026-10-24
@@ -169,8 +177,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 First public release: memory-core, the L0→L3 distillation pipeline, hybrid recall, the metadata plane, the Monitor Panel, `amem` with plugins for Claude Code, Codex, Antigravity and Hermes, and `install.sh`. Clients authenticate with per-user keys.
 
-[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.5.0
+[Unreleased]: https://github.com/hsuanshao/AgentMemory/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.5.1
+[0.5.0]: https://github.com/hsuanshao/AgentMemory/tree/87079c7
 [0.4.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.3
 [0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
 [0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
