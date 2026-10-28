@@ -6,9 +6,6 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
-### Fixed
-- The memory-core image builds where outbound HTTP is blocked: its runtime stage fetches Debian packages over HTTPS instead of from `http://deb.debian.org`. `upgrade.sh` and `install.sh` build this image, so they failed on such networks.
-
 ## [0.5.0] - 2026-10-28
 
 **Read [UPGRADE → To 0.5.0](docs/UPGRADE.md#to-050) before upgrading.** Redaction rules gain a team and a user level, and the Panel gets its own Redaction page and seven languages. Going back to 0.4.3 needs the backup restored (schema migration 7). Members can now read the rules for all teams and their teams' through `redaction-rule/list`.
@@ -19,6 +16,7 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 - `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` sets `llm.timeoutMs`, the timeout of each call to the distillation LLM (default 180000), without editing the config file. A self-hosted model that needs minutes for skill extraction no longer times out on every attempt ([DISTILLATION](docs/ops/DISTILLATION.md)).
 
 ### Fixed
+- The memory-core image builds where outbound HTTP is blocked: its runtime stage fetches Debian packages over HTTPS instead of from `http://deb.debian.org`. `upgrade.sh` and `install.sh` build this image, so they failed on such networks.
 - The worker's `last_error` (pipeline status, Panel dashboard) only shows the error of a job that was dead-lettered. A failed attempt that is retried no longer sets it, so a job that later succeeded no longer leaves an error behind that the dead-letter list does not have.
 
 ## [0.4.3] - 2026-10-24
