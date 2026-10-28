@@ -6,6 +6,10 @@
 
 ## [未發布]
 
+## [0.5.0] - 2026-10-28
+
+**升級前請先閱讀 [UPGRADE → 升級到 0.5.0](docs/UPGRADE.zh-tw.md#升級到-050)。** 遮罩規則新增團隊與使用者兩層，Panel 有了獨立的「遮罩」頁和七種語言。退回 0.4.3 必須還原備份（schema 遷移 7）。成員現在可以透過 `redaction-rule/list` 檢視全部團隊與所屬團隊的規則。
+
 ### 新增
 - 遮罩規則除了全部團隊一層，新增團隊與使用者兩層。團隊 admin 管理團隊的規則，套用到成員的寫入與團隊共用的場景、persona；使用者管理自己的規則，套用到自己在各團隊的寫入。成員可以檢視全部團隊與所屬團隊的規則。Panel 的左側選單新增獨立的「遮罩」頁（[DISTILLATION](docs/ops/DISTILLATION.zh-tw.md#7-機密與遮罩)）。Schema 遷移 7：退回舊版必須還原備份。
 - Panel 提供英文、繁體中文、簡體中文、法文、越南文、西班牙文與德文介面。預設跟隨瀏覽器語言；側欄與登入頁的選單可以切換，瀏覽器會記住選擇（[Panel README](panel/README.md#languages)）。
@@ -164,7 +168,8 @@
 
 第一個公開版本：memory-core、L0→L3 蒸餾管線、混合召回、metadata 平面、Monitor Panel、`amem` 以及 Claude Code、Codex、Antigravity、Hermes 的 plugin，還有 `install.sh`。client 使用每位使用者各自的 key 驗證。
 
-[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.4.3...HEAD
+[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.5.0
 [0.4.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.3
 [0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
 [0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
