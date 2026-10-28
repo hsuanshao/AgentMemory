@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::redaction::RedactionService;
+use crate::redaction::{RedactionService, WriteScope};
 
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage};
@@ -410,7 +410,8 @@ impl L1Extractor {
     /// Stores an atom, secrets redacted: the input was redacted when it was
     /// captured, but the model may still spell one out.
     async fn store(&self, department: &DepartmentId, atom: &AtomicMemory) -> DomainResult<()> {
-        let redactor = self.redaction.redactor(department).await?;
+        let scope = WriteScope::member(atom.scope.team_id.as_str(), atom.scope.user_id.as_str());
+        let redactor = self.redaction.redactor(department, scope).await?;
         let mut redacted = atom.clone();
         redacted.content = redactor.redact(&atom.content);
         redacted.background = atom.background.as_deref().map(|b| redactor.redact(b));

@@ -6,6 +6,7 @@ import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { LogsPage } from "./features/logs/LogsPage";
 import { MemoryPage } from "./features/memory/MemoryPage";
 import { MetaPage } from "./features/meta/MetaPage";
+import { RedactionPage } from "./features/redaction/RedactionPage";
 import { SkillsPage } from "./features/skills/SkillsPage";
 import { useStore } from "./hooks/useStore";
 import { useLocale } from "./i18n";
@@ -24,6 +25,7 @@ export function App() {
           <Route path="/memory" element={<MemoryPage />} />
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/skills" element={<SkillsPage />} />
+          <Route path="/redaction" element={<RedactionPage />} />
           <Route path="/meta" element={<MetaPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>

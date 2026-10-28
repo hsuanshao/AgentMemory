@@ -28,7 +28,8 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 | Memory browser (team/agent/user scope) | L0 `conversation/{query,search,delete}`<br>L1 `atomic/{query,search,update,delete}`<br>L2 `scenario/{ls,read,write}`<br>L3 `core/{read,write}`<br>Recall test: `recall` |
 | Generation logs (`#/logs?status=failed` opens filtered) | `memory-generation-log/{list,get}` |
 | Skills | `skill/{list,search,get,versions}` |
-| Metadata: Teams / Users / Assets | Everyone: `meta/team/list`, `meta/team-member/list`, `meta/agent/list`, `meta/asset/list-accessible`<br>System admins: `meta/user/{list,create,delete}`, `meta/user-key/{list,create,revoke}`, `meta/team/{create,update,delete}` (+ `list` with `all`), `meta/team-member/{add,remove}`, `meta/agent/{create,update,delete}` |
+| Redaction: all teams / team / user | `meta/redaction-rule/{list,create,update,disable,enable,test}` with no id, a `team_id` or a `user_id`; Core decides who may read and change each level |
+| Metadata: Teams / Users / Assets / Audit | Everyone: `meta/team/list`, `meta/team-member/list`, `meta/agent/list`, `meta/asset/list-accessible`<br>System admins: `meta/user/{list,create,delete}`, `meta/user-key/{list,create,revoke}`, `meta/team/{create,update,delete}` (+ `list` with `all`), `meta/team-member/{add,remove}`, `meta/agent/{create,update,delete}` |
 
 ## Languages
 

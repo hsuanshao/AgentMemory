@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::redaction::RedactionService;
+use crate::redaction::{RedactionService, WriteScope};
 use memory_redact::{is_secret_key, Redactor};
 
 use memory_domain::error::{DomainError, DomainResult};
@@ -63,7 +63,6 @@ impl SessionService {
         headers: SessionTurnHeaders<'_>,
         body: Value,
     ) -> DomainResult<StoredTurn> {
-        let redactor = self.redaction.redactor(department).await?;
         let user = SegmentId::parse("x-memory-user-id", headers.user_id)?;
         let session = SegmentId::parse("x-memory-session-id", headers.session_id)?;
         let agent = SegmentId::parse("x-memory-agent-id", headers.agent_id)?;
@@ -71,6 +70,10 @@ impl SessionService {
             Some(t) => SegmentId::parse("x-memory-team-id", t)?,
             None => SegmentId::parse("team", UNASSIGNED_TEAM)?,
         };
+        let redactor = self
+            .redaction
+            .redactor(department, WriteScope::member(team.as_str(), user.as_str()))
+            .await?;
         let mut record = validate_record(body)?;
         let source = take_source(&mut record)?;
         let started_at = record["started_at"]

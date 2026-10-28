@@ -168,9 +168,9 @@ Skill extraction proposes; it saves nothing until someone approves ([ARCHITECTUR
 `/v3/meta/acl/{grant,revoke,list,check}`,
 `/v3/meta/auth/verify`, `/v3/meta/department-quota/get`,
 `/v3/meta/config/user/{get,set}`,
-`/v3/meta/redaction-rule/{list,create,update,disable,enable,test}` (system admins only; see [DISTILLATION §7](ops/DISTILLATION.md#7-secrets-and-redaction)).
+`/v3/meta/redaction-rule/{list,create,update,disable,enable,test}`: rules for all teams (no id), one team (`team_id`) or one user (`user_id`) in `list`, `create` and `test`; who may read and change each level is in [DISTILLATION §7](ops/DISTILLATION.md#7-secrets-and-redaction).
 
-Meta list responses: `{items, total, limit, offset}`; `redaction-rule/list` returns `{builtin, deployment_password_shape, deployment, department}` instead.
+Meta list responses: `{items, total, limit, offset}`; `redaction-rule/list` returns `{builtin, deployment_password_shape, deployment, department, team?, user?, can_edit}` instead (`team` with a `team_id`, `user` with a `user_id`; `can_edit`: whether the caller may change that level).
 
 A user key chosen by the caller (`user/create-with-key`, `init-admin`'s `user_key`) must be `sk-mem-` and at least 32 letters, digits, `-` or `_`. `agent-fixed-asset/set` records the caller as each binding's `created_by`. An agent's owner manages it (`agent/update`, `agent/delete`, `agent-fixed-asset/set`) only while an active member of its team.
 

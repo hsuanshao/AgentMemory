@@ -13,7 +13,7 @@ use memory_application::meta::{
 use memory_application::ports::audit::AuditKind;
 use memory_application::ports::meta::UserFilter;
 use memory_application::redaction::{
-    CreateRedactionRuleInput, TestRedactionInput, UpdateRedactionRuleInput,
+    CreateRedactionRuleInput, RuleLevel, TestRedactionInput, UpdateRedactionRuleInput,
 };
 use memory_domain::error::DomainError;
 use memory_domain::meta::{UserStatus, UserType};
@@ -453,8 +453,13 @@ pub async fn dispatch(
 
         ("department-quota", "get") => meta.department_quota(i).await.map_err(e)?,
 
-        // System admins only; checked in the service.
-        ("redaction-rule", "list") => json!(s.services.redaction.list(i, &who).await.map_err(e)?),
+        // Each level's readers and editors are checked in the service.
+        ("redaction-rule", "list") => json!(s
+            .services
+            .redaction
+            .list(i, &who, input::<RuleLevel>(&ctx, &body)?)
+            .await
+            .map_err(e)?),
         ("redaction-rule", "create") => json!(s
             .services
             .redaction

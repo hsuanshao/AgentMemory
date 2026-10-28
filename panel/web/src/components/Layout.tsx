@@ -13,6 +13,7 @@ const NAV: ReadonlyArray<{ to: string; label: MessageKey; icon: string }> = [
   { to: "/memory", label: "nav.memory", icon: "◫" },
   { to: "/logs", label: "nav.logs", icon: "≡" },
   { to: "/skills", label: "nav.skills", icon: "✦" },
+  { to: "/redaction", label: "nav.redaction", icon: "⊘" },
   { to: "/meta", label: "nav.meta", icon: "◉" },
 ];
 

@@ -236,12 +236,19 @@ redaction:
 - Personal data such as ids and phone numbers is not redacted by default. Which formats matter depends on the country and the deployment, so add them here.
 - These settings apply to memory-core only. `amem` always uses the built-in rules, shape rule included, so turning `passwordShape` off or adding patterns does not change what the client redacts before sending.
 
-**Department rules.** A department's system admins add their own patterns, on top of the built-in and deployment ones, in the Panel (Metadata → Redaction) or through `/v3/meta/redaction-rule/*` ([API](../API.md)). Other users, MCP and the distillation model cannot see or change them.
+**Rules for all teams, a team or a user.** On top of the built-in and deployment rules, people add their own, in the Panel (Redaction) or through `/v3/meta/redaction-rule/*` ([API](../API.md)). Each level only adds redaction; none can turn off a level above it. MCP and the distillation model cannot see or change them.
 
-- Each rule is a kind (shown as `[REDACTED:<kind>]`; not a built-in one, nor one of `redaction.patterns`) and a Rust regex, at most 500 characters. A pattern that does not compile, matches the empty string or is too large is refused. So is one too broad to be meant: it matches a single letter, digit or CJK character on its own (`.`, `\w`, `e`), or more than 20% of a set of everyday sentences (`\S+`, `\w+`). Redaction happens before anything is stored, so such a rule would erase every write. At most 50 enabled rules per department.
+| Level | Applies to | Changed by | Read by |
+| --- | --- | --- | --- |
+| All teams | every write in the department | system admins | everyone in the department |
+| A team (`team_id`) | its members' writes, and its shared scenes and persona | the team's admins, system admins | the team's members |
+| A user (`user_id`) | that user's writes, in every team | the user, system admins | the user |
+
+- Scenes and personas belong to a team, not to one user, so they go through the rules for all teams and the team's. Their input, the members' atoms, already went through each member's rules.
+- Each rule is a kind (shown as `[REDACTED:<kind>]`; not a built-in one, nor one of `redaction.patterns`, nor one used at another level, so a marker says which level caught it) and a Rust regex, at most 500 characters. A pattern that does not compile, matches the empty string or is too large is refused. So is one too broad to be meant: it matches a single letter, digit or CJK character on its own (`.`, `\w`, `e`), or more than 20% of a set of everyday sentences (`\S+`, `\w+`). Redaction happens before anything is stored, so such a rule would erase every write. At most 50 enabled rules per level (for all teams, per team, per user).
 - Rules never touch text already redacted (`[REDACTED:…]` from the client or an earlier rule), so markers stay readable and say which rule caught what. Only a marker of a known kind counts: `[REDACTED:hunter2xyz99]` is not one, and the secret in it is redacted like any other text.
 - A kind is 1-40 characters of a-z, 0-9 and `-` in every layer; a `redaction.patterns` kind that is not stops memory-core at startup.
-- **Try it** (`test`) runs sample text through the department's rules, plus a pattern not saved yet, and shows the result, what each kind caught and how much of the sample the pattern matches; a pattern too broad to save is still previewed, with the reason. The text is not stored.
+- **Try it** (`test`) runs sample text through the rules of a level and the levels above it, plus a pattern not saved yet, and shows the result, what each kind caught and how much of the sample the pattern matches; a pattern too broad to save is still previewed, with the reason. The text is not stored.
 - A new or changed rule applies to the next write on that replica; other replicas pick it up within 30 seconds. Stored data is not rewritten.
 - Removing a rule disables it. The record of who added and changed it, and when, stays; it can be enabled again.
 - If the rules cannot be read, writes to the department fail rather than going through without them.

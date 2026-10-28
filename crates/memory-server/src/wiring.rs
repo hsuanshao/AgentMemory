@@ -25,7 +25,7 @@ use memory_application::pipeline::service::{PipelineDeps, PipelineService, Skill
 use memory_application::ports::meta::{KnowledgeRepository, RedactionRuleRepository};
 use memory_application::ports::pipeline::DeadLetterPolicy;
 use memory_application::ports::system::{Clock, EmbeddingProvider, IdGenerator, LlmClient};
-use memory_application::redaction::RedactionService;
+use memory_application::redaction::{RedactionDirectory, RedactionService};
 use memory_application::skill::extraction::{ExtractionSettings, SkillExtractionService};
 use memory_application::skill::service::{SkillService, SkillSettings};
 use memory_application::upgrade::LegacyUpgrade;
@@ -169,11 +169,12 @@ pub async fn build(config: &Config) -> Result<App> {
     let embedder = embedder(config);
 
     let storage = build_storage(config, &data_dir, embedder.dimensions()).await?;
-    // Every write path redacts with the department's rules: built-in, the
-    // deployment's, its administrators' (#57).
+    // Every write path redacts with the rules of its department, team and
+    // user: built-in, the deployment's, and those people add (#57).
     let redaction = Arc::new(RedactionService::new(
         config.redaction.deployment_rules()?,
         Arc::clone(&storage.meta) as Arc<dyn RedactionRuleRepository>,
+        Arc::new(Arc::clone(&storage.meta)) as Arc<dyn RedactionDirectory>,
         Arc::clone(&clock),
         Arc::clone(&ids),
     ));

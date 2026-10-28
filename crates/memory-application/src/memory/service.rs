@@ -15,7 +15,7 @@ use memory_domain::retrieval::SearchMode;
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use tracing::warn;
 
-use crate::redaction::RedactionService;
+use crate::redaction::{RedactionService, WriteScope};
 
 use super::search::AtomSearcher;
 use crate::common::{Page, Scored};
@@ -112,7 +112,13 @@ impl MemoryService {
         session_id: &str,
         messages: Vec<NewMessage>,
     ) -> DomainResult<Vec<ConversationMessage>> {
-        let redactor = self.redaction.redactor(department).await?;
+        let redactor = self
+            .redaction
+            .redactor(
+                department,
+                WriteScope::member(scope.team_id.as_str(), scope.user_id.as_str()),
+            )
+            .await?;
         if messages.is_empty() || messages.len() > MAX_MESSAGES_PER_ADD {
             return Err(DomainError::invalid("messages must contain 1-100 items"));
         }
@@ -224,7 +230,13 @@ impl MemoryService {
         content: String,
         background: Option<String>,
     ) -> DomainResult<AtomicMemory> {
-        let redactor = self.redaction.redactor(department).await?;
+        let redactor = self
+            .redaction
+            .redactor(
+                department,
+                WriteScope::member(scope.team_id.as_str(), scope.user_id.as_str()),
+            )
+            .await?;
         let mut atom = self
             .atoms
             .get(department, id)
@@ -375,7 +387,10 @@ impl MemoryService {
         profile: &ProfileScope,
         mut versions: Vec<NewSceneVersion>,
     ) -> DomainResult<Vec<SceneVersion>> {
-        let redactor = self.redaction.redactor(department).await?;
+        let redactor = self
+            .redaction
+            .redactor(department, WriteScope::team(profile.team_id.as_str()))
+            .await?;
         for v in &mut versions {
             v.summary = redactor.redact(&v.summary);
             v.body = redactor.redact(&v.body);
@@ -529,7 +544,10 @@ impl MemoryService {
         op: PersonaOp,
         author: Option<&str>,
     ) -> DomainResult<ProfileFile> {
-        let redactor = self.redaction.redactor(department).await?;
+        let redactor = self
+            .redaction
+            .redactor(department, WriteScope::team(profile.team_id.as_str()))
+            .await?;
         let current = self.profiles.persona(department, profile, None).await?;
         let persona = self
             .profiles

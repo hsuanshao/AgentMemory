@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use crate::redaction::RedactionService;
+use crate::redaction::{RedactionService, WriteScope};
 
 use async_trait::async_trait;
 use memory_domain::error::{DomainError, DomainResult};
@@ -285,7 +285,10 @@ impl SkillExtractionService {
         key: BufferKey,
         messages: Vec<BufferedMessage>,
     ) -> DomainResult<AddResult> {
-        let redactor = self.redaction.redactor(department).await?;
+        let redactor = self
+            .redaction
+            .redactor(department, WriteScope::member(&key.team_id, &key.user_id))
+            .await?;
         self.require_enabled()?;
         validate_key(&key)?;
         let messages: Vec<BufferedMessage> = without_nul_messages(messages)
@@ -526,7 +529,8 @@ impl SkillExtractionService {
         }
         if self.settings.require_approval {
             // Stored and shown for review: redacted like any other write.
-            let redactor = self.redaction.redactor(department).await?;
+            let scope = WriteScope::member(&task.key.team_id, &task.key.user_id);
+            let redactor = self.redaction.redactor(department, scope).await?;
             let now = self.clock.now().timestamp_millis();
             let proposals: Vec<SkillProposal> = actions
                 .into_iter()

@@ -63,6 +63,8 @@ export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   "meta/agent/create",
   "meta/agent/update",
   "meta/agent/delete",
+  // redaction rules for every team, a team or a user (Core checks who may
+  // read and change each level)
   "meta/redaction-rule/list",
   "meta/redaction-rule/create",
   "meta/redaction-rule/update",
@@ -79,7 +81,8 @@ export const PUBLIC_V3_PATHS: ReadonlySet<string> = new Set(["meta/auth/verify"]
 /**
  * Every call that changes data or administers the department. In the panel
  * only system admins configure; everyone else gets a read-only view. Core
- * applies its own (finer) rules on top.
+ * applies its own (finer) rules on top. Redaction rules are not here: team
+ * admins manage their team's and every user their own, so Core decides.
  */
 export const ADMIN_ONLY_V3_PATHS: ReadonlySet<string> = new Set([
   "pipeline/dead-letter/redrive",
@@ -102,12 +105,6 @@ export const ADMIN_ONLY_V3_PATHS: ReadonlySet<string> = new Set([
   "meta/agent/create",
   "meta/agent/update",
   "meta/agent/delete",
-  "meta/redaction-rule/list",
-  "meta/redaction-rule/create",
-  "meta/redaction-rule/update",
-  "meta/redaction-rule/disable",
-  "meta/redaction-rule/enable",
-  "meta/redaction-rule/test",
   "audit/list",
 ]);
 

@@ -770,10 +770,10 @@ async fn a_private_agent_is_its_owners() {
     assert_ne!(r["code"], 0, "archived: {r}");
 }
 
-/// A department's system admins add redaction rules; writes follow them at
-/// once, and only admins can see or change them (#57).
+/// Redaction rules for every team (system admins), one team (its admins)
+/// and one user (that user); writes follow them at once (#57).
 #[tokio::test(flavor = "multi_thread")]
-async fn admins_add_redaction_rules_that_writes_follow() {
+async fn redaction_rules_for_every_team_a_team_and_a_user() {
     let (_data, client) = start().await;
     let admin = |path: &'static str, body: Value| {
         let client = &client;
@@ -808,9 +808,10 @@ async fn admins_add_redaction_rules_that_writes_follow() {
         }
     };
 
-    // Members cannot see or change the rules.
-    let denied = client.call("/v3/meta/redaction-rule/list", json!({})).await;
-    assert_ne!(denied["code"], 0, "{denied}");
+    // Members read the rules for every team, but cannot change them.
+    let read = client.call("/v3/meta/redaction-rule/list", json!({})).await;
+    assert_eq!(read["code"], 0, "{read}");
+    assert_eq!(read["data"]["can_edit"], false, "{read}");
     let denied = client
         .call(
             "/v3/meta/redaction-rule/create",
@@ -919,6 +920,47 @@ async fn admins_add_redaction_rules_that_writes_follow() {
     .await;
     assert_eq!(updated["code"], 0, "{updated}");
     assert_eq!(stored("four EMP-4444").await, "four [REDACTED:emp-id]");
+
+    // A team's rule: its admins add it, and its members' writes follow it.
+    let team_rule =
+        json!({"team_id": client.team_id, "kind": "proj-code", "pattern": r"\bPRJ-\d{4}\b"});
+    let denied = client
+        .call("/v3/meta/redaction-rule/create", team_rule.clone())
+        .await;
+    assert_ne!(denied["code"], 0, "a member is not a team admin: {denied}");
+    let (_, lead_key) = client
+        .create_member_as("user-redaction-lead", "admin")
+        .await;
+    let created = client
+        .call_as("/v3/meta/redaction-rule/create", &lead_key, team_rule)
+        .await;
+    assert_eq!(created["code"], 0, "{created}");
+    assert_eq!(stored("five PRJ-5555").await, "five [REDACTED:proj-code]");
+
+    // A user's rule: they add it themselves, and nobody else sees it.
+    let user_rule =
+        json!({"user_id": client.user_id, "kind": "my-acct", "pattern": r"\bACCT-\d{4}\b"});
+    let created = client
+        .call("/v3/meta/redaction-rule/create", user_rule)
+        .await;
+    assert_eq!(created["code"], 0, "{created}");
+    assert_eq!(stored("six ACCT-6666").await, "six [REDACTED:my-acct]");
+    let mine = client
+        .call(
+            "/v3/meta/redaction-rule/list",
+            json!({"user_id": client.user_id}),
+        )
+        .await;
+    assert_eq!(mine["data"]["user"][0]["kind"], "my-acct", "{mine}");
+    assert_eq!(mine["data"]["can_edit"], true, "{mine}");
+    let others = client
+        .call_as(
+            "/v3/meta/redaction-rule/list",
+            &lead_key,
+            json!({"user_id": client.user_id}),
+        )
+        .await;
+    assert_ne!(others["code"], 0, "another user's rules: {others}");
 }
 
 /// Secrets are redacted on every server write path, whatever the client

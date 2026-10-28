@@ -7,6 +7,7 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 ## [Unreleased]
 
 ### Added
+- Redaction rules for one team or one user, on top of the rules for all teams. A team's admins manage its rules, which apply to its members' writes and its shared scenes and persona; each user manages their own, which apply to their writes in every team. Members can read the rules for all teams and their teams'. Redaction has its own page in the Panel's menu ([DISTILLATION](docs/ops/DISTILLATION.md#7-secrets-and-redaction)). Schema migration 7: going back to an earlier version needs the backup restored.
 - The Panel is available in English, Traditional Chinese, Simplified Chinese, French, Vietnamese, Spanish and German. It starts in the browser's language; the menu in the sidebar and on the sign-in page changes it, and the browser remembers the choice ([Panel README](panel/README.md#languages)).
 - `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` sets `llm.timeoutMs`, the timeout of each call to the distillation LLM (default 180000), without editing the config file. A self-hosted model that needs minutes for skill extraction no longer times out on every attempt ([DISTILLATION](docs/ops/DISTILLATION.md)).
 
