@@ -7,6 +7,7 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 ## [Unreleased]
 
 ### Added
+- The Panel is available in English, Traditional Chinese, Simplified Chinese, French, Vietnamese, Spanish and German. It starts in the browser's language; the menu in the sidebar and on the sign-in page changes it, and the browser remembers the choice ([Panel README](panel/README.md#languages)).
 - `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` sets `llm.timeoutMs`, the timeout of each call to the distillation LLM (default 180000), without editing the config file. A self-hosted model that needs minutes for skill extraction no longer times out on every attempt ([DISTILLATION](docs/ops/DISTILLATION.md)).
 
 ### Fixed

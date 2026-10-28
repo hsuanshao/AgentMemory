@@ -3,6 +3,7 @@ import type { UserPublic } from "../../api";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { formatTime } from "../../lib/format";
+import { useT } from "../../i18n";
 
 export const LIST_LIMIT = 100;
 
@@ -22,6 +23,7 @@ export function userOptions(users: ReadonlyArray<UserPublic> | undefined, placeh
 
 /** A secret Core returns exactly once (a new user key): shown until dismissed. */
 export function SecretNotice({ label, secret, onDismiss }: { label: string; secret: string; onDismiss: () => void }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -33,14 +35,14 @@ export function SecretNotice({ label, secret, onDismiss }: { label: string; secr
   }
   return (
     <div role="status" className="space-y-1.5 rounded-sm border border-ok/40 bg-ok/10 px-3 py-2 text-xs">
-      <div className="font-medium text-ok">{label} — copy it now, it is not shown again.</div>
+      <div className="font-medium text-ok">{t("secret.notice", { label })}</div>
       <div className="flex flex-wrap items-center gap-2">
         <code className="mono break-all rounded-sm bg-surface px-1.5 py-0.5">{secret}</code>
         <Button size="sm" onClick={() => void copy()}>
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("secret.copied") : t("secret.copy")}
         </Button>
         <Button size="sm" variant="ghost" onClick={onDismiss}>
-          Dismiss
+          {t("secret.dismiss")}
         </Button>
       </div>
     </div>

@@ -7,6 +7,7 @@
 ## [未發布]
 
 ### 新增
+- Panel 提供英文、繁體中文、簡體中文、法文、越南文、西班牙文與德文介面。預設跟隨瀏覽器語言；側欄與登入頁的選單可以切換，瀏覽器會記住選擇（[Panel README](panel/README.md#languages)）。
 - `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS` 設定 `llm.timeoutMs`，也就是每次呼叫蒸餾 LLM 的逾時（預設 180000），不必改設定檔。自架模型做 skill extraction 要好幾分鐘時，不會每次都逾時（[DISTILLATION](docs/ops/DISTILLATION.zh-tw.md)）。
 
 ### 修正

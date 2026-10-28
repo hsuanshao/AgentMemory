@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { Envelope } from "./types";
 
 /** Error raised for any non-success Core/BFF response. */
@@ -68,7 +69,7 @@ export class PanelClient {
       return await this.fetchFn(this.baseUrl + path, init);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
-      throw new ApiError(0, 0, "Panel server unreachable");
+      throw new ApiError(0, 0, t("api.unreachable"));
     }
   }
 }
@@ -83,7 +84,7 @@ async function readEnvelope<T>(res: Response): Promise<Envelope<T>> {
       data: body.data,
     };
   } catch {
-    return { code: res.status, message: res.statusText || "Invalid response" };
+    return { code: res.status, message: res.statusText || t("api.invalidResponse") };
   }
 }
 
@@ -93,7 +94,7 @@ export function isAbort(err: unknown): boolean {
 
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    const status = err.code && err.code !== err.status ? `${err.status}/${err.code}` : String(err.status || "network");
+    const status = err.code && err.code !== err.status ? `${err.status}/${err.code}` : String(err.status || t("api.network"));
     return `[${status}] ${err.message}`;
   }
   return err instanceof Error ? err.message : String(err);

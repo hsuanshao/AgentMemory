@@ -40,7 +40,8 @@ const TONES: Record<Tone, string> = {
 export function Stat({ label, value, hint, tone = "default" }: { label: string; value: ReactNode; hint?: ReactNode; tone?: Tone }) {
   return (
     <div className="rounded-md border border-line bg-surface px-3 py-2.5">
-      <div className="label">{label}</div>
+      {/* Long words (German) break by the page language instead of overflowing. */}
+      <div className="label hyphens-auto wrap-break-word">{label}</div>
       <div className={cx("mt-1 font-mono text-xl font-semibold tabular-nums", TONES[tone])}>{value}</div>
       {hint && <div className="mt-0.5 truncate text-xxs text-muted">{hint}</div>}
     </div>

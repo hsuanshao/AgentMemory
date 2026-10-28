@@ -7,6 +7,7 @@ import { ErrorBanner } from "../../components/Feedback";
 import { Field, TextArea } from "../../components/Field";
 import { useAction } from "../../hooks/useAction";
 import { formatTime } from "../../lib/format";
+import { useT } from "../../i18n";
 
 export function AtomEditor({
   scope,
@@ -19,6 +20,7 @@ export function AtomEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const [content, setContent] = useState("");
   const [background, setBackground] = useState("");
 
@@ -38,15 +40,15 @@ export function AtomEditor({
   return (
     <Drawer
       open={!!atom}
-      title={atom ? `Edit L1 atom ${atom.id}` : ""}
+      title={atom ? t("atom.editTitle", { id: atom.id }) : ""}
       onClose={onClose}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" busy={save.busy} disabled={!content.trim() || unchanged} onClick={() => void save.run()}>
-            Save (new version)
+            {t("atom.saveNewVersion")}
           </Button>
         </>
       }
@@ -55,16 +57,16 @@ export function AtomEditor({
         <div className="space-y-4">
           <KeyValues
             entries={[
-              ["type", atom.type],
-              ["version", String(atom.version)],
-              ["created", formatTime(atom.created_at)],
-              ["updated", formatTime(atom.updated_at)],
+              [t("common.type"), atom.type],
+              [t("common.version"), String(atom.version)],
+              [t("common.created"), formatTime(atom.created_at)],
+              [t("common.updated"), formatTime(atom.updated_at)],
             ]}
           />
-          <Field label="Content">
+          <Field label={t("common.content")}>
             <TextArea rows={10} maxLength={8192} value={content} onChange={(e) => setContent(e.target.value)} />
           </Field>
-          <Field label="Background">
+          <Field label={t("atom.background")}>
             <TextArea rows={4} value={background} onChange={(e) => setBackground(e.target.value)} />
           </Field>
           <ErrorBanner error={save.error} />

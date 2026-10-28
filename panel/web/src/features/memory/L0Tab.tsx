@@ -12,6 +12,7 @@ import { useAction } from "../../hooks/useAction";
 import { useIsAdmin } from "../auth/session";
 import { useAsync } from "../../hooks/useAsync";
 import { formatTime } from "../../lib/format";
+import { useT } from "../../i18n";
 
 const PAGE = 20;
 
@@ -21,6 +22,7 @@ interface L0View {
 }
 
 export function L0Tab({ scope }: { scope: Scope }) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [offset, setOffset] = useState(0);
@@ -39,11 +41,11 @@ export function L0Tab({ scope }: { scope: Scope }) {
 
   const admin = useIsAdmin();
   const columns: ReadonlyArray<Column<ConversationItem>> = [
-    { key: "role", header: "Role", render: (m) => <Badge tone={m.role === "user" ? "accent" : "neutral"}>{m.role}</Badge> },
-    { key: "content", header: "Content", render: (m) => <div className="max-w-3xl whitespace-pre-wrap wrap-break-word">{m.content}</div> },
-    { key: "session", header: "Session", render: (m) => <span className="mono text-muted">{m.session_id ?? "—"}</span> },
-    ...(query ? [{ key: "score", header: "Score", render: (m: ConversationItem) => <span className="mono">{m.score?.toFixed(3) ?? "—"}</span> }] : []),
-    { key: "time", header: "Time", render: (m) => <span className="mono whitespace-nowrap text-muted">{formatTime(m.recorded_at ?? m.timestamp)}</span> },
+    { key: "role", header: t("common.role"), render: (m) => <Badge tone={m.role === "user" ? "accent" : "neutral"}>{m.role}</Badge> },
+    { key: "content", header: t("common.content"), render: (m) => <div className="max-w-3xl whitespace-pre-wrap wrap-break-word">{m.content}</div> },
+    { key: "session", header: t("common.session"), render: (m) => <span className="mono text-muted">{m.session_id ?? "—"}</span> },
+    ...(query ? [{ key: "score", header: t("common.score"), render: (m: ConversationItem) => <span className="mono">{m.score?.toFixed(3) ?? "—"}</span> }] : []),
+    { key: "time", header: t("common.time"), render: (m) => <span className="mono whitespace-nowrap text-muted">{formatTime(m.recorded_at ?? m.timestamp)}</span> },
     ...(admin ? [{
       key: "actions",
       header: "",
@@ -53,9 +55,9 @@ export function L0Tab({ scope }: { scope: Scope }) {
           size="sm"
           variant="danger"
           busy={remove.busy}
-          onClick={() => window.confirm(`Delete message ${m.id}?`) && void remove.run(m.id)}
+          onClick={() => window.confirm(t("l0.confirmDelete", { id: m.id })) && void remove.run(m.id)}
         >
-          Delete
+          {t("common.delete")}
         </Button>
       ),
     }] : []),
@@ -63,7 +65,7 @@ export function L0Tab({ scope }: { scope: Scope }) {
 
   return (
     <Card
-      title="L0 · Conversations"
+      title={t("l0.title")}
       bodyClassName="p-0"
       actions={
         <>
@@ -73,16 +75,16 @@ export function L0Tab({ scope }: { scope: Scope }) {
               setSessionId(e.target.value);
               setOffset(0);
             }}
-            placeholder="session_id filter"
+            placeholder={t("l0.sessionFilter")}
             className="mono w-44"
             disabled={!!query}
           />
-          <SearchBox value={query} onSearch={(q) => (setQuery(q), setOffset(0))} placeholder="Keyword search" />
+          <SearchBox value={query} onSearch={(q) => (setQuery(q), setOffset(0))} placeholder={t("memory.keywordSearch")} />
         </>
       }
     >
       <ErrorBanner error={list.error ?? remove.error} onRetry={list.reload} className="m-3" />
-      <DataTable columns={columns} rows={list.data?.rows} rowKey={(m) => m.id} loading={list.loading} empty="No messages in this scope" />
+      <DataTable columns={columns} rows={list.data?.rows} rowKey={(m) => m.id} loading={list.loading} empty={t("l0.empty")} />
       {!query && list.data && (
         <Pager offset={offset} limit={PAGE} total={list.data.total} count={list.data.rows.length} onChange={setOffset} />
       )}

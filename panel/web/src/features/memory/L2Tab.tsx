@@ -9,9 +9,11 @@ import { useAction } from "../../hooks/useAction";
 import { useIsAdmin } from "../auth/session";
 import { useAsync } from "../../hooks/useAsync";
 import { formatTime } from "../../lib/format";
+import { useT, withCount } from "../../i18n";
 import { buildScenarioTree, type TreeRow } from "./scenarioTree";
 
 export function L2Tab({ scope }: { scope: Scope }) {
+  const t = useT();
   const admin = useIsAdmin();
   const [selected, setSelected] = useState<string>();
   const [creating, setCreating] = useState(false);
@@ -23,7 +25,7 @@ export function L2Tab({ scope }: { scope: Scope }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
       <Card
-        title={`L2 · Scenarios${listing.data ? ` (${listing.data.total})` : ""}`}
+        title={withCount(t("l2.title"), listing.data?.total)}
         bodyClassName="p-1"
         actions={
           <>
@@ -32,7 +34,7 @@ export function L2Tab({ scope }: { scope: Scope }) {
             </Button>
             {admin && (
               <Button size="sm" onClick={() => (setCreating(true), setSelected(undefined))}>
-                + New
+                {t("l2.new")}
               </Button>
             )}
           </>
@@ -40,7 +42,7 @@ export function L2Tab({ scope }: { scope: Scope }) {
       >
         <ErrorBanner error={listing.error} onRetry={listing.reload} className="m-2" />
         {listing.loading && !listing.data && <Spinner className="m-3" />}
-        {listing.data && rows.length === 0 && <EmptyState>No scenario files</EmptyState>}
+        {listing.data && rows.length === 0 && <EmptyState>{t("l2.noFiles")}</EmptyState>}
         <ul className="max-h-[65vh] overflow-y-auto">
           {rows.map((row) => (
             <TreeItem key={row.path} row={row} active={row.path === selected} onSelect={() => (setSelected(row.path), setCreating(false))} />
@@ -60,7 +62,7 @@ export function L2Tab({ scope }: { scope: Scope }) {
         />
       ) : (
         <Card>
-          <EmptyState>Select a scenario file to read or edit it.</EmptyState>
+          <EmptyState>{t("l2.selectHint")}</EmptyState>
         </Card>
       )}
     </div>
@@ -93,6 +95,7 @@ function TreeItem({ row, active, onSelect }: { row: TreeRow; active: boolean; on
 }
 
 function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string | undefined; onSaved: (path: string) => void }) {
+  const t = useT();
   const admin = useIsAdmin();
   const file = useAsync(() => api.scenario.read(scope, path ?? ""), [scope, path], !!path);
   const [draftPath, setDraftPath] = useState(path ?? "");
@@ -113,7 +116,7 @@ function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string |
 
   return (
     <Card
-      title={path ? <span className="mono normal-case">{path}</span> : "New scenario"}
+      title={path ? <span className="mono normal-case">{path}</span> : t("l2.newScenario")}
       actions={
         admin && (
           <Button
@@ -123,7 +126,7 @@ function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string |
             disabled={!draftPath.trim() || draftPath.endsWith("/")}
             onClick={() => void save.run()}
           >
-            Save
+            {t("common.save")}
           </Button>
         )
       }
@@ -131,20 +134,24 @@ function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string |
       <div className="space-y-3">
         {file.loading && <Spinner />}
         <ErrorBanner error={file.error ?? save.error} />
-        {saved && !save.busy && <Notice tone="ok">Saved.</Notice>}
-        {missing && <Notice>File does not exist yet; saving will create it.</Notice>}
+        {saved && !save.busy && <Notice tone="ok">{t("l2.saved")}</Notice>}
+        {missing && <Notice>{t("l2.missing")}</Notice>}
         {file.data && (
           <div className="mono text-muted">
-            version {file.data.version ?? "—"} · created {formatTime(file.data.created_at)} · updated {formatTime(file.data.updated_at)}
+            {t("l2.meta", {
+              version: file.data.version ?? "—",
+              created: formatTime(file.data.created_at),
+              updated: formatTime(file.data.updated_at),
+            })}
           </div>
         )}
         {!path && (
-          <Field label="Path">
+          <Field label={t("l2.path")}>
             <Input className="mono" value={draftPath} onChange={(e) => setDraftPath(e.target.value)} placeholder="topic/scene-name.md" />
           </Field>
         )}
-        <Field label="Summary (optional)">
-          <Input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Keeps the existing summary when empty" />
+        <Field label={t("l2.summary")}>
+          <Input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder={t("l2.summaryPlaceholder")} />
         </Field>
         <TextArea rows={22} value={content} onChange={(e) => (setContent(e.target.value), setSaved(false))} />
       </div>

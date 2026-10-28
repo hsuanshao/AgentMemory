@@ -5,6 +5,7 @@ import { ErrorBanner } from "../../components/Feedback";
 import { Field, Input, Select } from "../../components/Field";
 import { useAsync } from "../../hooks/useAsync";
 import { useStore } from "../../hooks/useStore";
+import { useT } from "../../i18n";
 import { isSystemAdmin, sessionStore } from "../auth/session";
 
 const LIMIT = 100;
@@ -15,6 +16,7 @@ const LIMIT = 100;
  * own memory.
  */
 export function ScopePicker({ value, onChange }: { value: Scope; onChange: (scope: Scope) => void }) {
+  const t = useT();
   const session = useStore(sessionStore);
   const self = session?.user.user_id ?? "";
   const admin = isSystemAdmin(session);
@@ -30,7 +32,7 @@ export function ScopePicker({ value, onChange }: { value: Scope; onChange: (scop
 
   // Keep the draft pointing at something that exists (e.g. after a team was deleted).
   useEffect(() => {
-    const ids = teams.data?.items.map((t) => t.team_id);
+    const ids = teams.data?.items.map((x) => x.team_id);
     if (ids && !ids.includes(draft.team_id)) setDraft((d) => ({ ...d, team_id: ids[0] ?? "", agent_id: "" }));
   }, [teams.data, draft.team_id]);
   useEffect(() => {
@@ -46,24 +48,24 @@ export function ScopePicker({ value, onChange }: { value: Scope; onChange: (scop
     onChange(next);
   }
 
-  const teamOptions = (teams.data?.items ?? []).map((t) => ({ value: t.team_id, label: t.name }));
+  const teamOptions = (teams.data?.items ?? []).map((x) => ({ value: x.team_id, label: x.name }));
   const agentOptions = (agents.data?.items ?? []).map((a) => ({ value: a.agent_id, label: a.name }));
 
   return (
     <form onSubmit={apply} className="flex flex-wrap items-end gap-2 rounded-md border border-line bg-surface p-3">
-      <Field label="Team">
+      <Field label={t("common.team")}>
         <Select
-          aria-label="Team"
-          options={teamOptions.length ? teamOptions : [{ value: "", label: "No team" }]}
+          aria-label={t("common.team")}
+          options={teamOptions.length ? teamOptions : [{ value: "", label: t("scope.noTeam") }]}
           value={draft.team_id}
           onChange={(e) => setDraft({ ...draft, team_id: e.target.value, agent_id: "" })}
           className="w-48"
         />
       </Field>
-      <Field label="Agent">
+      <Field label={t("common.agent")}>
         <Select
-          aria-label="Agent"
-          options={agentOptions.length ? agentOptions : [{ value: "", label: "No agent" }]}
+          aria-label={t("common.agent")}
+          options={agentOptions.length ? agentOptions : [{ value: "", label: t("scope.noAgent") }]}
           value={draft.agent_id}
           onChange={(e) => setDraft({ ...draft, agent_id: e.target.value })}
           className="w-48"
@@ -75,15 +77,15 @@ export function ScopePicker({ value, onChange }: { value: Scope; onChange: (scop
           onChange={(e) => setDraft({ ...draft, user_id: e.target.value })}
           placeholder={self}
           disabled={!admin}
-          title={admin ? undefined : "You can only browse your own memory"}
+          title={admin ? undefined : t("scope.ownOnly")}
           className="mono w-56"
         />
       </Field>
       <Button type="submit" variant={dirty ? "primary" : "secondary"} disabled={!next.team_id || !next.agent_id}>
-        Apply scope
+        {t("scope.apply")}
       </Button>
       <ErrorBanner error={teams.error ?? agents.error} className="basis-full" />
-      <p className="basis-full text-xxs text-muted">L0/L1 are isolated by team + agent + user; L2/L3 by team + agent only.</p>
+      <p className="basis-full text-xxs text-muted">{t("scope.isolation")}</p>
     </form>
   );
 }

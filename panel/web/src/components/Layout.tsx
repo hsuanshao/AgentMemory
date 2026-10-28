@@ -3,18 +3,21 @@ import { api } from "../api";
 import { signOut, sessionStore } from "../features/auth/session";
 import { useAsync } from "../hooks/useAsync";
 import { useStore } from "../hooks/useStore";
+import { useT, type MessageKey } from "../i18n";
 import { Badge } from "./Badge";
 import { cx } from "./cx";
+import { LanguageSelect } from "./LanguageSelect";
 
-const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: "▦" },
-  { to: "/memory", label: "Memory", icon: "◫" },
-  { to: "/logs", label: "Generation logs", icon: "≡" },
-  { to: "/skills", label: "Skills", icon: "✦" },
-  { to: "/meta", label: "Metadata", icon: "◉" },
-] as const;
+const NAV: ReadonlyArray<{ to: string; label: MessageKey; icon: string }> = [
+  { to: "/dashboard", label: "nav.dashboard", icon: "▦" },
+  { to: "/memory", label: "nav.memory", icon: "◫" },
+  { to: "/logs", label: "nav.logs", icon: "≡" },
+  { to: "/skills", label: "nav.skills", icon: "✦" },
+  { to: "/meta", label: "nav.meta", icon: "◉" },
+];
 
 export function Layout() {
+  const t = useT();
   const session = useStore(sessionStore);
   const config = useAsync((signal) => api.panelConfig({ signal }), []);
 
@@ -27,7 +30,7 @@ export function Layout() {
             Memory Panel
           </div>
           <div className="mono mt-0.5 truncate text-muted" title={config.data?.core_url_display}>
-            {config.data ? `department: ${config.data.department_id}` : "…"}
+            {config.data ? t("layout.department", { id: config.data.department_id }) : "…"}
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2">
@@ -45,12 +48,15 @@ export function Layout() {
               <span className="w-4 text-center" aria-hidden>
                 {item.icon}
               </span>
-              {item.label}
+              {t(item.label)}
             </NavLink>
           ))}
         </nav>
+        <div className="border-t border-line px-3 pt-3">
+          <LanguageSelect className="w-full" />
+        </div>
         {session && (
-          <div className="border-t border-line p-3">
+          <div className="p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-xs font-medium">{session.user.username || session.user.user_id}</div>
@@ -59,7 +65,7 @@ export function Layout() {
               {session.user.user_type === "system_admin" && <Badge tone="accent">admin</Badge>}
             </div>
             <button type="button" onClick={signOut} className="mt-2 text-xs text-muted hover:text-err">
-              Sign out
+              {t("layout.signOut")}
             </button>
           </div>
         )}
