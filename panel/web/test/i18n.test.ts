@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { CATALOGS, interpolate, LOCALES, localeStore, t, withCount } from "../src/i18n";
+import { CATALOGS, interpolate, LOCALES, localeStore, t, translatorFor, withCount } from "../src/i18n";
 import { en } from "../src/i18n/messages/en";
 import { matchLocale } from "../src/i18n/match";
 import { rich } from "../src/i18n/rich";
@@ -41,6 +41,12 @@ describe("t", () => {
     expect(t("layout.signOut")).toBe("登出");
     localeStore.set("de");
     expect(t("layout.signOut")).toBe(CATALOGS.de["layout.signOut"]);
+  });
+
+  it("gives each language its own translator, so memos that depend on it recompute", () => {
+    expect(translatorFor("en")).toBe(translatorFor("en"));
+    expect(translatorFor("de")).not.toBe(translatorFor("en"));
+    expect(translatorFor("zh-TW")("layout.signOut")).toBe("登出");
   });
 
   it("fills placeholders", () => {

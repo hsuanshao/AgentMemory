@@ -37,16 +37,35 @@ export function interpolate(template: string, vars?: Vars): string {
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
 }
 
-/** The message in the current language, English when a catalog lacks it. */
-export const t: Translate = (key, vars) => interpolate(CATALOGS[getLocale()][key] ?? en[key] ?? key, vars);
+const translators = new Map<Locale, Translate>();
 
-/** `t`, re-rendering the caller when the language changes. */
-export function useT(): Translate {
-  useStore(localeStore);
-  return t;
+/** One translator per language, so its identity changes exactly when the language does. */
+export function translatorFor(locale: Locale): Translate {
+  let translate = translators.get(locale);
+  if (!translate) {
+    translate = (key, vars) => interpolate(CATALOGS[locale][key] ?? en[key] ?? key, vars);
+    translators.set(locale, translate);
+  }
+  return translate;
 }
 
-/** The current language; keeps `<html lang>` in step for screen readers and fonts. */
+/** The message in the current language, English when a catalog lacks it (for code outside components). */
+export const t: Translate = (key, vars) => translatorFor(getLocale())(key, vars);
+
+/**
+ * The current language's translator, re-rendering the caller when the language
+ * changes. A new language gives a new function, so `useMemo`/`React.memo` that
+ * depend on it recompute.
+ */
+export function useT(): Translate {
+  return translatorFor(useStore(localeStore));
+}
+
+/**
+ * The current language. Keeps `<html lang>` in step: screen readers read in it,
+ * hyphenation (long German words) follows it, and browsers pick the zh-TW or
+ * zh-CN fallback font from it.
+ */
 export function useLocale(): Locale {
   const locale = useStore(localeStore);
   useEffect(() => {
