@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, type RedactionLevel, type RedactionRule, type RedactionTestResult } from "../../api";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -6,7 +6,7 @@ import { Card } from "../../components/Card";
 import { CodeBlock } from "../../components/CodeBlock";
 import { DataTable, type Column } from "../../components/DataTable";
 import { ErrorBanner, Notice } from "../../components/Feedback";
-import { Field, Input, TextArea } from "../../components/Field";
+import { Field, Input, Select, TextArea, type Option } from "../../components/Field";
 import { useAction } from "../../hooks/useAction";
 import { useAsync } from "../../hooks/useAsync";
 import { useT, type Translate } from "../../i18n";
@@ -17,9 +17,18 @@ import { mono, time } from "../meta/shared";
  * The redaction rules of one level (every team, a team, or a user) and the
  * levels above it, which its writes also go through (#57). Core says
  * whether the viewer may change this level (`can_edit`); the levels above
- * are listed read-only.
+ * are listed read-only. At a user's level, `teams` lets a test add one of
+ * their teams' rules, as their writes there go through them.
  */
-export function RedactionRules({ level, title }: { level: RedactionLevel; title: string }) {
+export function RedactionRules({
+  level,
+  title,
+  teams,
+}: {
+  level: RedactionLevel;
+  title: string;
+  teams?: ReadonlyArray<Option<string>>;
+}) {
   const t = useT();
   const listing = useAsync(() => api.redaction.list(level), [level.team_id, level.user_id]);
   const [kind, setKind] = useState("");
@@ -27,6 +36,13 @@ export function RedactionRules({ level, title }: { level: RedactionLevel; title:
   const [description, setDescription] = useState("");
   const [sample, setSample] = useState("");
   const [preview, setPreview] = useState<RedactionTestResult>();
+  const [testTeam, setTestTeam] = useState(teams?.[0]?.value ?? "");
+  // The teams load after this mounts: default to the first until one is picked.
+  const picked = useRef(false);
+  const firstTeam = teams?.[0]?.value ?? "";
+  useEffect(() => {
+    if (!picked.current) setTestTeam(firstTeam);
+  }, [firstTeam]);
 
   const create = useAction(async () => {
     await api.redaction.create({ ...level, kind: kind.trim(), pattern, description: description.trim() || undefined });
@@ -45,6 +61,7 @@ export function RedactionRules({ level, title }: { level: RedactionLevel; title:
     setPreview(
       await api.redaction.test({
         ...level,
+        ...(level.user_id && testTeam ? { team_id: testTeam } : {}),
         text: sample,
         ...(pattern ? { pattern, kind: kind.trim() || undefined } : {}),
       }),
@@ -122,7 +139,19 @@ export function RedactionRules({ level, title }: { level: RedactionLevel; title:
         <div className="space-y-2">
           <ErrorBanner error={test.error} />
           <TextArea value={sample} onChange={(e) => setSample(e.target.value)} rows={3} placeholder={t("redaction.samplePlaceholder")} className="w-full" />
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {teams && (
+              <Select
+                aria-label={t("redaction.testInTeam")}
+                title={t("redaction.testInTeam")}
+                options={[{ value: "", label: t("redaction.testNoTeam") }, ...teams]}
+                value={testTeam}
+                onChange={(e) => {
+                  picked.current = true;
+                  setTestTeam(e.target.value);
+                }}
+              />
+            )}
             <Button busy={test.busy} disabled={!sample} onClick={() => void test.run()}>
               {t("redaction.test")}
             </Button>

@@ -112,8 +112,8 @@ impl RuleLevel {
         Ok(level)
     }
 
-    /// The scope whose rules a test at this level runs: the level's and
-    /// every level above it.
+    /// The scope whose rules a test runs: the level's and every level above
+    /// it; with both ids, a user's write in that team.
     fn scope(&self) -> WriteScope<'_> {
         WriteScope {
             team_id: self.team_id.as_deref(),
@@ -221,7 +221,8 @@ pub struct UpdateRedactionRuleInput {
 }
 
 /// Text to run through the rules of a level (and the levels above it), and
-/// optionally a pattern not saved yet, to see what it would catch.
+/// optionally a pattern not saved yet, to see what it would catch. With
+/// both ids, a user's write in that team: every level that applies to it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestRedactionInput {
     pub text: String,
@@ -305,6 +306,9 @@ impl RedactionService {
             // Checked under the lock `forget` takes, so a change cannot slip
             // in between the check and the insert.
             if self.generation(department) == generation {
+                // Expired entries go here too, not only on a change: one per
+                // (team, user) that wrote would otherwise stay.
+                cache.retain(|_, (_, at)| at.elapsed() < CACHE_TTL);
                 cache.insert(key, (Arc::clone(&redactor), Instant::now()));
             }
         }
@@ -374,12 +378,14 @@ impl RedactionService {
                 Access::Manage => require_system_admin(caller),
             },
             (Some(team), None) => {
-                if !self.directory.team_exists(department, team).await? {
-                    return Err(DomainError::not_found("team", team));
-                }
                 if caller.is_system_admin {
-                    return Ok(());
+                    return match self.directory.team_exists(department, team).await? {
+                        true => Ok(()),
+                        false => Err(DomainError::not_found("team", team)),
+                    };
                 }
+                // Membership first: a team that does not exist answers like
+                // one the caller is not in, so team ids cannot be probed.
                 match self
                     .directory
                     .active_member(department, team, &caller.user_id)
@@ -466,7 +472,7 @@ impl RedactionService {
             .await?;
         self.check(&input.kind, &input.pattern, &input.description)?;
         let rules = self.rules.list_redaction_rules(department).await?;
-        check_kind_level(&rules, &input.kind, &level, None)?;
+        check_kind_level(&rules, &input.kind, &level)?;
         check_room(&rules, &level, None)?;
         let now = self.now();
         let rule = RedactionRule {
@@ -507,7 +513,7 @@ impl RedactionService {
             rule.description = description;
         }
         self.check(&rule.kind, &rule.pattern, &rule.description)?;
-        check_kind_level(&rules, &rule.kind, &level, Some(&rule.rule_id))?;
+        check_kind_level(&rules, &rule.kind, &level)?;
         self.touch(&mut rule, caller);
         self.save(department, &rule).await?;
         Ok(rule)
@@ -549,9 +555,7 @@ impl RedactionService {
         caller: &Caller,
         input: TestRedactionInput,
     ) -> DomainResult<TestRedactionResult> {
-        let level = input.level.normalized()?;
-        self.authorize(department, caller, &level, Access::View)
-            .await?;
+        let scope = self.test_scope(department, caller, input.level).await?;
         if input.text.chars().count() > MAX_TEXT_CHARS {
             return Err(DomainError::invalid(format!(
                 "text is limited to {MAX_TEXT_CHARS} characters"
@@ -574,7 +578,7 @@ impl RedactionService {
         };
         let rules = self.rules.list_redaction_rules(department).await?;
         let (redacted, hits) = self
-            .build(&rules, level.scope(), extra)?
+            .build(&rules, scope.scope(), extra)?
             .redact_counted(&input.text);
         Ok(TestRedactionResult {
             redacted,
@@ -585,6 +589,37 @@ impl RedactionService {
             pattern_share,
             refused,
         })
+    }
+
+    /// The rules a test goes through, checked like reading them: one level,
+    /// or a user's and a team's together (both must be readable).
+    async fn test_scope(
+        &self,
+        department: &DepartmentId,
+        caller: &Caller,
+        level: RuleLevel,
+    ) -> DomainResult<RuleLevel> {
+        let team_id = level.team_id.filter(|t| !t.is_empty());
+        let user_id = level.user_id.filter(|u| !u.is_empty());
+        if let (Some(team), Some(user)) = (&team_id, &user_id) {
+            let user_level = RuleLevel {
+                team_id: None,
+                user_id: Some(user.clone()),
+            };
+            let team_level = RuleLevel {
+                team_id: Some(team.clone()),
+                user_id: None,
+            };
+            self.authorize(department, caller, &user_level, Access::View)
+                .await?;
+            self.authorize(department, caller, &team_level, Access::View)
+                .await?;
+            return Ok(RuleLevel { team_id, user_id });
+        }
+        let level = RuleLevel { team_id, user_id };
+        self.authorize(department, caller, &level, Access::View)
+            .await?;
+        Ok(level)
     }
 
     /// What a saved rule must pass: [`check_rule`], a kind that is not the
@@ -649,20 +684,22 @@ fn check_rule(kind: &str, pattern: &str, description: &str) -> DomainResult<()> 
         .map_err(|e| DomainError::invalid(format!("pattern is rejected: {e}")))
 }
 
-/// A kind belongs to one level, so a marker says which level caught it.
-/// Disabled rules count: their markers stay in stored text.
-fn check_kind_level(
-    rules: &[RedactionRule],
-    kind: &str,
-    level: &RuleLevel,
-    except: Option<&str>,
-) -> DomainResult<()> {
-    let taken = rules.iter().any(|r| {
-        r.kind == kind && RuleLevel::of(r) != *level && Some(r.rule_id.as_str()) != except
-    });
+/// A team's or a user's rule may not take a kind of the rules for all
+/// teams, so those markers stay unambiguous. Nothing else is compared:
+/// those rules are visible to everyone, while checking against other teams'
+/// or users' rules would let anyone take a name first and probe for rules
+/// they cannot read. Disabled rules count: their markers stay in stored
+/// text.
+fn check_kind_level(rules: &[RedactionRule], kind: &str, level: &RuleLevel) -> DomainResult<()> {
+    if *level == RuleLevel::default() {
+        return Ok(());
+    }
+    let taken = rules
+        .iter()
+        .any(|r| r.kind == kind && RuleLevel::of(r) == RuleLevel::default());
     if taken {
         return Err(DomainError::invalid(format!(
-            "{kind} is the kind of a rule at another level"
+            "{kind} is the kind of a rule for all teams"
         )));
     }
     Ok(())
@@ -1145,38 +1182,162 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_kind_belongs_to_one_level() {
+    async fn only_the_rules_for_all_teams_reserve_a_kind() {
         let service = service_with(
             DeploymentRules::default(),
             Arc::new(Rules(Mutex::new(Vec::new()))),
         );
         let department = DepartmentId::parse("department", "d").unwrap();
-        let admin = caller("usr-admin", true);
+        let (admin, member, other) = (
+            caller("usr-admin", true),
+            caller("usr-m", false),
+            caller("usr-other", false),
+        );
+        // A user's kind blocks nobody: not another user, a team, nor the
+        // rules for all teams, and nobody learns it exists.
         service
             .create(
                 &department,
-                &admin,
-                create_at("emp-id", r"\bEMP-\d{6}\b", Some("team-a"), None),
+                &member,
+                create_at("phone", r"\bTEL-\d{6}\b", None, Some("usr-m")),
             )
             .await
             .unwrap();
-        let err = service
+        assert!(service
             .create(
                 &department,
-                &admin,
-                create_at("emp-id", r"\bE-\d{6}\b", None, Some("usr-m")),
+                &other,
+                create_at("phone", r"\bPH-\d{6}\b", None, Some("usr-other"))
             )
             .await
-            .unwrap_err();
-        assert!(err.detail.contains("another level"), "{err:?}");
-        // The same level may have it twice, as before.
+            .is_ok());
         assert!(service
             .create(
                 &department,
                 &admin,
-                create_at("emp-id", r"\bE-\d{6}\b", Some("team-a"), None)
+                create_at("phone", r"\bP-\d{6}\b", Some("team-a"), None)
             )
             .await
             .is_ok());
+        assert!(service
+            .create(
+                &department,
+                &admin,
+                create_at("phone", r"\bPHONE-\d{6}\b", None, None)
+            )
+            .await
+            .is_ok());
+        // A kind of the rules for all teams, which everyone reads, is taken.
+        let err = service
+            .create(
+                &department,
+                &member,
+                create_at("phone", r"\bX-\d{6}\b", None, Some("usr-m")),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.detail.contains("for all teams"), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_team_answers_like_a_team_the_caller_is_not_in() {
+        let service = service_with(
+            DeploymentRules::default(),
+            Arc::new(Rules(Mutex::new(Vec::new()))),
+        );
+        let department = DepartmentId::parse("department", "d").unwrap();
+        let other = caller("usr-other", false);
+        let at = |team: &str| RuleLevel {
+            team_id: Some(team.into()),
+            user_id: None,
+        };
+        let missing = service
+            .list(&department, &other, at("team-x"))
+            .await
+            .unwrap_err();
+        let existing = service
+            .list(&department, &other, at("team-a"))
+            .await
+            .unwrap_err();
+        assert_eq!(missing.kind, existing.kind);
+        assert_eq!(missing.detail, existing.detail);
+    }
+
+    #[tokio::test]
+    async fn a_test_for_a_user_in_a_team_goes_through_both() {
+        let service = service_with(
+            DeploymentRules::default(),
+            Arc::new(Rules(Mutex::new(Vec::new()))),
+        );
+        let department = DepartmentId::parse("department", "d").unwrap();
+        let (admin, member, other) = (
+            caller("usr-admin", true),
+            caller("usr-m", false),
+            caller("usr-other", false),
+        );
+        service
+            .create(
+                &department,
+                &admin,
+                create_at("team-id", r"\bTEAM-\d{4}\b", Some("team-a"), None),
+            )
+            .await
+            .unwrap();
+        service
+            .create(
+                &department,
+                &member,
+                create_at("user-id", r"\bUSER-\d{4}\b", None, Some("usr-m")),
+            )
+            .await
+            .unwrap();
+        let input = |team: Option<&str>| TestRedactionInput {
+            text: "TEAM-1234 USER-1234".into(),
+            pattern: None,
+            kind: None,
+            level: RuleLevel {
+                team_id: team.map(Into::into),
+                user_id: Some("usr-m".into()),
+            },
+        };
+        let alone = service
+            .test(&department, &member, input(None))
+            .await
+            .unwrap();
+        assert_eq!(alone.redacted, "TEAM-1234 [REDACTED:user-id]");
+        let in_team = service
+            .test(&department, &member, input(Some("team-a")))
+            .await
+            .unwrap();
+        assert_eq!(in_team.redacted, "[REDACTED:team-id] [REDACTED:user-id]");
+        // Both levels must be readable.
+        assert!(service
+            .test(&department, &other, input(Some("team-a")))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn expired_redactors_do_not_pile_up() {
+        let service = service_with(
+            DeploymentRules::default(),
+            Arc::new(Rules(Mutex::new(Vec::new()))),
+        );
+        let department = DepartmentId::parse("department", "d").unwrap();
+        service
+            .redactor(&department, WriteScope::member("team-a", "usr-m"))
+            .await
+            .unwrap();
+        // Age the entry past the TTL.
+        if let Ok(mut cache) = service.cache.lock() {
+            for (_, at) in cache.values_mut() {
+                *at = Instant::now() - CACHE_TTL - Duration::from_secs(1);
+            }
+        }
+        service
+            .redactor(&department, WriteScope::member("team-a", "usr-other"))
+            .await
+            .unwrap();
+        assert_eq!(service.cache.lock().unwrap().len(), 1);
     }
 }

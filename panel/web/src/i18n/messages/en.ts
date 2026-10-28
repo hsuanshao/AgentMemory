@@ -310,6 +310,8 @@ export const en = {
   "redaction.tryIt": "Try it",
   "redaction.samplePlaceholder": "Sample text; it is not stored",
   "redaction.test": "Test",
+  "redaction.testInTeam": "In team",
+  "redaction.testNoTeam": "Without team rules",
   "redaction.withPattern": "With the pattern above, before adding it.",
   "redaction.withRules": "With the rules as they are.",
   "redaction.refused": "This pattern would not be saved: {reason}. Rules apply before anything is stored, so a broad one would erase every write.",

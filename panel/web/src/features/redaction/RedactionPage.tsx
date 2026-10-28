@@ -78,7 +78,14 @@ export function RedactionPage() {
           <Select aria-label={t("common.user")} options={userOptions} value={userId} onChange={(e) => setUserId(e.target.value)} />
         </Field>
       )}
-      {level && <RedactionRules key={`${tab}:${level.team_id ?? ""}:${level.user_id ?? ""}`} level={level} title={title} />}
+      {level && (
+        <RedactionRules
+          key={`${tab}:${level.team_id ?? ""}:${level.user_id ?? ""}`}
+          level={level}
+          title={title}
+          teams={tab === "user" ? teamOptions : undefined}
+        />
+      )}
     </div>
   );
 }

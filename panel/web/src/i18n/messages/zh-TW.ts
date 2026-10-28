@@ -306,6 +306,8 @@ export const zhTW: Messages = {
   "redaction.tryIt": "試試看",
   "redaction.samplePlaceholder": "範例文字；不會儲存",
   "redaction.test": "測試",
+  "redaction.testInTeam": "在團隊中",
+  "redaction.testNoTeam": "不含團隊規則",
   "redaction.withPattern": "使用上方的規則式（尚未新增）。",
   "redaction.withRules": "使用目前的規則。",
   "redaction.refused": "這個規則式無法儲存：{reason}。規則在儲存前就會套用，過於寬鬆的規則會抹掉所有寫入。",

@@ -306,6 +306,8 @@ export const fr: Messages = {
   "redaction.tryIt": "Essayer",
   "redaction.samplePlaceholder": "Texte d’exemple ; il n’est pas stocké",
   "redaction.test": "Tester",
+  "redaction.testInTeam": "Dans l'équipe",
+  "redaction.testNoTeam": "Sans les règles d'équipe",
   "redaction.withPattern": "Avec le motif ci-dessus, avant de l’ajouter.",
   "redaction.withRules": "Avec les règles actuelles.",
   "redaction.refused": "Ce motif ne serait pas enregistré : {reason}. Les règles s’appliquent avant tout stockage ; une règle trop large effacerait chaque écriture.",

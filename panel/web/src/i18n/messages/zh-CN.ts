@@ -306,6 +306,8 @@ export const zhCN: Messages = {
   "redaction.tryIt": "试一试",
   "redaction.samplePlaceholder": "示例文本；不会被存储",
   "redaction.test": "测试",
+  "redaction.testInTeam": "在团队中",
+  "redaction.testNoTeam": "不含团队规则",
   "redaction.withPattern": "使用上方的模式（添加前）。",
   "redaction.withRules": "使用当前规则。",
   "redaction.refused": "此模式无法保存：{reason}。规则在存储任何内容之前生效，过于宽泛的规则会抹掉所有写入。",

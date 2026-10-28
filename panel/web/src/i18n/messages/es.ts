@@ -306,6 +306,8 @@ export const es: Messages = {
   "redaction.tryIt": "Probar",
   "redaction.samplePlaceholder": "Texto de ejemplo; no se almacena",
   "redaction.test": "Probar",
+  "redaction.testInTeam": "En el equipo",
+  "redaction.testNoTeam": "Sin las reglas del equipo",
   "redaction.withPattern": "Con el patrón de arriba, antes de añadirlo.",
   "redaction.withRules": "Con las reglas actuales.",
   "redaction.refused": "Este patrón no se guardaría: {reason}. Las reglas se aplican antes de almacenar nada, así que una demasiado amplia borraría todas las escrituras.",

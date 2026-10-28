@@ -306,6 +306,8 @@ export const de: Messages = {
   "redaction.tryIt": "Ausprobieren",
   "redaction.samplePlaceholder": "Beispieltext; wird nicht gespeichert",
   "redaction.test": "Testen",
+  "redaction.testInTeam": "Im Team",
+  "redaction.testNoTeam": "Ohne Teamregeln",
   "redaction.withPattern": "Mit dem obigen Muster, vor dem Hinzufügen.",
   "redaction.withRules": "Mit den aktuellen Regeln.",
   "redaction.refused": "Dieses Muster würde nicht gespeichert: {reason}. Regeln greifen vor dem Speichern, ein zu breites würde also jeden Schreibvorgang löschen.",

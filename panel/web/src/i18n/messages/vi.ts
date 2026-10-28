@@ -306,6 +306,8 @@ export const vi: Messages = {
   "redaction.tryIt": "Thử nghiệm",
   "redaction.samplePlaceholder": "Văn bản mẫu; không được lưu",
   "redaction.test": "Kiểm tra",
+  "redaction.testInTeam": "Trong nhóm",
+  "redaction.testNoTeam": "Không gồm quy tắc nhóm",
   "redaction.withPattern": "Với mẫu ở trên, trước khi thêm.",
   "redaction.withRules": "Với các quy tắc hiện tại.",
   "redaction.refused": "Mẫu này sẽ không được lưu: {reason}. Quy tắc áp dụng trước khi bất cứ thứ gì được lưu, nên một mẫu quá rộng sẽ xóa sạch mọi lần ghi.",
