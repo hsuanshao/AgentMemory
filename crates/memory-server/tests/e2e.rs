@@ -1461,7 +1461,6 @@ async fn skill_proposals_are_decided_by_their_user_or_overseers() {
         .await;
     assert_eq!(added["data"]["status"], "archived", "{added}");
     let task = wait_for_proposal(&client).await;
-    let body = || client.scoped_for(json!({"task_id": task["task_id"], "index": 0}), None);
 
     // Another member of the team neither sees nor decides it.
     let (_, other_key) = client.create_member("other-member").await;
@@ -1473,14 +1472,55 @@ async fn skill_proposals_are_decided_by_their_user_or_overseers() {
         )
         .await;
     assert_eq!(listed["data"]["items"], json!([]), "{listed}");
+    // Deciding needs only the task: without team_id and agent_id it is
+    // refused for not being a reviewer, not for a missing field.
     let refused = client
-        .call_as("/v3/skill/proposal/approve", &other_key, body())
+        .call_as(
+            "/v3/skill/proposal/approve",
+            &other_key,
+            json!({"task_id": task["task_id"], "index": 0}),
+        )
         .await;
     assert_eq!(refused["code"], 403, "{refused}");
 
+    // Without an agent_id the list covers the team: all of it for a team
+    // admin, nothing of another member's for a member.
+    let team_only = || json!({"team_id": client.team_id});
+    let (_, team_admin_key) = client.create_member_as("team-admin", "admin").await;
+    let listed = client
+        .call_as("/v3/skill/proposal/list", &team_admin_key, team_only())
+        .await;
+    assert_eq!(
+        listed["data"]["items"][0]["task_id"], task["task_id"],
+        "{listed}"
+    );
+    let listed = client
+        .call_as("/v3/skill/proposal/list", &other_key, team_only())
+        .await;
+    assert_eq!(listed["data"]["items"], json!([]), "{listed}");
+    // The ids may come as headers instead, like on every other route.
+    let listed = client
+        .call_with_headers(
+            "/v3/skill/proposal/list",
+            &team_admin_key,
+            &[("x-memory-team-id", &client.team_id)],
+            json!({}),
+        )
+        .await;
+    assert_eq!(
+        listed["data"]["items"][0]["task_id"], task["task_id"],
+        "{listed}"
+    );
+
     // A system admin may; rejecting saves nothing.
+    let task_id = task["task_id"].as_str().unwrap();
     let rejected = client
-        .call_as("/v3/skill/proposal/reject", &client.admin_key, body())
+        .call_with_headers(
+            "/v3/skill/proposal/reject",
+            &client.admin_key,
+            &[("x-memory-task-id", task_id)],
+            json!({"index": 0}),
+        )
         .await;
     assert_eq!(rejected["data"]["state"], "rejected", "{rejected}");
     let stats = client.call("/v3/stats/overview", json!({})).await;
@@ -1815,6 +1855,17 @@ async fn assert_unknown_department_refused(client: &Client) {
 impl Client {
     /// Sends the Bearer key and, unless empty, `user_key`.
     async fn call_as(&self, path: &str, user_key: &str, body: Value) -> Value {
+        self.call_with_headers(path, user_key, &[], body).await
+    }
+
+    /// `call_as` with extra headers, such as `x-memory-team-id`.
+    async fn call_with_headers(
+        &self,
+        path: &str,
+        user_key: &str,
+        headers: &[(&str, &str)],
+        body: Value,
+    ) -> Value {
         let mut req = self
             .http
             .post(format!("{}{path}", self.base))
@@ -1822,6 +1873,9 @@ impl Client {
             .header("x-memory-department-id", &self.department);
         if !user_key.is_empty() {
             req = req.header("x-memory-user-key", user_key);
+        }
+        for (name, value) in headers {
+            req = req.header(*name, *value);
         }
         req.json(&body).send().await.unwrap().json().await.unwrap()
     }

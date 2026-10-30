@@ -6,6 +6,10 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Fixed
+- `skill/proposal/list` accepts a call without `agent_id`, as documented: a team admin lists the whole team's pending proposals in one call, and each caller still sees only the proposals they may review. The call used to be refused with `400 agent_id is required`. `skill/proposal/approve` and `reject` need only `task_id` and `index` (#77).
+- The `password-shape` redaction rule leaves git revisions of a commit SHA alone (`a1b2c3d^1`, `f433d90~1..f433d90`), so a distilled fact keeps the commit it refers to. Revisions of a ref name such as `v0.4.3^1` are still redacted: by their shape they cannot be told from a password ending in `^1` (#74).
+
 ## [0.5.1] - 2026-10-28
 
 **0.5.1 replaces 0.5.0**, whose GitHub release was withdrawn. It is 0.5.0 plus the fix below. From 0.4.3, read [UPGRADE → To 0.5.1](docs/UPGRADE.md#to-051): everything about 0.5.0 applies, including schema migration 7.

@@ -78,7 +78,7 @@ impl Ctx {
     }
 
     /// Body field first, then `x-memory-<name>` header.
-    fn isolation(&self, body: &Value, field: &str) -> Option<String> {
+    pub fn isolation(&self, body: &Value, field: &str) -> Option<String> {
         body.get(field)
             .and_then(Value::as_str)
             .map(str::to_owned)

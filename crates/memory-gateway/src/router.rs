@@ -239,9 +239,16 @@ fn skill_routes() -> Router<SharedState> {
         .route("/extract", post(skill::extract))
         .route("/conversation/add", post(skill::conversation_add))
         .route("/conversation/force-archive", post(skill::force_archive))
-        .route("/proposal/list", post(skill::proposal_list))
-        .route("/proposal/approve", post(skill::proposal_approve))
-        .route("/proposal/reject", post(skill::proposal_reject))
+}
+
+/// Skill proposals are reviewed across a team's agents and users, so they
+/// are not authorized as one memory scope: each handler applies
+/// `authorize_proposal_review` to every proposal it lists or decides.
+fn proposal_routes() -> Router<SharedState> {
+    Router::new()
+        .route("/list", post(skill::proposal_list))
+        .route("/approve", post(skill::proposal_approve))
+        .route("/reject", post(skill::proposal_reject))
 }
 
 /// Department administration and operational state, for the department's
@@ -329,7 +336,8 @@ fn operator_routes() -> Router<SharedState> {
 
 /// Three trust zones, none of which lets one department reach another:
 /// - the memory data plane, skills and session turns, authorized per user
-///   and scope (`x-memory-user-key`, see `authz`);
+///   and scope (`x-memory-user-key`, see `authz`); skill proposals, for
+///   users of the department, authorized per proposal by their handlers;
 /// - department administration and operational state, for users of that
 ///   department (`require_member`, `require_system_admin`);
 /// - the operator's bootstrap, upgrade and destroy routes, which alone take
@@ -350,6 +358,11 @@ pub fn build_router(state: SharedState) -> Router {
         .nest("/skill", skill_routes())
         .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
         .layer(user_auth())
+        .layer(user_department());
+    let proposals = Router::new()
+        .nest("/skill/proposal", proposal_routes())
+        .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
+        .layer(member())
         .layer(user_department());
     let department = department_routes()
         .layer(DefaultBodyLimit::max(state.settings.max_body_bytes))
@@ -376,6 +389,7 @@ pub fn build_router(state: SharedState) -> Router {
     let v3 = Router::new()
         .merge(user_scoped)
         .merge(session)
+        .merge(proposals)
         .merge(department)
         .merge(system_admin)
         .merge(operator);
