@@ -6,6 +6,10 @@
 
 ## [未發布]
 
+### 修正
+- `skill/proposal/list` 照文件所寫，可以不帶 `agent_id`：team admin 一次就能列出整個 team 的待審提案，每個呼叫者仍然只看得到自己能審核的提案。原本會被拒絕並回 `400 agent_id is required`（#77）。
+- `password-shape` 遮罩規則不再遮掉以 commit SHA 為基底的 git revision（`a1b2c3d^1`、`f433d90~1..f433d90`），蒸餾出來的事實會保留它指的 commit。以 ref 名稱為基底的 revision（例如 `v0.4.3^1`）仍然會被遮：從形狀上分不出它和結尾是 `^1` 的密碼（#74）。
+
 ## [0.5.1] - 2026-10-28
 
 **0.5.1 取代 0.5.0**，0.5.0 的 GitHub release 已撤下。內容是 0.5.0 再加上下面的修正。從 0.4.3 升級請閱讀 [UPGRADE → 升級到 0.5.1](docs/UPGRADE.zh-tw.md#升級到-051)：0.5.0 的所有說明都適用，包括 schema 遷移 7。

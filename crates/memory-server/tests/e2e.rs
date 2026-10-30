@@ -1478,6 +1478,22 @@ async fn skill_proposals_are_decided_by_their_user_or_overseers() {
         .await;
     assert_eq!(refused["code"], 403, "{refused}");
 
+    // Without an agent_id the list covers the team: all of it for a team
+    // admin, nothing of another member's for a member.
+    let team_only = || json!({"team_id": client.team_id});
+    let (_, team_admin_key) = client.create_member_as("team-admin", "admin").await;
+    let listed = client
+        .call_as("/v3/skill/proposal/list", &team_admin_key, team_only())
+        .await;
+    assert_eq!(
+        listed["data"]["items"][0]["task_id"], task["task_id"],
+        "{listed}"
+    );
+    let listed = client
+        .call_as("/v3/skill/proposal/list", &other_key, team_only())
+        .await;
+    assert_eq!(listed["data"]["items"], json!([]), "{listed}");
+
     // A system admin may; rejecting saves nothing.
     let rejected = client
         .call_as("/v3/skill/proposal/reject", &client.admin_key, body())

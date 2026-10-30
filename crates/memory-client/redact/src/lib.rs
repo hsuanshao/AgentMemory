@@ -304,9 +304,12 @@ fn model_reference() -> &'static Regex {
 }
 
 /// Text that has a password's symbols but is something else: an email
-/// address, a query string, or code (`cmd1&&cmd2`, `a1!=b2`, `C++17&&x86`).
+/// address, a query string, code (`cmd1&&cmd2`, `a1!=b2`, `C++17&&x86`), or
+/// a git revision of a commit SHA (`a1b2c3d^1`, `f433d90~1..f433d90`).
 /// Code means identifiers or numbers joined by operators; `Tr0ub4dor&&3x`
-/// and `P@ss==w0rd9` do not qualify.
+/// and `P@ss==w0rd9` do not qualify. A revision of a ref name
+/// (`v0.4.3^1`) does not either: by its shape it is a password ending in
+/// `^1`.
 fn not_a_password() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -314,6 +317,7 @@ fn not_a_password() -> &'static Regex {
             r"^[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$",
             r"|^[?&]?[\w.-]+=[^&=]*(?:&[\w.-]+=[^&=]*)+$",
             r"|^(?:[A-Za-z_][\w.]*(?:\+\+\d*)?|\d+(?:\.\d+)?)(?:(?:&&|\|\||!=|==)(?:[A-Za-z_][\w.]*(?:\+\+\d*)?|\d+(?:\.\d+)?))+$",
+            r"|^[0-9a-f]{7,40}(?:[~^]\d*)*(?:\.{2,3}[0-9a-f]{7,40}(?:[~^]\d*)*)?$",
         ))
         .expect("valid exclusion pattern")
     })
@@ -1171,6 +1175,36 @@ mod tests {
             "if x1==y2 || z3",
         ] {
             assert_eq!(redact(text), text);
+        }
+    }
+
+    #[test]
+    fn leaves_revisions_of_a_commit_sha_alone() {
+        for text in [
+            "Compare with a1b2c3d^1 to see the previous tree",
+            "git diff a1b2c3d^1 a1b2c3d",
+            "git log f433d90~1..f433d90",
+            "git log f433d90^2~3...a1b2c3d^",
+            "git show 0f58625b8da9cb4e305e7d750efa580c598b3590^1",
+            "reset to `a1b2c3d~2`.",
+        ] {
+            assert_eq!(redact(text), text);
+        }
+    }
+
+    #[test]
+    fn revisions_of_a_ref_name_are_still_redacted() {
+        for (input, want) in [
+            (
+                "git show release-0.4^1",
+                "git show [REDACTED:password-shape]",
+            ),
+            ("git show v0.4.3^1", "git show [REDACTED:password-shape]"),
+            ("P4ssw0rd^1", "[REDACTED:password-shape]"),
+            ("A1B2C3D4^1", "[REDACTED:password-shape]"),
+            ("a1b2c3d^1Xy", "[REDACTED:password-shape]"),
+        ] {
+            assert_eq!(redact(input), want, "{input}");
         }
     }
 
