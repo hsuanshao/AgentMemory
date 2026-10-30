@@ -29,6 +29,13 @@ fn required<'a>(ctx: &Ctx, body: &'a Value, key: &str) -> Result<&'a str, ApiErr
         .ok_or_else(|| ApiError::bad_request(&ctx.request_id, format!("{key} is required")))
 }
 
+/// An isolation id (`team_id`, `task_id`, …) from the body or its
+/// `x-memory-*` header, for routes that `authz` does not resolve.
+fn required_isolation(ctx: &Ctx, body: &Value, key: &str) -> Result<String, ApiError> {
+    ctx.isolation(body, key)
+        .ok_or_else(|| ApiError::bad_request(&ctx.request_id, format!("{key} is required")))
+}
+
 fn expected_version(ctx: &Ctx, body: &Value) -> Result<u32, ApiError> {
     body.get("expected_version")
         .and_then(Value::as_u64)
@@ -430,12 +437,13 @@ pub async fn proposal_list(
     JsonBody(body): JsonBody,
 ) -> ApiResult {
     let department = ctx.department()?;
-    let team = required(&ctx, &body, "team_id")?;
+    let team = required_isolation(&ctx, &body, "team_id")?;
+    let agent = ctx.isolation(&body, "agent_id");
     let caller = reviewer(&s, &ctx).await?;
     let items = s
         .services
         .skill_extraction
-        .proposals(&department, &caller, team, str_of(&body, "agent_id"))
+        .proposals(&department, &caller, &team, agent.as_deref())
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, json!({ "items": items })))
@@ -443,7 +451,7 @@ pub async fn proposal_list(
 
 async fn decide(s: SharedState, ctx: Ctx, body: Value, approve: bool) -> ApiResult {
     let department = ctx.department()?;
-    let task_id = required(&ctx, &body, "task_id")?;
+    let task_id = required_isolation(&ctx, &body, "task_id")?;
     let index = body
         .get("index")
         .and_then(Value::as_u64)
@@ -452,7 +460,7 @@ async fn decide(s: SharedState, ctx: Ctx, body: Value, approve: bool) -> ApiResu
     let decided = s
         .services
         .skill_extraction
-        .decide(&department, &caller, task_id, index as usize, approve)
+        .decide(&department, &caller, &task_id, index as usize, approve)
         .await
         .map_err(|e| ctx.err(e))?;
     Ok(ok(&ctx.request_id, decided))

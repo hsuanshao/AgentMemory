@@ -309,7 +309,9 @@ fn model_reference() -> &'static Regex {
 /// Code means identifiers or numbers joined by operators; `Tr0ub4dor&&3x`
 /// and `P@ss==w0rd9` do not qualify. A revision of a ref name
 /// (`v0.4.3^1`) does not either: by its shape it is a password ending in
-/// `^1`.
+/// `^1`. Neither shape tells a SHA revision from a password of lowercase
+/// hex ending in `^1` (`deadbeef^1`); those are let through on purpose,
+/// being rare and weak, while ref names are many and stay redacted.
 fn not_a_password() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
