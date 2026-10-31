@@ -1,14 +1,15 @@
-//! L1 → L2: consolidate new atoms into a bounded set of scene files.
+//! L1 → L2: consolidate new atoms into a bounded set of scene files,
+//! record which atoms each scene holds, and bring stale scenes up to date.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomicMemory, Layer};
 use memory_domain::pipeline::scene_capacity_guidance;
 use memory_domain::profile::{
-    is_tombstone, normalize_scene_filename, NewSceneVersion, ProfileScope, SceneOp, SceneRef,
-    SceneVersion, MAX_SCENE_CHARS,
+    is_tombstone, normalize_scene_filename, NewSceneVersion, ProfileScope, SceneMember, SceneOp,
+    SceneRef, SceneVersion, SceneWriteLinks, StaleMark, StaleReason, MAX_SCENE_CHARS,
 };
 use memory_domain::scope::DepartmentId;
 use serde::Deserialize;
@@ -23,6 +24,9 @@ use crate::ports::system::{ChatMessage, Clock, LlmClient};
 struct ScenePlan {
     #[serde(default)]
     operations: Vec<SceneOperation>,
+    /// Stale scenes the model read and found already right.
+    #[serde(default)]
+    unchanged: Vec<String>,
     #[serde(default)]
     persona_update_request: Option<String>,
 }
@@ -37,12 +41,34 @@ struct SceneOperation {
     summary: String,
     #[serde(default)]
     content: String,
+    /// Numbers (`n`) of the new memories this scene now states.
+    #[serde(default)]
+    atoms: Vec<u32>,
+}
+
+/// How many stale scenes one run is given, and after how many runs that
+/// left a mark it is no longer given to L2 (it stays for a person).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaleSettings {
+    pub scenes_per_run: usize,
+    pub max_attempts: u32,
+}
+
+impl Default for StaleSettings {
+    fn default() -> Self {
+        Self {
+            scenes_per_run: 10,
+            max_attempts: 3,
+        }
+    }
 }
 
 pub struct L2Outcome {
     pub changed_files: Vec<String>,
     pub persona_update_request: Option<String>,
     pub system_prompt: String,
+    /// The stale marks this run was given.
+    pub stale_given: Vec<i64>,
 }
 
 pub struct SceneExtractor {
@@ -50,6 +76,14 @@ pub struct SceneExtractor {
     memory: Arc<MemoryService>,
     clock: Arc<dyn Clock>,
     max_scenes: usize,
+    stale: StaleSettings,
+}
+
+/// A stale scene as the model sees it, with the marks behind it.
+struct StaleScene {
+    file: String,
+    marks: Vec<StaleMark>,
+    reasons: Vec<serde_json::Value>,
 }
 
 impl SceneExtractor {
@@ -58,13 +92,30 @@ impl SceneExtractor {
         memory: Arc<MemoryService>,
         clock: Arc<dyn Clock>,
         max_scenes: usize,
+        stale: StaleSettings,
     ) -> Self {
         Self {
             llm,
             memory,
             clock,
             max_scenes,
+            stale,
         }
+    }
+
+    /// Whether the profile has stale scenes an L2 run would be given, even
+    /// with no new atoms.
+    pub async fn has_stale_work(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+    ) -> DomainResult<bool> {
+        Ok(self
+            .memory
+            .stale_marks(department, profile, None)
+            .await?
+            .iter()
+            .any(|m| m.attempts < self.stale.max_attempts))
     }
 
     pub async fn consolidate(
@@ -76,7 +127,12 @@ impl SceneExtractor {
     ) -> DomainResult<L2Outcome> {
         let system_prompt = prompts::compose(Layer::L2, strategy);
         let scenes = self.memory.list_scenes(department, profile, "").await?;
-        let input = self.plan_input(atoms, &scenes);
+        let stale = self.stale_scenes(department, profile, &scenes).await?;
+        let stale_given: Vec<i64> = stale
+            .iter()
+            .flat_map(|s| s.marks.iter().map(|m| m.id))
+            .collect();
+        let input = self.plan_input(atoms, &scenes, &stale);
         let reply = self
             .llm
             .complete(&[
@@ -85,20 +141,125 @@ impl SceneExtractor {
             ])
             .await?;
         let plan: ScenePlan = parse_llm_json(&reply, '{')?;
+        let numbers: Vec<&[u32]> = plan.operations.iter().map(|o| o.atoms.as_slice()).collect();
+        let (placed, dropped) = assign_numbers(&numbers, atoms.len());
+        if dropped > 0 {
+            warn!(
+                dropped,
+                "L2 returned memory numbers out of range or claimed twice; ignored"
+            );
+        }
+        let members: Vec<Vec<SceneMember>> = placed
+            .iter()
+            .map(|indices| indices.iter().map(|&i| member(&atoms[i])).collect())
+            .collect();
+        let mut settled = HashSet::new();
         let changed = self
-            .apply(department, profile, &scenes, plan.operations)
+            .apply(
+                department,
+                profile,
+                &scenes,
+                plan.operations,
+                members,
+                &stale,
+                &mut settled,
+            )
+            .await?;
+        self.settle_unchanged(department, profile, &stale, &plan.unchanged, &mut settled)
+            .await?;
+        let left: Vec<i64> = stale_given
+            .iter()
+            .copied()
+            .filter(|id| !settled.contains(id))
+            .collect();
+        self.memory
+            .note_stale_attempt(department, profile, &left)
             .await?;
         Ok(L2Outcome {
             changed_files: changed,
             persona_update_request: plan.persona_update_request.filter(|r| !r.trim().is_empty()),
             system_prompt,
+            stale_given,
         })
     }
 
-    fn plan_input(&self, atoms: &[AtomicMemory], scenes: &[SceneEntry]) -> String {
+    /// The live scenes with open marks L2 may still try, oldest mark first,
+    /// at most `scenes_per_run` of them.
+    async fn stale_scenes(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scenes: &[SceneEntry],
+    ) -> DomainResult<Vec<StaleScene>> {
+        let files: HashMap<&str, &str> = scenes
+            .iter()
+            .map(|s| (s.scene.scene_id.as_str(), s.relative_path.as_str()))
+            .collect();
+        let mut by_scene: Vec<(String, Vec<StaleMark>)> = Vec::new();
+        for mark in self.memory.stale_marks(department, profile, None).await? {
+            if mark.attempts >= self.stale.max_attempts {
+                continue;
+            }
+            let Some(file) = files.get(mark.scene_id.as_str()) else {
+                continue;
+            };
+            if let Some((_, marks)) = by_scene.iter_mut().find(|(f, _)| f == file) {
+                marks.push(mark);
+            } else if by_scene.len() < self.stale.scenes_per_run {
+                by_scene.push(((*file).to_owned(), vec![mark]));
+            }
+        }
+        let mut out = Vec::with_capacity(by_scene.len());
+        for (file, marks) in by_scene {
+            let mut reasons = Vec::with_capacity(marks.len());
+            for mark in &marks {
+                reasons.push(self.reason(department, mark).await?);
+            }
+            out.push(StaleScene {
+                file,
+                marks,
+                reasons,
+            });
+        }
+        Ok(out)
+    }
+
+    /// One mark as the model reads it: what the scene may still say, and
+    /// what is true now.
+    async fn reason(
+        &self,
+        department: &DepartmentId,
+        mark: &StaleMark,
+    ) -> DomainResult<serde_json::Value> {
+        let now = match mark.reason {
+            StaleReason::Deleted => None,
+            _ => self.memory.atom(department, &mark.atom_id).await?,
+        };
+        let kind = match (&now, mark.reason) {
+            // Deleted since it was marked.
+            (None, _) => StaleReason::Deleted,
+            (Some(_), reason) => reason,
+        };
+        let mut reason = serde_json::json!({
+            "kind": kind.as_str(),
+            "before": mark.before_content,
+        });
+        if let (Some(atom), StaleReason::Rewritten | StaleReason::ChangedDuringRun) = (&now, kind) {
+            reason["after"] = serde_json::Value::String(atom.content.clone());
+        }
+        Ok(reason)
+    }
+
+    fn plan_input(
+        &self,
+        atoms: &[AtomicMemory],
+        scenes: &[SceneEntry],
+        stale: &[StaleScene],
+    ) -> String {
         let memories: Vec<serde_json::Value> = atoms
             .iter()
-            .map(|a| serde_json::json!({"id": a.id, "type": a.atom_type.as_str(), "content": a.content, "created_at": a.created_at.to_rfc3339()}))
+            .enumerate()
+            .map(|(i, a)| serde_json::json!({"n": i + 1, "type": a.atom_type.as_str(), "content": a.content, "created_at": a.created_at.to_rfc3339()}))
             .collect();
         let existing: Vec<serde_json::Value> = scenes
             .iter()
@@ -111,10 +272,15 @@ impl SceneExtractor {
                 })
             })
             .collect();
+        let stale_scenes: Vec<serde_json::Value> = stale
+            .iter()
+            .map(|s| serde_json::json!({"file": s.file, "reasons": s.reasons}))
+            .collect();
         prompts::data_input(
             &serde_json::json!({
                 "new_memories": memories,
                 "existing_scenes": existing,
+                "stale_scenes": stale_scenes,
                 "scene_count": scenes.len(),
                 "max_scenes": self.max_scenes,
                 "current_time": self.clock.now().to_rfc3339(),
@@ -128,20 +294,31 @@ impl SceneExtractor {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn apply(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         scenes: &[SceneEntry],
         operations: Vec<SceneOperation>,
+        members: Vec<Vec<SceneMember>>,
+        stale: &[StaleScene],
+        settled: &mut HashSet<i64>,
     ) -> DomainResult<Vec<String>> {
         let mut current: HashMap<String, SceneVersion> = scenes
             .iter()
             .map(|s| (s.relative_path.clone(), s.scene.clone()))
             .collect();
+        let marks_of = |file: &str| -> Vec<i64> {
+            stale
+                .iter()
+                .filter(|s| s.file == file)
+                .flat_map(|s| s.marks.iter().map(|m| m.id))
+                .collect()
+        };
         let mut created = 0usize;
         let mut changed = Vec::new();
-        for op in operations {
+        for (op, members) in operations.into_iter().zip(members) {
             let Ok(file) = normalize_scene_filename(&op.file) else {
                 warn!(file = %op.file, "skipping scene operation with invalid filename");
                 continue;
@@ -203,9 +380,19 @@ impl SceneExtractor {
                     .iter()
                     .map(|m| retirement(m.clone(), Some(&scene_id), None)),
             );
+            // Rewriting a stale scene, or folding stale scenes into it, deals
+            // with the marks it was given for them.
+            let resolved: Vec<i64> = std::iter::once(file.as_str())
+                .chain(merged_away.iter().map(|m| m.slug.as_str()))
+                .flat_map(marks_of)
+                .collect();
+            let links = SceneWriteLinks {
+                members,
+                resolved: resolved.clone(),
+            };
             let written = match self
                 .memory
-                .append_scenes(department, profile, versions)
+                .append_scenes_linked(department, profile, versions, links)
                 .await
             {
                 // Only an API write or removal changes scenes while L2 runs:
@@ -216,6 +403,7 @@ impl SceneExtractor {
                 }
                 other => other?,
             };
+            settled.extend(resolved);
             // Counted only once written: a skipped create does not use up
             // the batch's one new scene.
             if is_create {
@@ -231,5 +419,109 @@ impl SceneExtractor {
             changed.push(file);
         }
         Ok(changed)
+    }
+
+    /// Settles the marks of stale scenes the model read and left as they
+    /// are, unless an operation of this run already wrote them.
+    async fn settle_unchanged(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        stale: &[StaleScene],
+        unchanged: &[String],
+        settled: &mut HashSet<i64>,
+    ) -> DomainResult<()> {
+        let files: HashSet<String> = unchanged
+            .iter()
+            .filter_map(|f| normalize_scene_filename(f).ok())
+            .collect();
+        let resolved: Vec<i64> = stale
+            .iter()
+            .filter(|s| files.contains(&s.file))
+            .flat_map(|s| s.marks.iter().map(|m| m.id))
+            .filter(|id| !settled.contains(id))
+            .collect();
+        if resolved.is_empty() {
+            return Ok(());
+        }
+        self.memory
+            .append_scenes_linked(
+                department,
+                profile,
+                Vec::new(),
+                SceneWriteLinks {
+                    members: Vec::new(),
+                    resolved: resolved.clone(),
+                },
+            )
+            .await?;
+        settled.extend(resolved);
+        Ok(())
+    }
+}
+
+fn member(atom: &AtomicMemory) -> SceneMember {
+    SceneMember {
+        atom_id: atom.id.clone(),
+        atom_version: atom.version,
+        user_id: atom.scope.user_id.to_string(),
+        content: atom.content.clone(),
+    }
+}
+
+/// Maps each operation's memory numbers (1-based `n`) to indices into the
+/// batch of `batch` atoms. The model's numbers are not trusted: one out of
+/// range is dropped, and one claimed by two operations is dropped from
+/// both, since a memory belongs to one scene at most. Returns the indices
+/// per operation and how many numbers were dropped.
+fn assign_numbers(operations: &[&[u32]], batch: usize) -> (Vec<Vec<usize>>, usize) {
+    let mut claims: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut dropped = 0;
+    for numbers in operations {
+        let unique: HashSet<u32> = numbers.iter().copied().collect();
+        for n in unique {
+            if n == 0 || n as usize > batch {
+                dropped += 1;
+            } else {
+                *claims.entry(n).or_default() += 1;
+            }
+        }
+    }
+    let placed = operations
+        .iter()
+        .map(|numbers| {
+            let mut seen = HashSet::new();
+            let mut indices: Vec<usize> = numbers
+                .iter()
+                .copied()
+                .filter(|n| claims.get(n) == Some(&1) && seen.insert(*n))
+                .map(|n| n as usize - 1)
+                .collect();
+            indices.sort_unstable();
+            indices
+        })
+        .collect();
+    dropped += claims.values().filter(|&&c| c > 1).sum::<usize>();
+    (placed, dropped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::assign_numbers;
+
+    #[test]
+    fn numbers_out_of_range_or_claimed_twice_are_dropped() {
+        let (placed, dropped) = assign_numbers(&[&[1, 3, 3, 9], &[2, 3], &[0, 4]], 4);
+        // 3 is claimed by two operations, 9 and 0 are out of range; the
+        // repeat of 3 inside one operation counts once.
+        assert_eq!(placed, vec![vec![0], vec![1], vec![3]]);
+        assert_eq!(dropped, 4);
+    }
+
+    #[test]
+    fn no_numbers_place_nothing() {
+        let (placed, dropped) = assign_numbers(&[&[], &[]], 5);
+        assert_eq!(placed, vec![Vec::<usize>::new(), Vec::new()]);
+        assert_eq!(dropped, 0);
     }
 }

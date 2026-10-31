@@ -621,10 +621,18 @@ impl PipelineService {
         }
         let has_more = range.is_none() && fetched.len() > L2_ATOM_BATCH;
         fetched.truncate(L2_ATOM_BATCH);
-        let (Some(first), Some(last_seq)) = (
-            fetched.first().map(|a| a.seq),
-            fetched.last().map(|a| a.seq),
-        ) else {
+        let span = match (fetched.first(), fetched.last()) {
+            (Some(first), Some(last)) => Some(SeqRange {
+                first: first.seq,
+                last: last.seq,
+            }),
+            _ => None,
+        };
+        // No new atoms: still a run when stale scenes wait for L2 (a quiet
+        // topic gets no new atoms to bring it up to date).
+        if span.is_none()
+            && (range.is_some() || !self.deps.l2.has_stale_work(department, profile).await?)
+        {
             if range.is_some() {
                 return Ok(());
             }
@@ -636,11 +644,7 @@ impl PipelineService {
             let mut state = self.load_profile(department, profile).await?;
             state.l2_pending = false;
             return Ok(self.deps.state.put_profile(&state).await?);
-        };
-        let span = SeqRange {
-            first,
-            last: last_seq,
-        };
+        }
         let atoms: Vec<_> = fetched.into_iter().map(|a| a.item).collect();
 
         let started = self.now().timestamp_millis();
@@ -691,7 +695,7 @@ impl PipelineService {
                         .lock(&profile_key(department, profile))
                         .await?;
                     let mut state = self.load_profile(department, profile).await?;
-                    state.l2_cursor = max_seq(state.l2_cursor, Some(span.last));
+                    state.l2_cursor = max_seq(state.l2_cursor, span.map(|s| s.last));
                     state.l2_pending = has_more;
                     let now = self.now();
                     let next = if has_more {
@@ -702,14 +706,16 @@ impl PipelineService {
                     state.l2_due_at = Some(state.l2_due_at.map_or(next, |t| t.min(next)));
                     self.deps.state.put_profile(&state).await?;
                 }
-                warn!(profile = %profile.key(), first = span.first, last = span.last, error = %err, "L2 input dropped after its last attempt failed");
+                warn!(profile = %profile.key(), first = span.map(|s| s.first), last = span.map(|s| s.last), error = %err, "L2 input dropped after its last attempt failed");
                 return Err(JobFailure {
                     error: err,
-                    redo: Some(Box::new(PipelineJob::L2 {
-                        department: department.clone(),
-                        profile: profile.clone(),
-                        range: Some(span),
-                    })),
+                    redo: span.map(|span| {
+                        Box::new(PipelineJob::L2 {
+                            department: department.clone(),
+                            profile: profile.clone(),
+                            range: Some(span),
+                        })
+                    }),
                 });
             }
         };
@@ -723,11 +729,14 @@ impl PipelineService {
                 .locks
                 .lock(&profile_key(department, profile))
                 .await?;
+            // Stale scenes this run left wait for the next sweep, until
+            // their marks run out of attempts.
+            let stale_left = self.deps.l2.has_stale_work(department, profile).await?;
             let mut state = self.load_profile(department, profile).await?;
             let now = self.now();
-            state.l2_cursor = max_seq(state.l2_cursor, Some(last_seq));
+            state.l2_cursor = max_seq(state.l2_cursor, span.map(|s| s.last));
             state.last_l2_at = Some(now);
-            state.l2_pending = has_more;
+            state.l2_pending = has_more || stale_left;
             state.scenes_processed += 1;
             if outcome.persona_update_request.is_some() {
                 state.persona_update_request = outcome.persona_update_request.clone();
@@ -764,6 +773,10 @@ impl PipelineService {
                                 layer: "l1".into(),
                                 record_id: a.id.clone(),
                             })
+                            .chain(outcome.stale_given.iter().map(|id| GenerationRef {
+                                layer: "stale".into(),
+                                record_id: id.to_string(),
+                            }))
                             .collect(),
                         output_refs: outcome
                             .changed_files
@@ -1026,6 +1039,12 @@ impl ConversationObserver for PipelineService {
             .await
         {
             warn!(error = %err, "failed to update pipeline state");
+        }
+    }
+
+    async fn on_atoms_changed(&self, department: &DepartmentId, profile: &ProfileScope) {
+        if let Err(err) = self.schedule_l2(department, profile, 0).await {
+            warn!(error = %err, "failed to schedule L2 for changed atoms");
         }
     }
 }

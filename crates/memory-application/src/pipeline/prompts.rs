@@ -87,8 +87,9 @@ pub const L2_SCENES: &str = concat!(
 organise an agent's memories by project or situation.
 
 ## Input
-One JSON object: "new_memories" (id, type, content, created_at), "existing_scenes" (file, heat,
-updated, summary, body), "scene_count", "max_scenes" and "current_time".
+One JSON object: "new_memories" (n, type, content, created_at), "existing_scenes" (file, heat,
+updated, summary, body), "stale_scenes" (file, reasons), "scene_count", "max_scenes" and
+"current_time".
 "#,
     data_rule!(),
     r#"
@@ -112,8 +113,22 @@ Write the summary and the body as the scene's current state, not as a log of thi
 (no "Updates…" or "Adds…"). Drop open questions the memories show are settled.
 If the memories reveal a change that should reshape the long-term persona, set persona_update_request.
 
+## Which memories each scene holds
+In every operation, "atoms" lists the n of each new memory that scene now states. A memory goes in
+at most one operation. Leave out memories that belong in no scene, such as a personal preference
+that only the persona should carry.
+
+## Stale scenes
+A stale scene may still state something that is no longer true. Each reason has a "kind" and the
+old text ("before"):
+- rewritten: the fact changed to "after"; state "after" instead.
+- deleted: the fact was removed; drop it unless other memories in the scene still support it.
+- moved_out: the fact now belongs to another scene; drop it here unless it still fits this one.
+For every stale scene, either update or merge it, or list its file in "unchanged" when its text
+already agrees with the reasons.
+
 ## Output — JSON only
-{"operations": [{"action": "update|merge|create", "file": "<name>.md", "merge_from": ["<old>.md"], "summary": "<30-40 words>", "heat": 2, "content": "<full markdown body>"}], "persona_update_request": null}"#
+{"operations": [{"action": "update|merge|create", "file": "<name>.md", "merge_from": ["<old>.md"], "summary": "<30-40 words>", "heat": 2, "content": "<full markdown body>", "atoms": [1, 3]}], "unchanged": ["<stale scene>.md"], "persona_update_request": null}"#
 );
 
 pub const L3_PERSONA: &str = concat!(

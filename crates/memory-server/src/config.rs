@@ -322,6 +322,7 @@ pub fn parse_arg_list(raw: &str) -> Vec<String> {
 pub struct MemoryConfig {
     pub extraction: ExtractionConfig,
     pub persona: PersonaConfig,
+    pub l2: L2Config,
     pub pipeline: PipelineConfig,
     pub recall: RecallConfig,
     pub embedding: EmbeddingConfig,
@@ -357,6 +358,25 @@ impl Default for PersonaConfig {
         Self {
             trigger_every_n: 50,
             max_scenes: 15,
+        }
+    }
+}
+
+/// How L2 brings stale scenes up to date.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct L2Config {
+    /// Stale scenes one L2 run is given (not a cap on scenes).
+    pub stale_scenes_per_run: usize,
+    /// Runs that may leave a stale mark before L2 stops being given it.
+    pub stale_max_attempts: u32,
+}
+
+impl Default for L2Config {
+    fn default() -> Self {
+        Self {
+            stale_scenes_per_run: 10,
+            stale_max_attempts: 3,
         }
     }
 }

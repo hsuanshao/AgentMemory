@@ -17,7 +17,7 @@ use memory_application::meta::{ChatMemoryCleaner, MetaService, MetaSettings};
 use memory_application::migration::LegacyScopeMigration;
 use memory_application::pipeline::generation_logs::GenerationLogService;
 use memory_application::pipeline::l1::L1Extractor;
-use memory_application::pipeline::l2::SceneExtractor;
+use memory_application::pipeline::l2::{SceneExtractor, StaleSettings};
 use memory_application::pipeline::l3::PersonaGenerator;
 use memory_application::pipeline::memory_prompts::MemoryPromptService;
 use memory_application::pipeline::metrics::PipelineMetrics;
@@ -236,6 +236,10 @@ pub async fn build(config: &Config) -> Result<App> {
                 Arc::clone(&memory),
                 Arc::clone(&clock),
                 settings.max_scenes,
+                StaleSettings {
+                    scenes_per_run: config.memory.l2.stale_scenes_per_run.max(1),
+                    max_attempts: config.memory.l2.stale_max_attempts.max(1),
+                },
             )),
             l3: Arc::new(PersonaGenerator::new(
                 Arc::clone(&llm),
@@ -477,6 +481,16 @@ impl ConversationObserver for LateObserver {
         if let Some(o) = self.inner.get() {
             o.on_conversation(department, scope, session_id, rounds)
                 .await;
+        }
+    }
+
+    async fn on_atoms_changed(
+        &self,
+        department: &memory_domain::scope::DepartmentId,
+        profile: &memory_domain::profile::ProfileScope,
+    ) {
+        if let Some(o) = self.inner.get() {
+            o.on_atoms_changed(department, profile).await;
         }
     }
 }

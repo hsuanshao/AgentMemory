@@ -9,7 +9,8 @@ use memory_domain::memory::{without_nul, AtomicMemory, ConversationMessage, Role
 use memory_domain::profile::{
     compose_persona, parse_scene, render_navigation, strip_scene_navigation,
     validate_relative_path, NavigationEntry, NewPersonaVersion, NewSceneVersion, PersonaOp,
-    PersonaVersion, ProfileFile, ProfileScope, SceneMeta, SceneOp, SceneVersion, PERSONA_PATH,
+    PersonaVersion, ProfileFile, ProfileScope, SceneAtom, SceneMeta, SceneOp, SceneVersion,
+    SceneWriteLinks, StaleMark, PERSONA_PATH,
 };
 use memory_domain::retrieval::SearchMode;
 use memory_domain::scope::{DepartmentId, MemoryScope};
@@ -37,6 +38,9 @@ pub trait ConversationObserver: Send + Sync {
         session_id: &str,
         user_rounds: u32,
     );
+    /// Atoms of the profile were rewritten or deleted outside L1 (through
+    /// the API): scenes holding them are stale and need an L2 run.
+    async fn on_atoms_changed(&self, department: &DepartmentId, profile: &ProfileScope);
 }
 
 pub struct NewMessage {
@@ -259,6 +263,9 @@ impl MemoryService {
         self.atoms
             .upsert(department, &atom, embedding.as_deref())
             .await?;
+        self.observer
+            .on_atoms_changed(department, &ProfileScope::from(scope))
+            .await;
         Ok(atom)
     }
 
@@ -299,7 +306,13 @@ impl MemoryService {
         if ids.is_empty() {
             return Err(DomainError::invalid("ids is required"));
         }
-        self.atoms.delete(department, scope, ids).await
+        let deleted = self.atoms.delete(department, scope, ids).await?;
+        if deleted > 0 {
+            self.observer
+                .on_atoms_changed(department, &ProfileScope::from(scope))
+                .await;
+        }
+        Ok(deleted)
     }
 
     pub async fn count_atoms(
@@ -385,7 +398,22 @@ impl MemoryService {
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
+        versions: Vec<NewSceneVersion>,
+    ) -> DomainResult<Vec<SceneVersion>> {
+        self.append_scenes_linked(department, profile, versions, SceneWriteLinks::default())
+            .await
+    }
+
+    /// [`append_scenes`], with the atoms an L2 write placed and the stale
+    /// marks it dealt with (see `ProfileVersionStore::append_scenes_linked`).
+    ///
+    /// [`append_scenes`]: MemoryService::append_scenes
+    pub async fn append_scenes_linked(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
         mut versions: Vec<NewSceneVersion>,
+        links: SceneWriteLinks,
     ) -> DomainResult<Vec<SceneVersion>> {
         let redactor = self
             .redaction
@@ -396,8 +424,53 @@ impl MemoryService {
             v.body = redactor.redact(&v.body);
         }
         self.profiles
-            .append_scenes(department, profile, versions)
+            .append_scenes_linked(department, profile, versions, links)
             .await
+    }
+
+    /// Atoms placed in a scene, current and moved out, of every user.
+    pub async fn scene_atoms(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+    ) -> DomainResult<Vec<SceneAtom>> {
+        self.profiles
+            .scene_atoms(department, profile, scene_id)
+            .await
+    }
+
+    /// Open stale marks of the profile's scenes, oldest first.
+    pub async fn stale_marks(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_ids: Option<&[String]>,
+    ) -> DomainResult<Vec<StaleMark>> {
+        self.profiles
+            .stale_marks(department, profile, scene_ids)
+            .await
+    }
+
+    pub async fn note_stale_attempt(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        ids: &[i64],
+    ) -> DomainResult<()> {
+        self.profiles
+            .note_stale_attempt(department, profile, ids)
+            .await
+    }
+
+    /// One atom by id, whatever its scope: for the pipeline, which works
+    /// across a profile's users.
+    pub async fn atom(
+        &self,
+        department: &DepartmentId,
+        id: &str,
+    ) -> DomainResult<Option<AtomicMemory>> {
+        self.atoms.get(department, id).await
     }
 
     /// Writes a scene through the API as a new version: the body comes from
