@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability / 安全漏洞
-    url: https://github.com/hsuanshao/AgentMemory/security/advisories/new
+    url: https://github.com/hsuanshao/TeamAgentMemory/security/advisories/new
     about: Report privately, never in a public issue. / 請私下回報，不要開公開的 issue。
   - name: Documentation / 文件
-    url: https://github.com/hsuanshao/AgentMemory/tree/main/docs
+    url: https://github.com/hsuanshao/TeamAgentMemory/tree/main/docs
     about: Installation, upgrades, remote clients, collaboration model, API. / 安裝、升級、遠端 client、協作模型與 API。

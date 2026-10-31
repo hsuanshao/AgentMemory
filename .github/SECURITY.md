@@ -15,7 +15,7 @@ Only the latest minor release line receives security fixes. Fixes ship as a new 
 
 **Please do not open a public issue, pull request or discussion for a vulnerability.**
 
-Report it privately through [GitHub's private vulnerability reporting](https://github.com/hsuanshao/AgentMemory/security/advisories/new). Alternatively, email <william@hsuanshao.com> with "AgentMemory security" in the subject.
+Report it privately through [GitHub's private vulnerability reporting](https://github.com/hsuanshao/TeamAgentMemory/security/advisories/new). Alternatively, email <william@hsuanshao.com> with "AgentMemory security" in the subject.
 
 Please include:
 - the affected version and component: memory-core, Panel, `amem` or a client plugin;
@@ -52,7 +52,7 @@ Out of scope: problems that need an already-compromised host or a malicious oper
 
 **請不要用公開的 issue、pull request 或 discussion 回報漏洞。**
 
-請透過 [GitHub 的私人漏洞回報](https://github.com/hsuanshao/AgentMemory/security/advisories/new)私下回報，或寄信到 <william@hsuanshao.com>，主旨請包含「AgentMemory security」。
+請透過 [GitHub 的私人漏洞回報](https://github.com/hsuanshao/TeamAgentMemory/security/advisories/new)私下回報，或寄信到 <william@hsuanshao.com>，主旨請包含「AgentMemory security」。
 
 請附上：
 - 受影響的版本和元件：memory-core、Panel、`amem` 或 client plugin；
