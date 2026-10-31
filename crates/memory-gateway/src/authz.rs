@@ -30,6 +30,7 @@ const READ_SUFFIXES: &[&str] = &[
     "list",
     "versions",
     "listing",
+    "atoms",
 ];
 
 /// Anything not known to be a read is treated as a write.
@@ -158,6 +159,7 @@ mod tests {
         assert_eq!(action_for("/v3/recall"), MemoryAction::Read);
         assert_eq!(action_for("/v3/skill/files/read"), MemoryAction::Read);
         assert_eq!(action_for("/v3/atomic/search"), MemoryAction::Read);
+        assert_eq!(action_for("/v3/scenario/atoms"), MemoryAction::Read);
         assert_eq!(action_for("/v3/conversation/add"), MemoryAction::Write);
         assert_eq!(action_for("/v3/scenario/rm"), MemoryAction::Write);
         assert_eq!(

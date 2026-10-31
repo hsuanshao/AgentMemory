@@ -7,6 +7,7 @@ use memory_application::common::{Page, TimeRange};
 use memory_application::memory::service::NewMessage;
 use memory_application::memory::session::SessionTurnHeaders;
 use memory_application::ports::memory::{AtomFilter, ConversationFilter};
+use memory_domain::error::DomainError;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{PersonaOp, ProfileFile, ProfileScope, SceneVersion};
 use memory_domain::retrieval::SearchMode;
@@ -406,15 +407,24 @@ pub async fn scenario_ls(
         .list_scenes(&department, &profile, prefix)
         .await
         .map_err(|e| ctx.err(e))?;
+    let ids: Vec<String> = scenes.iter().map(|e| e.scene.scene_id.clone()).collect();
+    let stale = s
+        .services
+        .memory
+        .stale_counts(&department, &profile, &ids)
+        .await
+        .map_err(|e| ctx.err(e))?;
     let entries: Vec<Value> = scenes
         .iter()
         .map(|e| {
+            let reasons = stale.get(&e.scene.scene_id).copied().unwrap_or(0);
             json!({
                 "path": e.relative_path,
                 "scene_id": e.scene.scene_id,
                 "summary": e.meta.as_ref().map(|m| m.summary.clone()),
                 "heat": e.meta.as_ref().map(|m| m.heat),
                 "version": e.file.version,
+                "stale": reasons > 0, "stale_reasons": reasons,
                 "team_id": profile.team_id, "agent_id": profile.agent_id,
                 "created_at": e.file.created_at.to_rfc3339(), "updated_at": e.file.updated_at.to_rfc3339(),
             })
@@ -456,6 +466,55 @@ pub async fn scenario_read(
     data["op"] = json!(scene.as_ref().map(|s| s.op));
     data["parents"] = json!(scene.as_ref().map(|s| s.parents.clone()));
     data["author"] = json!(scene.as_ref().and_then(|s| s.author.clone()));
+    let reasons = match &scene {
+        Some(scene) => memory
+            .stale_counts(&department, &profile, std::slice::from_ref(&scene.scene_id))
+            .await
+            .map_err(|e| ctx.err(e))?
+            .get(&scene.scene_id)
+            .copied()
+            .unwrap_or(0),
+        None => 0,
+    };
+    data["stale"] = json!(reasons > 0);
+    data["stale_reasons"] = json!(reasons);
+    Ok(ok(&ctx.request_id, data))
+}
+
+/// The atoms a scene was built from: the caller's own (or, for a system
+/// admin, the named user's), and how many belong to others.
+pub async fn scenario_atoms(
+    State(s): State<SharedState>,
+    ctx: Ctx,
+    JsonBody(body): JsonBody,
+) -> ApiResult {
+    let (department, scope) = (ctx.department()?, ctx.scope(&body)?);
+    let profile = ProfileScope::from(&scope);
+    let memory = &s.services.memory;
+    let scene = match str_field(&body, "scene_id") {
+        Some(id) => {
+            memory
+                .read_scene_by_id(&department, &profile, id, None)
+                .await
+        }
+        None => {
+            let path = str_field(&body, "path").ok_or_else(|| {
+                ApiError::bad_request(&ctx.request_id, "scene_id or path is required")
+            })?;
+            memory.read_scene(&department, &profile, path, None).await
+        }
+    }
+    .map_err(|e| ctx.err(e))?
+    .ok_or_else(|| {
+        let wanted = str_field(&body, "scene_id").or_else(|| str_field(&body, "path"));
+        ctx.err(DomainError::not_found("scene", wanted.unwrap_or_default()))
+    })?;
+    let view = memory
+        .scene_atom_view(&department, &scope, &scene.scene_id)
+        .await
+        .map_err(|e| ctx.err(e))?;
+    let mut data = json!(view);
+    data["path"] = json!(scene.slug);
     Ok(ok(&ctx.request_id, data))
 }
 

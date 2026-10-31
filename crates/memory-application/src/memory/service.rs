@@ -1,5 +1,6 @@
 //! L0–L3 data-plane use cases.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -8,12 +9,13 @@ use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::{without_nul, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{
     compose_persona, parse_scene, render_navigation, strip_scene_navigation,
-    validate_relative_path, NavigationEntry, NewPersonaVersion, NewSceneVersion, PersonaOp,
-    PersonaVersion, ProfileFile, ProfileScope, SceneAtom, SceneMeta, SceneOp, SceneVersion,
-    SceneWriteLinks, StaleMark, PERSONA_PATH,
+    validate_relative_path, MemberState, NavigationEntry, NewPersonaVersion, NewSceneVersion,
+    PersonaOp, PersonaVersion, ProfileFile, ProfileScope, SceneAtom, SceneMeta, SceneOp,
+    SceneVersion, SceneWriteLinks, StaleMark, StaleReason, PERSONA_PATH,
 };
 use memory_domain::retrieval::SearchMode;
 use memory_domain::scope::{DepartmentId, MemoryScope};
+use serde::Serialize;
 use tracing::warn;
 
 use crate::redaction::{RedactionService, WriteScope};
@@ -51,6 +53,34 @@ pub struct NewMessage {
 }
 
 /// A current scene with its file and META views.
+/// One of the caller's atoms in a scene (`scenario/atoms`).
+#[derive(Debug, Clone, Serialize)]
+pub struct SceneAtomView {
+    pub atom_id: String,
+    pub state: MemberState,
+    /// The version the scene was written from.
+    pub atom_version: u32,
+    /// The version stored now; `None` once deleted.
+    pub current_version: Option<u32>,
+    /// `None` once deleted.
+    pub content: Option<String>,
+    #[serde(rename = "type")]
+    pub atom_type: Option<String>,
+    pub stale_reasons: Vec<StaleReason>,
+}
+
+/// The atoms a scene was built from, as one user may see them: their own,
+/// and how many belong to others.
+#[derive(Debug, Clone, Serialize)]
+pub struct SceneAtomsView {
+    pub scene_id: String,
+    pub stale: bool,
+    pub stale_reasons: usize,
+    pub atoms: Vec<SceneAtomView>,
+    /// Atoms of other users in this scene, counted but not shown.
+    pub hidden: usize,
+}
+
 pub struct SceneEntry {
     pub scene: SceneVersion,
     pub file: ProfileFile,
@@ -450,6 +480,72 @@ impl MemoryService {
         self.profiles
             .stale_marks(department, profile, scene_ids)
             .await
+    }
+
+    /// Open stale marks per scene, for the scenes listed.
+    pub async fn stale_counts(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_ids: &[String],
+    ) -> DomainResult<HashMap<String, usize>> {
+        let mut counts = HashMap::new();
+        for mark in self
+            .profiles
+            .stale_marks(department, profile, Some(scene_ids))
+            .await?
+        {
+            *counts.entry(mark.scene_id).or_default() += 1;
+        }
+        Ok(counts)
+    }
+
+    /// The atoms of scene `scene_id` that belong to `scope`'s user, and how
+    /// many belong to others. A scene is shared by the agent's users, but
+    /// an atom is its user's memory: others' are only counted.
+    pub async fn scene_atom_view(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        scene_id: &str,
+    ) -> DomainResult<SceneAtomsView> {
+        let profile = ProfileScope::from(scope);
+        let rows = self
+            .profiles
+            .scene_atoms(department, &profile, scene_id)
+            .await?;
+        let marks = self
+            .profiles
+            .stale_marks(department, &profile, Some(&[scene_id.to_owned()]))
+            .await?;
+        let user = scope.user_id.as_str();
+        let hidden = rows.iter().filter(|r| r.user_id != user).count();
+        let mut atoms = Vec::new();
+        for row in rows.into_iter().filter(|r| r.user_id == user) {
+            let stored = self.atoms.get(department, &row.atom_id).await?.filter(|a| {
+                ProfileScope::from(&a.scope) == profile && a.scope.user_id.as_str() == user
+            });
+            atoms.push(SceneAtomView {
+                stale_reasons: marks
+                    .iter()
+                    .filter(|m| m.atom_id == row.atom_id)
+                    .map(|m| m.reason)
+                    .collect(),
+                atom_id: row.atom_id,
+                state: row.state,
+                atom_version: row.atom_version,
+                current_version: stored.as_ref().map(|a| a.version),
+                content: stored.as_ref().map(|a| a.content.clone()),
+                atom_type: stored.as_ref().map(|a| a.atom_type.as_str().to_owned()),
+            });
+        }
+        Ok(SceneAtomsView {
+            scene_id: scene_id.to_owned(),
+            stale: !marks.is_empty(),
+            stale_reasons: marks.len(),
+            atoms,
+            hidden,
+        })
     }
 
     pub async fn note_stale_attempt(
