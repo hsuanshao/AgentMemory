@@ -92,7 +92,7 @@ async fn postgres_data_from_0_2_is_migrated() {
                  INSERT INTO {s}.profile_files VALUES
                    ('t-1', 'a-1', 'scene_blocks/deploy.md', 1, E'-----META-START-----\ncreated: c\nupdated: u\nsummary: deploys\nheat: 3\n-----META-END-----\n\nbody', TRUE, 10, 20),
                    ('t-1', 'a-1', 'persona.md', 1, '# Me', TRUE, 5, 5);
-                 DROP TABLE {s}.scene_versions, {s}.scenes, {s}.persona_versions;
+                 DROP TABLE {s}.scene_stale, {s}.scene_atoms, {s}.scene_versions, {s}.scenes, {s}.persona_versions;
                  ALTER TABLE agent_memory.departments RENAME COLUMN department_id TO instance_id;
                  ALTER TABLE agent_memory.departments RENAME TO instances;
                  ALTER INDEX agent_memory.departments_pkey RENAME TO instances_pkey;
