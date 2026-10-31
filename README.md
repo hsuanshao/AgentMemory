@@ -18,16 +18,45 @@
 
 English | [繁體中文](./README.zh-tw.md)
 
-**Self-hosted, team-aware long-term memory for AI agents.** AgentMemory gives Claude Code, Codex, Antigravity, Hermes and any MCP client a memory that persists across sessions. It captures each conversation, distils it into facts, scenes and a persona in the background, and recalls what is relevant before every prompt. It all runs on your own servers.
+**Self-hosted long-term memory for teams that work with AI agents.** AgentMemory gives Claude Code, Codex, Antigravity, Hermes and any MCP client a memory that persists across sessions. It captures each conversation, distils it into facts, scenes and a persona in the background, and recalls what is relevant before every prompt. It all runs on your own servers.
+
+## Built for Team Collaboration
+
+Most agent memory is personal: each person's assistant learns on its own, and what one teammate's agent worked out yesterday is invisible to the next person who asks. AgentMemory starts from the team instead. The agents a team works with build up a shared understanding of the team's work (its projects, conventions, decisions and recurring problems), while each person's own conversations stay their own.
+
+```mermaid
+flowchart LR
+  subgraph private["Private to each member"]
+    A["alice: conversations → facts"]
+    B["bob: conversations → facts"]
+  end
+  subgraph shared["Shared by everyone who uses the agent"]
+    S["Scenes (L2)"] --> P["Persona (L3)"]
+  end
+  A --> S
+  B --> S
+  S -- recall --> R["every member's next prompt"]
+  P -- recall --> R
+```
+
+- **Shared where it helps, private where it matters.** Each member's conversations (L0) and facts (L1) are scoped to that member. The scenes (L2) and persona (L3) of an agent are distilled from the facts of everyone who uses it, so recall gives each member the team's accumulated context, never a teammate's transcript.
+- **Skills spread across the team.** A procedure extracted from one member's work becomes a skill every member of the team can find, once a person approves it. Skills of a private agent stay with that agent.
+- **The team chooses how much to share.** Put everyone on one agent to pool what the team learns, or give each person a private agent to keep profiles apart while still managing them as one team.
+- **Hard boundaries.** Nothing crosses teams or agents, and departments share nothing at all: not users, keys or data. One authorization layer enforces this before every memory call, so it does not depend on clients behaving.
+- **Oversight without surveillance.** Team leaders see whether distillation is healthy for every member, but cannot open anyone's conversations or facts.
+
+| You want | Set it up as |
+| --- | --- |
+| A team that pools what it learns | Every member uses the same agent, e.g. `team-assistant` |
+| One team, separate profiles | One private agent per person (`"visibility": "private"`) |
+| Groups that must not share anything | Separate teams, or separate departments |
+
+Because a shared agent's scenes and persona mix everyone's facts, use one only when members are comfortable with that. [COLLABORATION.md](docs/COLLABORATION.md) covers the levels, roles, layouts and how isolation is enforced.
 
 ## Why AgentMemory
 
 - **Your data stays with you.** Memory, database and even the distillation model can all run inside your network. There is no dependency on any vendor's cloud service: any OpenAI-compatible endpoint works, including self-hosted models, as does a local CLI such as `claude`, `codex` or `agy`.
-- **Built for teams, not just one user.** A server holds departments, a department holds teams, and a team holds members and their agents.
-  - Each member's conversations and facts stay private.
-  - The scenes and persona of an agent are shared by the people who use it.
-  - Team leaders see how distillation is doing without reading anyone's memory.
-  - See [COLLABORATION.md](docs/COLLABORATION.md).
+- **Built for teams, not just one user.** A server holds departments, a department holds teams, and a team holds members and their agents. Personal memory stays private; what an agent learns is shared by the people who use it. See [Built for Team Collaboration](#built-for-team-collaboration).
 - **Memory that compounds.** Raw turns (L0) are distilled into facts (L1), consolidated into scenes (L2) and summarised into a persona (L3). Recall combines BM25 and vector search with rank fusion. See [How memory works](#how-memory-works).
 - **Built to be operated.**
   - A Monitor Panel with distillation health, generation logs and dead letters that expire and retry on their own.
