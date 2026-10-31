@@ -56,8 +56,10 @@ fn insert_mark(conn: &Connection, mark: NewMark<'_>, now: i64) -> rusqlite::Resu
 }
 
 /// An atom placed in a scene was rewritten from `before` to `version`. One
-/// open rewrite mark per scene and atom: a later rewrite moves its version
-/// on and keeps the oldest text, and L2 gets another try.
+/// open rewrite mark per scene and atom: a later rewrite replaces it with a
+/// new mark (a new id, attempts from 0) that keeps the oldest text. A mark
+/// is never changed in place, so an L2 run settling the marks it was given
+/// by id cannot settle a rewrite made after it read them.
 pub fn mark_rewritten(
     conn: &Connection,
     atom_id: &str,
@@ -68,24 +70,29 @@ pub fn mark_rewritten(
     let Some(scene_id) = current_scene(conn, atom_id)? else {
         return Ok(());
     };
-    let updated = conn.execute(
-        "UPDATE scene_stale SET atom_version = ?, attempts = 0 WHERE scene_id = ? AND atom_id = ? AND reason = 'rewritten'",
-        params![version, scene_id, atom_id],
+    let kept: Option<String> = conn
+        .query_row(
+            "SELECT before_content FROM scene_stale WHERE scene_id = ? AND atom_id = ? AND reason = 'rewritten' ORDER BY id LIMIT 1",
+            params![scene_id, atom_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    conn.execute(
+        "DELETE FROM scene_stale WHERE scene_id = ? AND atom_id = ? AND reason = 'rewritten'",
+        params![scene_id, atom_id],
     )?;
-    if updated == 0 {
-        insert_mark(
-            conn,
-            NewMark {
-                scene_id: &scene_id,
-                atom_id,
-                reason: StaleReason::Rewritten,
-                atom_version: Some(version),
-                before: Some(before),
-            },
-            now,
-        )?;
-    }
-    Ok(())
+    insert_mark(
+        conn,
+        NewMark {
+            scene_id: &scene_id,
+            atom_id,
+            reason: StaleReason::Rewritten,
+            atom_version: Some(version),
+            before: Some(kept.as_deref().unwrap_or(before)),
+        },
+        now,
+    )
 }
 
 /// Atoms about to be deleted, with their text. A deletion replaces the
@@ -152,11 +159,14 @@ pub fn apply_links(
             )?;
         }
         match new.op {
+            // A removed scene says nothing any more: nothing left to bring
+            // up to date, so its marks go with it.
             SceneOp::Retire if !new.attrs.contains_key("merged_into") => {
                 conn.execute(
                     "UPDATE scene_atoms SET state = 'moved_out' WHERE scene_id = ? AND state = 'current'",
                     [scene_id],
                 )?;
+                conn.execute("DELETE FROM scene_stale WHERE scene_id = ?", [scene_id])?;
             }
             SceneOp::Manual => {
                 conn.execute("DELETE FROM scene_stale WHERE scene_id = ?", [scene_id])?;

@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use memory_application::common::{Page, Scored};
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    MovedRows, ProfileVersionStore, ScopeMigrationStore, Sequenced,
+    MovedRows, ProfileVersionStore, ScopeMigrationStore, Sequenced, TextFilter,
 };
 use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
@@ -403,11 +403,12 @@ fn atoms_from_rows(rows: &[PgRow]) -> DomainResult<Vec<AtomicMemory>> {
 
 #[async_trait]
 impl AtomRepository for PostgresMemoryStore {
-    async fn upsert(
+    async fn upsert_filtered(
         &self,
         department: &DepartmentId,
         atom: &AtomicMemory,
         embedding: Option<&[f32]>,
+        before: TextFilter,
     ) -> DomainResult<()> {
         let s = self.db.schema(department).await?;
         let with_vector = self.db.dims().is_some();
@@ -466,13 +467,13 @@ impl AtomRepository for PostgresMemoryStore {
             &params,
         )
         .await?;
-        if let Some((_, before)) = old.filter(|(v, _)| i64::from(atom.version) > *v) {
+        if let Some((_, old)) = old.filter(|(v, _)| i64::from(atom.version) > *v) {
             scene_links::mark_rewritten(
                 &mut tx,
                 &s,
                 &atom.id,
                 atom.version,
-                &before,
+                &before(&old),
                 to_ms(Utc::now()),
             )
             .await?;
@@ -650,11 +651,12 @@ impl AtomRepository for PostgresMemoryStore {
         .await
     }
 
-    async fn delete(
+    async fn delete_filtered(
         &self,
         department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
+        before: TextFilter,
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
@@ -669,7 +671,12 @@ impl AtomRepository for PostgresMemoryStore {
         )
         .await?
         .iter()
-        .map(|r| Ok((get::<String>(r, "id")?, get::<String>(r, "content")?)))
+        .map(|r| {
+            Ok((
+                get::<String>(r, "id")?,
+                before(&get::<String>(r, "content")?),
+            ))
+        })
         .collect::<DomainResult<Vec<_>>>()?;
         scene_links::mark_deleted(&mut tx, &s, &doomed, to_ms(Utc::now())).await?;
         let n = execute(

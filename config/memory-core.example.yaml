@@ -49,7 +49,7 @@ memory:
     maxScenes: 15             # L2 scene cap
   l2:
     staleScenesPerRun: 10     # stale scenes given to one L2 run (not a scene cap)
-    staleMaxAttempts: 3       # runs that may leave a stale mark before L2 stops being given it
+    staleMaxAttempts: 3       # runs a stale mark is given to (failed ones too) before L2 stops being given it
   pipeline:
     everyNConversations: 5    # L1 after N user rounds (warm-up 1,2,4 first)
     enableWarmup: true

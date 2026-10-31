@@ -42,7 +42,7 @@ Not released yet: the release PR gives this section its version number.
 
 ### Scenes and their atoms
 
-L2 now records which atoms each scene was built from, and marks a scene **stale** when one of them is rewritten or deleted (by L1 or through the API), placed in another scene, or rewritten while L2 waited for the model. The next L2 run is told what the scene may still say and what is true now, and rewrites it or answers that it already agrees. A mark L2 keeps leaving stops being given to it after `memory.l2.staleMaxAttempts` runs and waits for a person: saving the scene settles it ([DISTILLATION §9](ops/DISTILLATION.md#9-scenes-and-their-atoms)).
+L2 now records which atoms each scene was built from, and marks a scene **stale** when one of them is rewritten or deleted (by L1 or through the API), placed in another scene, or rewritten while L2 waited for the model. The next L2 run is told what the scene may still say and what is true now, and rewrites it or answers that it already agrees. A mark stops being given to L2 after `memory.l2.staleMaxAttempts` runs, failed ones included, and waits for a person: saving the scene settles it ([DISTILLATION §9](ops/DISTILLATION.md#9-scenes-and-their-atoms)).
 
 - **Existing scenes have no recorded atoms.** Nothing is filled in for the past: a scene gets atoms the next time L2 places atoms in it. Until then `scenario/atoms` lists none for it and it is never stale.
 - **What each person sees.** `scenario/atoms` and the Panel's L2 tab show a user their own atoms in a scene; other users' are only counted (`hidden`).

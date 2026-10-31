@@ -104,18 +104,18 @@ impl SceneExtractor {
     }
 
     /// Whether the profile has stale scenes an L2 run would be given, even
-    /// with no new atoms.
+    /// with no new atoms: the same marks [`Self::consolidate`] picks, so a
+    /// mark L2 cannot be given never asks for a run.
     pub async fn has_stale_work(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
     ) -> DomainResult<bool> {
-        Ok(self
-            .memory
-            .stale_marks(department, profile, None)
+        let scenes = self.memory.list_scenes(department, profile, "").await?;
+        Ok(!self
+            .pick_stale(department, profile, &scenes)
             .await?
-            .iter()
-            .any(|m| m.attempts < self.stale.max_attempts))
+            .is_empty())
     }
 
     pub async fn consolidate(
@@ -133,6 +133,12 @@ impl SceneExtractor {
             .flat_map(|s| s.marks.iter().map(|m| m.id))
             .collect();
         let input = self.plan_input(atoms, &scenes, &stale);
+        // Counted before the model is called: a call that fails, times out
+        // or answers nonsense uses up a try like one that leaves the scene.
+        // A mark this run settles is gone, attempts and all.
+        self.memory
+            .note_stale_attempt(department, profile, &stale_given)
+            .await?;
         let reply = self
             .llm
             .complete(&[
@@ -167,14 +173,6 @@ impl SceneExtractor {
             .await?;
         self.settle_unchanged(department, profile, &stale, &plan.unchanged, &mut settled)
             .await?;
-        let left: Vec<i64> = stale_given
-            .iter()
-            .copied()
-            .filter(|id| !settled.contains(id))
-            .collect();
-        self.memory
-            .note_stale_attempt(department, profile, &left)
-            .await?;
         Ok(L2Outcome {
             changed_files: changed,
             persona_update_request: plan.persona_update_request.filter(|r| !r.trim().is_empty()),
@@ -184,13 +182,14 @@ impl SceneExtractor {
     }
 
     /// The live scenes with open marks L2 may still try, oldest mark first,
-    /// at most `scenes_per_run` of them.
-    async fn stale_scenes(
+    /// at most `scenes_per_run` of them. A rewrite replaces its mark with a
+    /// newer one, so a scene that keeps changing goes behind quiet ones.
+    async fn pick_stale(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         scenes: &[SceneEntry],
-    ) -> DomainResult<Vec<StaleScene>> {
+    ) -> DomainResult<Vec<(String, Vec<StaleMark>)>> {
         let files: HashMap<&str, &str> = scenes
             .iter()
             .map(|s| (s.scene.scene_id.as_str(), s.relative_path.as_str()))
@@ -209,11 +208,22 @@ impl SceneExtractor {
                 by_scene.push(((*file).to_owned(), vec![mark]));
             }
         }
+        Ok(by_scene)
+    }
+
+    /// The scenes [`Self::pick_stale`] picks, with what changed in each.
+    async fn stale_scenes(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scenes: &[SceneEntry],
+    ) -> DomainResult<Vec<StaleScene>> {
+        let by_scene = self.pick_stale(department, profile, scenes).await?;
         let mut out = Vec::with_capacity(by_scene.len());
         for (file, marks) in by_scene {
             let mut reasons = Vec::with_capacity(marks.len());
             for mark in &marks {
-                reasons.push(self.reason(department, mark).await?);
+                reasons.push(self.reason(department, profile, mark).await?);
             }
             out.push(StaleScene {
                 file,
@@ -225,10 +235,14 @@ impl SceneExtractor {
     }
 
     /// One mark as the model reads it: what the scene may still say, and
-    /// what is true now.
+    /// what is true now. Both texts pass the atom owner's redaction as it
+    /// is now, so a rule added after they were stored still applies to
+    /// what reaches the model (and the shared scene it writes). When the
+    /// owner cannot be found, the old text is left out.
     async fn reason(
         &self,
         department: &DepartmentId,
+        profile: &ProfileScope,
         mark: &StaleMark,
     ) -> DomainResult<serde_json::Value> {
         let now = match mark.reason {
@@ -240,12 +254,29 @@ impl SceneExtractor {
             (None, _) => StaleReason::Deleted,
             (Some(_), reason) => reason,
         };
-        let mut reason = serde_json::json!({
-            "kind": kind.as_str(),
-            "before": mark.before_content,
-        });
-        if let (Some(atom), StaleReason::Rewritten | StaleReason::ChangedDuringRun) = (&now, kind) {
-            reason["after"] = serde_json::Value::String(atom.content.clone());
+        let owner = match &now {
+            Some(atom) => Some(atom.scope.user_id.to_string()),
+            None => self
+                .memory
+                .scene_atoms(department, profile, &mark.scene_id)
+                .await?
+                .into_iter()
+                .find(|a| a.atom_id == mark.atom_id)
+                .map(|a| a.user_id),
+        };
+        let filter = match &owner {
+            Some(user) => Some(self.memory.member_filter(department, profile, user).await?),
+            None => None,
+        };
+        let before = match (&filter, &mark.before_content) {
+            (Some(f), Some(text)) => serde_json::Value::String(f(text)),
+            _ => serde_json::Value::Null,
+        };
+        let mut reason = serde_json::json!({"kind": kind.as_str(), "before": before});
+        if let (Some(atom), Some(f), StaleReason::Rewritten | StaleReason::ChangedDuringRun) =
+            (&now, &filter, kind)
+        {
+            reason["after"] = serde_json::Value::String(f(&atom.content));
         }
         Ok(reason)
     }

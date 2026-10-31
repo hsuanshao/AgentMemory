@@ -33,6 +33,7 @@ use memory_redact::Redactor;
 use serde::{Deserialize, Serialize};
 
 use crate::meta::{require_system_admin, Caller};
+use crate::ports::memory::TextFilter;
 use crate::ports::meta::{MetaStore, RedactionRule, RedactionRuleRepository};
 use crate::ports::system::{Clock, IdGenerator};
 
@@ -283,6 +284,20 @@ impl RedactionService {
             cache: Mutex::new(HashMap::new()),
             generations: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// A member's redaction as a [`TextFilter`], for the text a store
+    /// copies out of their atoms.
+    pub async fn member_filter(
+        &self,
+        department: &DepartmentId,
+        team_id: &str,
+        user_id: &str,
+    ) -> DomainResult<TextFilter> {
+        let redactor = self
+            .redactor(department, WriteScope::member(team_id, user_id))
+            .await?;
+        Ok(Arc::new(move |text: &str| redactor.redact(text)))
     }
 
     /// The redactor of a write in `scope`: every layer that applies to it.

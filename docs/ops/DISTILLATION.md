@@ -311,13 +311,13 @@ L2 records which atoms each scene was built from, and at which version. An atom 
 
 Each mark keeps the atom's text from before the change, so L2 can find it in the scene. A deleted atom's text stays in the mark until the mark is settled, as it does in the scene's body.
 
-**L2 settles them.** The next L2 run of the agent is given up to `memory.l2.staleScenesPerRun` stale scenes with what they may still say and what is true now, even when there are no new atoms (a quiet topic gets none). For each one the model rewrites the scene or answers that it already agrees; either settles the marks it was given. Rewriting or deleting atoms through the API schedules that run as L1 does. A mark that `memory.l2.staleMaxAttempts` runs leave is no longer given to L2; it stays until a person deals with it. Saving the scene (`scenario/write`, the Panel's L2 tab) settles all its marks, and removing it settles them too.
+**L2 settles them.** The next L2 run of the agent is given up to `memory.l2.staleScenesPerRun` stale scenes with what they may still say and what is true now, even when there are no new atoms (a quiet topic gets none). For each one the model rewrites the scene or answers that it already agrees; either settles the marks it was given. Rewriting or deleting atoms through the API schedules that run as L1 does. Both texts pass the atom owner's redaction rules as they are at that moment, so a rule added after the atom was written also covers them. A mark is given to L2 at most `memory.l2.staleMaxAttempts` times, counting runs whose model call failed or answered something unusable; after that it stays until a person deals with it. Saving the scene (`scenario/write`, the Panel's L2 tab) settles all its marks, and removing it settles them too.
 
 **Where to see them.** `scenario/ls` and `scenario/read` say whether a scene is `stale` and how many reasons it has; `scenario/atoms` lists the caller's atoms in it with their reasons, and only counts other members' (`hidden`). The Panel's L2 tab shows the same. Each L2 generation log lists the marks it was given as `stale` input refs.
 
 | Setting | Default | |
 | --- | --- | --- |
 | `memory.l2.staleScenesPerRun` | 10 | Stale scenes given to one L2 run (not a limit on scenes) |
-| `memory.l2.staleMaxAttempts` | 3 | Runs that may leave a mark before L2 stops being given it |
+| `memory.l2.staleMaxAttempts` | 3 | Runs a mark is given to, failed ones included, before L2 stops being given it |
 
 Scenes written before schema migration 8 have no recorded atoms; they get them as L2 places atoms in them again. Nothing is filled in for the past.

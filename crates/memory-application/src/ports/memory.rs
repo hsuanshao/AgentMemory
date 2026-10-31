@@ -9,9 +9,21 @@ use memory_domain::profile::{
     SceneWriteLinks, StaleMark,
 };
 use memory_domain::scope::{DepartmentId, MemoryScope};
+use std::sync::Arc;
+
 use serde::Serialize;
 
 use crate::common::{Page, Scored, TimeRange};
+
+/// Applied to the text of an atom a store copies into a stale mark (the
+/// scene's "before"): the atom owner's redaction as it is now, so a rule
+/// added since the atom was written also covers the copy.
+pub type TextFilter = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
+/// A filter that keeps the text, for writes no redaction rule applies to.
+pub fn keep_text() -> TextFilter {
+    Arc::new(str::to_owned)
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ConversationFilter {
@@ -105,12 +117,27 @@ pub trait ConversationRepository: Send + Sync {
 /// L1 storage with keyword and optional vector search.
 #[async_trait]
 pub trait AtomRepository: Send + Sync {
+    /// Stores an atom. A higher version than the stored one marks the
+    /// scene the atom belongs to stale, keeping the old text through
+    /// `before`.
+    async fn upsert_filtered(
+        &self,
+        department: &DepartmentId,
+        atom: &AtomicMemory,
+        embedding: Option<&[f32]>,
+        before: TextFilter,
+    ) -> DomainResult<()>;
+    /// [`Self::upsert_filtered`] keeping the old text as it is. Writes
+    /// that may rewrite a member's atom use `upsert_filtered`.
     async fn upsert(
         &self,
         department: &DepartmentId,
         atom: &AtomicMemory,
         embedding: Option<&[f32]>,
-    ) -> DomainResult<()>;
+    ) -> DomainResult<()> {
+        self.upsert_filtered(department, atom, embedding, keep_text())
+            .await
+    }
     async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AtomicMemory>>;
     async fn query(
         &self,
@@ -150,12 +177,25 @@ pub trait AtomRepository: Send + Sync {
         scope: Option<&MemoryScope>,
         filter: &AtomFilter,
     ) -> DomainResult<usize>;
+    /// Deletes atoms of `scope`, marking their scenes stale with the text
+    /// passed through `before`.
+    async fn delete_filtered(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        ids: &[String],
+        before: TextFilter,
+    ) -> DomainResult<usize>;
+    /// [`Self::delete_filtered`] keeping the text as it is.
     async fn delete(
         &self,
         department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
-    ) -> DomainResult<usize>;
+    ) -> DomainResult<usize> {
+        self.delete_filtered(department, scope, ids, keep_text())
+            .await
+    }
     async fn delete_profile(
         &self,
         department: &DepartmentId,

@@ -42,7 +42,7 @@
 
 ### 場景與它的 atom
 
-L2 現在會記錄每個場景由哪些 atom 寫成；其中某個 atom 被改寫或刪除（L1 或透過 API）、被放到別的場景，或在 L2 等待模型回覆時被改寫，場景就會被標成**過期**。下一輪 L2 會被告知場景可能還寫著什麼、現在正確的是什麼，然後改寫它，或回覆內容已經一致。一直被留下的標記，在 `memory.l2.staleMaxAttempts` 輪之後就不再交給 L2，等人來處理：儲存場景就會清掉（[DISTILLATION §9](ops/DISTILLATION.zh-tw.md#9-場景與它的-atom)）。
+L2 現在會記錄每個場景由哪些 atom 寫成；其中某個 atom 被改寫或刪除（L1 或透過 API）、被放到別的場景，或在 L2 等待模型回覆時被改寫，場景就會被標成**過期**。下一輪 L2 會被告知場景可能還寫著什麼、現在正確的是什麼，然後改寫它，或回覆內容已經一致。標記交給 L2 `memory.l2.staleMaxAttempts` 輪之後（失敗的也算）就不再交給 L2，等人來處理：儲存場景就會清掉（[DISTILLATION §9](ops/DISTILLATION.zh-tw.md#9-場景與它的-atom)）。
 
 - **既有的場景沒有 atom 的紀錄。** 不會回頭補齊：要等 L2 下次把 atom 放進場景才會有。在那之前，`scenario/atoms` 不會列出任何 atom，場景也不會被標成過期。
 - **每個人看得到什麼。** `scenario/atoms` 與 Panel 的 L2 頁只顯示使用者自己在場景裡的 atom，其他使用者的只計數（`hidden`）。

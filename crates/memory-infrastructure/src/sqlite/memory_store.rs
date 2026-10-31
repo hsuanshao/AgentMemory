@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use memory_application::common::{Page, Scored};
 use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    MovedRows, ProfileVersionStore, ScopeMigrationStore, Sequenced,
+    MovedRows, ProfileVersionStore, ScopeMigrationStore, Sequenced, TextFilter,
 };
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
@@ -408,11 +408,12 @@ fn atom_where(selector: Option<AtomSelector<'_>>, filter: &AtomFilter, prefix: &
 
 #[async_trait]
 impl AtomRepository for SqliteMemoryStore {
-    async fn upsert(
+    async fn upsert_filtered(
         &self,
         department: &DepartmentId,
         atom: &AtomicMemory,
         embedding: Option<&[f32]>,
+        before: TextFilter,
     ) -> DomainResult<()> {
         let atom = atom.clone();
         let blob = embedding.map(embedding_to_blob);
@@ -459,9 +460,8 @@ impl AtomRepository for SqliteMemoryStore {
                 tx.execute("DELETE FROM atoms_fts WHERE id = ?", [&atom.id])?;
                 let text = format!("{} {}", atom.content, atom.background.as_deref().unwrap_or(""));
                 tx.execute("INSERT INTO atoms_fts (tokens, id) VALUES (?, ?)", params![index_text(&text), atom.id])?;
-                if let Some((version, before)) = old.filter(|(v, _)| atom.version > *v) {
-                    let _ = version;
-                    scene_links::mark_rewritten(&tx, &atom.id, atom.version, &before, to_ms(Utc::now()))?;
+                if let Some((_, old)) = old.filter(|(v, _)| atom.version > *v) {
+                    scene_links::mark_rewritten(&tx, &atom.id, atom.version, &before(&old), to_ms(Utc::now()))?;
                 }
                 tx.commit()
             })
@@ -631,16 +631,17 @@ impl AtomRepository for SqliteMemoryStore {
             .await
     }
 
-    async fn delete(
+    async fn delete_filtered(
         &self,
         department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
+        before: TextFilter,
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("id", ids);
-        delete_atoms(&self.pool, self.vec, department, w, true).await
+        delete_atoms(&self.pool, self.vec, department, w, Some(before)).await
     }
 
     async fn delete_profile(
@@ -651,7 +652,7 @@ impl AtomRepository for SqliteMemoryStore {
         let mut w = Where::default();
         profile_where(&mut w, profile);
         // Clearing a chat memory purges the scenes too: nothing to mark.
-        delete_atoms(&self.pool, self.vec, department, w, false).await
+        delete_atoms(&self.pool, self.vec, department, w, None).await
     }
 
     async fn departments(&self) -> DomainResult<Vec<DepartmentId>> {
@@ -794,25 +795,28 @@ fn load_hits(
 }
 
 /// Deletes the atoms `w` selects; with `mark_scenes`, the scenes they
-/// belong to are marked stale.
+/// belong to are marked stale, keeping each atom's text through it.
 async fn delete_atoms(
     pool: &DepartmentPool,
     vec: Option<VecIndex>,
     department: &DepartmentId,
     w: Where,
-    mark_scenes: bool,
+    mark_scenes: Option<TextFilter>,
 ) -> DomainResult<usize> {
     pool.get(department)?
         .call(move |conn| {
             let tx = conn.transaction()?;
             prepare_index(&tx, vec)?;
-            if mark_scenes {
+            if let Some(before) = mark_scenes {
                 let doomed = tx
                     .prepare(&format!("SELECT id, content FROM atoms {}", w.sql()))?
                     .query_map(params_from_iter(w.params.iter()), |r| {
                         Ok((r.get(0)?, r.get(1)?))
                     })?
-                    .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
+                    .collect::<rusqlite::Result<Vec<(String, String)>>>()?
+                    .into_iter()
+                    .map(|(id, content)| (id, before(&content)))
+                    .collect::<Vec<_>>();
                 scene_links::mark_deleted(&tx, &doomed, to_ms(Utc::now()))?;
             }
             if let Some(v) = vec {

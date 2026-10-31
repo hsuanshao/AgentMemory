@@ -18,7 +18,7 @@ use super::llm_json::parse_llm_json;
 use super::prompts::{self, CustomStrategy};
 use crate::common::Page;
 use crate::memory::search::AtomSearcher;
-use crate::ports::memory::{AtomFilter, AtomRepository, AtomSelector};
+use crate::ports::memory::{AtomFilter, AtomRepository, AtomSelector, TextFilter};
 use crate::ports::system::{ChatMessage, Clock, EmbeddingProvider, IdGenerator, LlmClient};
 
 const DEDUP_CANDIDATES_PER_MEMORY: usize = 5;
@@ -401,7 +401,13 @@ impl L1Extractor {
             .extend(fresh.source_message_ids.iter().cloned());
         let others: Vec<String> = targets.iter().skip(1).map(|t| t.id.clone()).collect();
         if !others.is_empty() {
-            self.atoms.delete(department, scope, &others).await?;
+            let before = self
+                .redaction
+                .member_filter(department, scope.team_id.as_str(), scope.user_id.as_str())
+                .await?;
+            self.atoms
+                .delete_filtered(department, scope, &others, before)
+                .await?;
         }
         self.store(department, &merged).await?;
         Ok(Some(merged))
@@ -431,8 +437,11 @@ impl L1Extractor {
             },
             None => None,
         };
+        // A merge rewrites an atom placed in a scene: the old text is kept
+        // as the scene's "before", under the rules in force now.
+        let before: TextFilter = Arc::new(move |text: &str| redactor.redact(text));
         self.atoms
-            .upsert(department, atom, embedding.as_deref())
+            .upsert_filtered(department, atom, embedding.as_deref(), before)
             .await
     }
 }

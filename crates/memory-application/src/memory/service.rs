@@ -24,7 +24,7 @@ use super::search::AtomSearcher;
 use crate::common::{Page, Scored};
 use crate::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    ProfileVersionStore,
+    ProfileVersionStore, TextFilter,
 };
 use crate::ports::system::{Clock, EmbeddingProvider, IdGenerator};
 
@@ -290,8 +290,11 @@ impl MemoryService {
             self.clock.now(),
         )?;
         let embedding = self.embed_one(&atom.content).await;
+        // The scene keeps the old text as its "before": redacted by the
+        // rules in force now, not those of when it was written.
+        let before: TextFilter = Arc::new(move |text: &str| redactor.redact(text));
         self.atoms
-            .upsert(department, &atom, embedding.as_deref())
+            .upsert_filtered(department, &atom, embedding.as_deref(), before)
             .await?;
         self.observer
             .on_atoms_changed(department, &ProfileScope::from(scope))
@@ -336,7 +339,14 @@ impl MemoryService {
         if ids.is_empty() {
             return Err(DomainError::invalid("ids is required"));
         }
-        let deleted = self.atoms.delete(department, scope, ids).await?;
+        let before = self
+            .redaction
+            .member_filter(department, scope.team_id.as_str(), scope.user_id.as_str())
+            .await?;
+        let deleted = self
+            .atoms
+            .delete_filtered(department, scope, ids, before)
+            .await?;
         if deleted > 0 {
             self.observer
                 .on_atoms_changed(department, &ProfileScope::from(scope))
@@ -455,6 +465,19 @@ impl MemoryService {
         }
         self.profiles
             .append_scenes_linked(department, profile, versions, links)
+            .await
+    }
+
+    /// A member's redaction, for text of their atoms used outside the
+    /// write it came with (a scene's "before" and "after").
+    pub async fn member_filter(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        user_id: &str,
+    ) -> DomainResult<TextFilter> {
+        self.redaction
+            .member_filter(department, profile.team_id.as_str(), user_id)
             .await
     }
 

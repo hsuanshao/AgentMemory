@@ -5,7 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use memory_application::ports::memory::{AtomRepository, ProfileVersionStore};
+use std::sync::Arc;
+
+use memory_application::ports::memory::{AtomRepository, ProfileVersionStore, TextFilter};
 use memory_domain::memory::AtomicMemory;
 use memory_domain::profile::{
     MemberState, NewSceneVersion, ProfileScope, SceneMember, SceneOp, SceneRef, SceneWriteLinks,
@@ -85,10 +87,17 @@ pub async fn exercise<S>(
         .all(|r| r.state == MemberState::Current && r.atom_version == 1));
     assert!(marks().await.unwrap().is_empty());
 
-    // Rewrites: one mark per scene and atom, the oldest text kept.
+    // Rewrites: one mark per scene and atom, the oldest text kept. Each
+    // rewrite replaces the mark with a new one, so an L2 run that read
+    // the first cannot settle the second by id.
     a1.content = "deploy with deploy_prod.sh".into();
     a1.version = 2;
     store.upsert(department, &a1, None).await.unwrap();
+    let first = marks().await.unwrap()[0].id;
+    store
+        .note_stale_attempt(department, &profile, &[first])
+        .await
+        .unwrap();
     a1.content = "deploy with deploy_prod.sh --canary".into();
     a1.version = 3;
     store.upsert(department, &a1, None).await.unwrap();
@@ -100,6 +109,17 @@ pub async fn exercise<S>(
     assert_eq!(
         open[0].before_content.as_deref(),
         Some("deploy with deploy.sh")
+    );
+    assert_ne!(open[0].id, first, "a rewrite gets a new mark");
+    assert_eq!(open[0].attempts, 0);
+    store
+        .append_scenes_linked(department, &profile, vec![], links(vec![], vec![first]))
+        .await
+        .unwrap();
+    assert_eq!(
+        marks().await.unwrap().len(),
+        1,
+        "settling the old id leaves the newer rewrite"
     );
     store
         .note_stale_attempt(department, &profile, &[open[0].id])
@@ -254,7 +274,8 @@ pub async fn exercise<S>(
         [("scn-z", "a3", StaleReason::ChangedDuringRun)]
     );
 
-    // Removing Z moves its atoms out; nothing is current any more.
+    // Removing Z moves its atoms out, and its marks go with it: nothing is
+    // left for L2 to bring up to date.
     store
         .append_scenes(
             department,
@@ -269,10 +290,56 @@ pub async fn exercise<S>(
         .unwrap()
         .iter()
         .all(|r| r.state == MemberState::MovedOut));
+    assert!(marks().await.unwrap().is_empty());
     // a1 belongs nowhere, so rewriting it marks nothing new.
     a1.version = 4;
     store.upsert(department, &a1, None).await.unwrap();
-    assert_eq!(marks().await.unwrap().len(), 1);
+    assert!(marks().await.unwrap().is_empty());
+
+    // The text kept as a scene's "before" passes the filter the writer
+    // gives: the owner's redaction as it is now.
+    let redact: TextFilter = Arc::new(|t: &str| t.replace("EMP-1234", "[REDACTED:emp]"));
+    let mut a4 = atom("a4", "Employee EMP-1234");
+    let a5 = atom("a5", "Badge EMP-1234 on the desk");
+    for a in [&a4, &a5] {
+        store.upsert(department, a, None).await.unwrap();
+    }
+    store
+        .append_scenes_linked(
+            department,
+            &profile,
+            vec![version("scn-w", SceneOp::Create, "staff.md")],
+            links(vec![member(&a4), member(&a5)], vec![]),
+        )
+        .await
+        .unwrap();
+    a4.content = "Employee public replacement".into();
+    a4.version = 2;
+    store
+        .upsert_filtered(department, &a4, None, Arc::clone(&redact))
+        .await
+        .unwrap();
+    store
+        .delete_filtered(department, scope, &["a5".to_owned()], redact)
+        .await
+        .unwrap();
+    let mut kept: Vec<_> = marks()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.atom_id, m.before_content.unwrap_or_default()))
+        .collect();
+    kept.sort();
+    assert_eq!(
+        kept,
+        [
+            ("a4".to_owned(), "Employee [REDACTED:emp]".to_owned()),
+            (
+                "a5".to_owned(),
+                "Badge [REDACTED:emp] on the desk".to_owned()
+            ),
+        ]
+    );
 
     // Purging the profile takes rows and marks with the scenes.
     store.purge(department, &profile).await.unwrap();
