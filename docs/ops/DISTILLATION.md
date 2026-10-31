@@ -14,6 +14,7 @@ memory-core distils conversations in the background: L1 extracts memories, L2 fo
 - [6. Tools and distillation](#6-tools-and-distillation)
 - [7. Secrets and redaction](#7-secrets-and-redaction)
 - [8. Embeddings and load](#8-embeddings-and-load)
+- [9. Scenes and their atoms](#9-scenes-and-their-atoms)
 
 ## 1. What is recorded
 
@@ -296,3 +297,27 @@ The backfill shares `maxConcurrency` with L1 and `atomic/update`: while it catch
 A small or shared embedding server that times out under load: lower `maxConcurrency` first, then raise `timeoutMs`. A self-hosted distillation model that needs minutes for a long answer (skill extraction writes the most) fails with `LLM_UNAVAILABLE` at the timeout and is retried: raise `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS`, and keep any proxy in front of the model at least as patient. Many embeddings missing after an outage: run `reembed` once the service is back.
 
 A numeric variable that does not parse (`AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY=abc`) stops memory-core at startup with its name; `memory-server check-config` reports it too.
+
+## 9. Scenes and their atoms
+
+L2 records which atoms each scene was built from, and at which version. An atom belongs to one scene at most, or to none (a preference may only belong in the persona). When an atom changes after that, the scene may still say the old thing, so it is marked **stale**, with a reason:
+
+| Reason | When |
+| --- | --- |
+| `rewritten` | The atom was rewritten: L1 dedup or a correction, or `atomic/update` |
+| `deleted` | The atom was deleted: merged away by L1, or `atomic/delete` |
+| `moved_out` | L2 placed the atom in another scene |
+| `changed_during_run` | The atom was rewritten while the L2 run that placed it waited for the model |
+
+Each mark keeps the atom's text from before the change, so L2 can find it in the scene. A deleted atom's text stays in the mark until the mark is settled, as it does in the scene's body.
+
+**L2 settles them.** The next L2 run of the agent is given up to `memory.l2.staleScenesPerRun` stale scenes with what they may still say and what is true now, even when there are no new atoms (a quiet topic gets none). For each one the model rewrites the scene or answers that it already agrees; either settles the marks it was given. Rewriting or deleting atoms through the API schedules that run as L1 does. A mark that `memory.l2.staleMaxAttempts` runs leave is no longer given to L2; it stays until a person deals with it. Saving the scene (`scenario/write`, the Panel's L2 tab) settles all its marks, and removing it settles them too.
+
+**Where to see them.** `scenario/ls` and `scenario/read` say whether a scene is `stale` and how many reasons it has; `scenario/atoms` lists the caller's atoms in it with their reasons, and only counts other members' (`hidden`). The Panel's L2 tab shows the same. Each L2 generation log lists the marks it was given as `stale` input refs.
+
+| Setting | Default | |
+| --- | --- | --- |
+| `memory.l2.staleScenesPerRun` | 10 | Stale scenes given to one L2 run (not a limit on scenes) |
+| `memory.l2.staleMaxAttempts` | 3 | Runs that may leave a mark before L2 stops being given it |
+
+Scenes written before schema migration 8 have no recorded atoms; they get them as L2 places atoms in them again. Nothing is filled in for the past.

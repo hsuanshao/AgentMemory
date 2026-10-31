@@ -6,6 +6,9 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+### Added
+- L2 records which atoms each scene was built from, and a scene whose atoms changed since is marked stale: an atom rewritten or deleted (by L1 or through the API), placed in another scene, or rewritten while L2 waited for the model. The next L2 run is told what the scene may still say and what is true now, even when there are no new atoms, and rewrites the scene or answers that it already agrees; a mark it keeps leaving stops being given to it after `memory.l2.staleMaxAttempts` runs (3) and waits for a person, and at most `memory.l2.staleScenesPerRun` (10) stale scenes go into one run. Rewriting or deleting atoms through the API now schedules L2. `scenario/atoms` lists a scene's atoms to the user they belong to (other users' are only counted), `scenario/ls` and `scenario/read` say whether a scene is stale, and the Panel's L2 tab shows both ([DISTILLATION](docs/ops/DISTILLATION.md#9-scenes-and-their-atoms)). Schema migration 8: going back to an earlier version needs the backup restored.
+
 ### Fixed
 - `skill/proposal/list` accepts a call without `agent_id`, as documented: a team admin lists the whole team's pending proposals in one call, and each caller still sees only the proposals they may review. The call used to be refused with `400 agent_id is required`. `skill/proposal/approve` and `reject` need only `task_id` and `index` (#77).
 - The `password-shape` redaction rule leaves git revisions of a commit SHA alone (`a1b2c3d^1`, `f433d90~1..f433d90`), so a distilled fact keeps the commit it refers to. Revisions of a ref name such as `v0.4.3^1` are still redacted: by their shape they cannot be told from a password ending in `^1` (#74).

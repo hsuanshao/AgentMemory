@@ -122,7 +122,7 @@ These routes need `x-memory-user-key`. Scopes, generation logs and dead letters 
 
 `/v3/conversation/{add,query,search,delete,count}`,
 `/v3/atomic/{update,query,search,delete,count}`,
-`/v3/scenario/{ls,read,write,rm,count}`,
+`/v3/scenario/{ls,read,write,rm,count,atoms}`,
 `/v3/core/{read,write,count}`, `/v3/session/add`.
 
 * `conversation/add` `{session_id, messages: [{role: user|assistant, content, timestamp?}]}` stores L0 and drives the pipeline.
@@ -130,6 +130,8 @@ These routes need `x-memory-user-key`. Scopes, generation logs and dead letters 
 * L0/L1 are scoped by team + agent + user; L2 (`scenario/*`) and L3 (`core/*`) by team + agent only.
 * Scenes and the persona are append-only. `scenario/write` and `core/write` add a version authored by the caller; a write identical to the latest version adds nothing and returns that version. `scenario/rm` retires the scene: it leaves `ls`, `count` and `read` without `version`, while `read` with `version` still returns any of its versions, as it does for a scene merged into another.
 * Every scene has a fixed `scene_id` (in `ls`, `read` and `write` responses). `read` by `path` finds the scene that has that name now; once another scene takes the name, reach the old one with `scenario/read {scene_id, version?}`, which also returns retired scenes. `read` also returns the version's `op` (`create`, `update`, `merge`, `retire`, `manual`, `import`), `parents` (the versions a merge absorbed) and `author`.
+* `ls` entries and `read` also say whether the scene is `stale` and how many `stale_reasons` it has: it may still state something its atoms no longer say (an atom it was built from was rewritten, deleted or moved to another scene). L2 is given stale scenes and settles them; a `scenario/write` settles the scene's reasons ([DISTILLATION §9](ops/DISTILLATION.md#9-scenes-and-their-atoms)).
+* `scenario/atoms` `{scene_id | path}` → `{scene_id, path, stale, stale_reasons, atoms: [{atom_id, state, atom_version, current_version, content, type, stale_reasons}], hidden}`: the atoms the scene was built from. A scene is shared by the agent's users, but an atom is its user's memory, so only the resolved user's atoms are listed (the caller's own; a system admin may name `user_id`) and other users' are counted in `hidden`. `state` is `current`, or `moved_out` once L2 placed the atom elsewhere or the scene was removed; `atom_version` is the version the scene was written from and `current_version` the one stored now (`null`, with no `content` or `type`, once deleted); `stale_reasons` are `rewritten`, `deleted`, `moved_out` or `changed_during_run`. 404 for an unknown scene.
 * `core/read` without `version` returns the latest persona followed by the Scene Navigation of the current scenes. With `version`, even the latest one's number, it returns that version's body alone: the navigation is not part of a stored version.
 
 ### Skills

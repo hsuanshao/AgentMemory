@@ -6,6 +6,9 @@
 
 ## [未發布]
 
+### 新增
+- L2 會記錄每個場景由哪些 atom 寫成；之後 atom 有變動的場景會被標成過期：atom 被改寫或刪除（L1 或透過 API）、被放到別的場景，或在 L2 等待模型回覆時被改寫。下一輪 L2 會被告知場景可能還寫著什麼、現在正確的是什麼，即使沒有新的 atom 也會執行，並改寫場景或回覆內容已經一致；一直被留下的標記，在 `memory.l2.staleMaxAttempts` 輪（3）之後就不再交給 L2，等人處理；每一輪最多處理 `memory.l2.staleScenesPerRun`（10）個過期場景。透過 API 改寫或刪除 atom 現在會排程 L2。`scenario/atoms` 把場景的 atom 列給它所屬的使用者（其他使用者的只計數），`scenario/ls` 與 `scenario/read` 會說明場景是否過期，Panel 的 L2 頁兩者都會顯示（[DISTILLATION](docs/ops/DISTILLATION.zh-tw.md#9-場景與它的-atom)）。Schema 遷移 8：退回舊版必須還原備份。
+
 ### 修正
 - `skill/proposal/list` 照文件所寫，可以不帶 `agent_id`：team admin 一次就能列出整個 team 的待審提案，每個呼叫者仍然只看得到自己能審核的提案。原本會被拒絕並回 `400 agent_id is required`。`skill/proposal/approve` 與 `reject` 只需要 `task_id` 和 `index`（#77）。
 - `password-shape` 遮罩規則不再遮掉以 commit SHA 為基底的 git revision（`a1b2c3d^1`、`f433d90~1..f433d90`），蒸餾出來的事實會保留它指的 commit。以 ref 名稱為基底的 revision（例如 `v0.4.3^1`）仍然會被遮：從形狀上分不出它和結尾是 `^1` 的密碼（#74）。
