@@ -25,6 +25,7 @@ export const CORE_V3_ALLOWLIST: ReadonlySet<string> = new Set([
   "scenario/ls",
   "scenario/read",
   "scenario/write",
+  "scenario/atoms",
   // L3
   "core/read",
   "core/write",

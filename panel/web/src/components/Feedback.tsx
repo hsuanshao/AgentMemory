@@ -33,14 +33,15 @@ export function EmptyState({ children }: { children: ReactNode }) {
   return <div className="py-8 text-center text-muted">{children}</div>;
 }
 
-export function Notice({ children, tone = "info" }: { children: ReactNode; tone?: "info" | "ok" }) {
+const NOTICE_TONES = {
+  info: "border-accent/30 bg-accent/5 text-fg",
+  ok: "border-ok/40 bg-ok/10 text-ok",
+  warn: "border-warn/40 bg-warn/10 text-fg",
+};
+
+export function Notice({ children, tone = "info" }: { children: ReactNode; tone?: keyof typeof NOTICE_TONES }) {
   return (
-    <div
-      className={cx(
-        "rounded-sm border px-3 py-2 text-xs",
-        tone === "ok" ? "border-ok/40 bg-ok/10 text-ok" : "border-accent/30 bg-accent/5 text-fg",
-      )}
-    >
+    <div className={cx("rounded-sm border px-3 py-2 text-xs", NOTICE_TONES[tone])}>
       {children}
     </div>
   );
