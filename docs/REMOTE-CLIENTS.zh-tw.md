@@ -90,7 +90,7 @@ client 和部門管理員都不需要伺服器 API key；它只留在架設伺�
 `amem` 是單一執行檔（`crates/memory-client`）。從 0.2.0 起，每個 [release](https://github.com/hsuanshao/TeamAgentMemory/releases) 都附有預先編譯好的版本，支援 Linux（x86_64 和 arm64，靜態連結）和 macOS（Apple silicon 和 Intel）：
 
 ```bash
-VERSION=0.5.1
+VERSION=0.5.2
 PLATFORM=linux-x86_64   # 或 linux-arm64、macos-arm64、macos-x86_64
 BASE=https://github.com/hsuanshao/TeamAgentMemory/releases/download/v$VERSION
 curl -fsSLO "$BASE/amem-$VERSION-$PLATFORM.tar.gz"
@@ -109,7 +109,7 @@ amem --version
 cargo install --path crates/memory-client
 
 # 或直接從 git 安裝
-cargo install --git https://github.com/hsuanshao/TeamAgentMemory --tag v0.5.1 memory-client
+cargo install --git https://github.com/hsuanshao/TeamAgentMemory --tag v0.5.2 memory-client
 ```
 
 請確認 agent 工具看得到的 `PATH` 包含 `amem` 所在的目錄（上面的 `~/.local/bin`，或 `cargo install` 用的 `~/.cargo/bin`）。桌面應用程式啟動時的 `PATH` 有時比 shell 短。在 macOS 上，用瀏覽器而不是 `curl` 下載的檔案會被隔離，用 `xattr -d com.apple.quarantine ~/.local/bin/amem` 解除。
