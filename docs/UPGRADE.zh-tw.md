@@ -4,7 +4,7 @@
 
 ## 目錄
 
-- [升級到下一版](#升級到下一版)
+- [升級到 0.5.2](#升級到-052)
 - [升級到 0.5.1](#升級到-051)
 - [升級到 0.5.0](#升級到-050)
 - [升級到 0.4.3](#升級到-043)
@@ -23,9 +23,14 @@
   - [E. 還原](#e-還原)
   - [F. 疑難排解](#f-疑難排解)
 
-## 升級到下一版
+## 升級到 0.5.2
 
-尚未發佈：這一段的版號由發版 PR 決定。
+```bash
+git fetch --tags && git checkout v0.5.2
+./upgrade.sh
+```
+
+從 0.4.3 升級時，請先閱讀[升級到 0.5.0](#升級到-050)：其中的 schema 遷移 7 和其他內容也都適用。
 
 > [!WARNING]
 > **升級後要回到 0.5.1，必須還原備份**（[E. 還原](#e-還原)）。memory-core 啟動時會執行 schema migration 8，新增兩張表格。沒有資料需要轉換，但 0.5.1 會拒絕 schema 版本 8 的資料：它寫入或刪除 atom 時不會標記場景。
@@ -37,7 +42,7 @@
 | 蒸餾模型按呼叫次數計費，或自架模型與其他服務共用 | L2 會更常執行：透過 API 改寫或刪除 atom 之後，以及有過期場景時（即使沒有新的 atom；每筆標記最多 `memory.l2.staleMaxAttempts` 次）。可以調低 `memory.l2.staleScenesPerRun` 或 `staleMaxAttempts` 來限制（[場景與它的 atom](#場景與它的-atom)） |
 | 跑了不只一個 memory-core | 先停掉舊的再啟動新的：舊版寫入 atom 時，不會標記它所屬的場景 |
 | 有腳本讀取 `scenario/ls` 或 `scenario/read` | 不用改：兩者的回應多了 `stale` 和 `stale_reasons` 兩個欄位 |
-| 有腳本呼叫 `skill/proposal/*` | 不用改；`agent_id` 不再是必填，approve 與 reject 只需要 `task_id` 和 `index`（[這一版的其他變更](#下一版的其他變更)） |
+| 有腳本呼叫 `skill/proposal/*` | 不用改；`agent_id` 不再是必填，approve 與 reject 只需要 `task_id` 和 `index`（[這一版的其他變更](#052-的其他變更)） |
 | 之後要用 `migrate-to-postgres.sh` 把 SQLite 搬到 Postgres | 用新版的搬移工具：它包含兩張新表格 |
 
 ### 場景與它的 atom
@@ -48,7 +53,7 @@ L2 現在會記錄每個場景由哪些 atom 寫成；其中某個 atom 被改�
 - **每個人看得到什麼。** `scenario/atoms` 與 Panel 的 L2 頁只顯示使用者自己在場景裡的 atom，其他使用者的只計數（`hidden`）。
 - **設定。** `memory.l2.staleScenesPerRun`（10）與 `memory.l2.staleMaxAttempts`（3）都有預設值；只有要改時才需要加進 `memory-core.yaml`（見 `config/memory-core.example.yaml`）。
 
-### 下一版的其他變更
+### 0.5.2 的其他變更
 
 - `skill/proposal/list` 可以不帶 `agent_id`：team admin 一次就能列出整個 team 的待審提案。`skill/proposal/approve` 與 `reject` 只需要 `task_id` 和 `index`，三個路由也會從 header 讀取 `team_id`、`agent_id`、`task_id`（#77）。
 - `password-shape` 遮罩規則不再遮掉以 commit SHA 為基底的 git revision，例如 `a1b2c3d^1`（#74）。

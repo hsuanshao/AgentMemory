@@ -6,8 +6,12 @@ Notable changes of each release. The [release notes](https://github.com/hsuansha
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-31
+
+**Read [UPGRADE → To 0.5.2](docs/UPGRADE.md#to-052) before upgrading.** Scenes record the atoms they were built from, and L2 brings a scene up to date when those atoms change, so it may call the distillation model more often (limits: `memory.l2.staleScenesPerRun`, `staleMaxAttempts`). Going back to 0.5.1 needs the backup restored (schema migration 8).
+
 ### Added
-- L2 records which atoms each scene was built from, and a scene whose atoms changed since is marked stale: an atom rewritten or deleted (by L1 or through the API), placed in another scene, or rewritten while L2 waited for the model. The next L2 run is told what the scene may still say and what is true now, even when there are no new atoms, and rewrites the scene or answers that it already agrees; a mark it keeps leaving stops being given to it after `memory.l2.staleMaxAttempts` runs (3) and waits for a person, and at most `memory.l2.staleScenesPerRun` (10) stale scenes go into one run. Rewriting or deleting atoms through the API now schedules L2. `scenario/atoms` lists a scene's atoms to the user they belong to (other users' are only counted), `scenario/ls` and `scenario/read` say whether a scene is stale, and the Panel's L2 tab shows both ([DISTILLATION](docs/ops/DISTILLATION.md#9-scenes-and-their-atoms)). Schema migration 8: going back to an earlier version needs the backup restored.
+- L2 records which atoms each scene was built from, and a scene whose atoms changed since is marked stale: an atom rewritten or deleted (by L1 or through the API), placed in another scene, or rewritten while L2 waited for the model. The next L2 run is told what the scene may still say and what is true now, even when there are no new atoms, and rewrites the scene or answers that it already agrees; a mark it keeps leaving stops being given to it after `memory.l2.staleMaxAttempts` runs (3) and waits for a person, and at most `memory.l2.staleScenesPerRun` (10) stale scenes go into one run. Rewriting or deleting atoms through the API now schedules L2. `scenario/atoms` lists a scene's atoms to the user they belong to (other users' are only counted), `scenario/ls` and `scenario/read` say whether a scene is stale, and the Panel's L2 tab shows both ([DISTILLATION](docs/ops/DISTILLATION.md#9-scenes-and-their-atoms)). Schema migration 8: going back to 0.5.1 needs the backup restored.
 
 ### Fixed
 - `skill/proposal/list` accepts a call without `agent_id`, as documented: a team admin lists the whole team's pending proposals in one call, and each caller still sees only the proposals they may review. The call used to be refused with `400 agent_id is required`. `skill/proposal/approve` and `reject` need only `task_id` and `index` (#77).
@@ -184,7 +188,8 @@ Its GitHub release was withdrawn the same day; use 0.5.1.
 
 First public release: memory-core, the L0→L3 distillation pipeline, hybrid recall, the metadata plane, the Monitor Panel, `amem` with plugins for Claude Code, Codex, Antigravity and Hermes, and `install.sh`. Clients authenticate with per-user keys.
 
-[Unreleased]: https://github.com/hsuanshao/TeamAgentMemory/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/hsuanshao/TeamAgentMemory/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.5.2
 [0.5.1]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.5.1
 [0.5.0]: https://github.com/hsuanshao/TeamAgentMemory/tree/87079c7
 [0.4.3]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.4.3

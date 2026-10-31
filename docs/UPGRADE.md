@@ -4,7 +4,7 @@
 
 ## Contents
 
-- [To the next release](#to-the-next-release)
+- [To 0.5.2](#to-052)
 - [To 0.5.1](#to-051)
 - [To 0.5.0](#to-050)
 - [To 0.4.3](#to-043)
@@ -23,9 +23,14 @@
   - [E. Roll back](#e-roll-back)
   - [F. Troubleshooting](#f-troubleshooting)
 
-## To the next release
+## To 0.5.2
 
-Not released yet: the release PR gives this section its version number.
+```bash
+git fetch --tags && git checkout v0.5.2
+./upgrade.sh
+```
+
+From 0.4.3, read [To 0.5.0](#to-050) first: its schema migration 7 and everything else in it applies too.
 
 > [!WARNING]
 > **Going back to 0.5.1 means restoring the backup** ([E. Roll back](#e-roll-back)). When it starts, memory-core runs schema migration 8, which adds two tables. Nothing is converted, but 0.5.1 refuses data at schema version 8: its atom writes and deletes would leave scenes unmarked.
@@ -37,7 +42,7 @@ Not released yet: the release PR gives this section its version number.
 | The distillation model is billed per call, or a self-hosted model is shared | L2 runs more often: after atoms are rewritten or deleted through the API, and for stale scenes even with no new atoms (each mark at most `memory.l2.staleMaxAttempts` times). Lower `memory.l2.staleScenesPerRun` or `staleMaxAttempts` to limit it ([scenes and their atoms](#scenes-and-their-atoms)) |
 | You run more than one memory-core | Stop the old ones before starting the new one: an old replica that writes atoms leaves the scenes they belong to unmarked |
 | A script reads `scenario/ls` or `scenario/read` | Nothing to change: both answer with two more fields, `stale` and `stale_reasons` |
-| A script calls `skill/proposal/*` | Nothing to change; `agent_id` is no longer required, and approve and reject need only `task_id` and `index` ([also in this release](#also-in-the-next-release)) |
+| A script calls `skill/proposal/*` | Nothing to change; `agent_id` is no longer required, and approve and reject need only `task_id` and `index` ([also in this release](#also-in-052)) |
 | You will copy SQLite to Postgres with `migrate-to-postgres.sh` | Run the copy of the new version: it includes the two new tables |
 
 ### Scenes and their atoms
@@ -48,7 +53,7 @@ L2 now records which atoms each scene was built from, and marks a scene **stale*
 - **What each person sees.** `scenario/atoms` and the Panel's L2 tab show a user their own atoms in a scene; other users' are only counted (`hidden`).
 - **Settings.** `memory.l2.staleScenesPerRun` (10) and `memory.l2.staleMaxAttempts` (3) have defaults; add them to `memory-core.yaml` only to change them (see `config/memory-core.example.yaml`).
 
-### Also in the next release
+### Also in 0.5.2
 
 - `skill/proposal/list` works without `agent_id`: a team admin lists the whole team's pending proposals in one call. `skill/proposal/approve` and `reject` need only `task_id` and `index`, and the three routes read `team_id`, `agent_id` and `task_id` from headers too (#77).
 - The `password-shape` redaction rule leaves git revisions of a commit SHA alone, such as `a1b2c3d^1` (#74).
