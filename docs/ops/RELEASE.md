@@ -39,7 +39,7 @@ To find what to change: `git grep -n '<old version>' -- ':!Cargo.lock' ':!*.md'`
 1. **Branch** from an up-to-date `main` (`git pull` first; contributors merge PRs on GitHub).
 2. **Bump** every file in [section 2](#2-where-the-version-lives).
 3. **Run every test layer** in [TESTING.md](TESTING.md): format, clippy, the full suite with Postgres and Redis, the Panel, shellcheck. When the release changes `install.sh`, `upgrade.sh`, `migrate-to-postgres.sh` or the Compose file, also run the full-stack smoke test.
-4. **Check the docs** that a release can affect: `CHANGELOG.md` and `CHANGELOG.zh-tw.md` (move *Unreleased* under the new version), README (both languages), the UPGRADE guide when operators must act, API.md for changed endpoints. Every user-facing document exists in English and Traditional Chinese, so change both. Two of them are only kept in step by hand:
+4. **Check the docs** that a release can affect: `CHANGELOG.md` and `CHANGELOG.zh-tw.md` (move *Unreleased* under the new version), README (both languages), the UPGRADE guide when operators must act, API.md for changed endpoints. Every user-facing document exists in English and Traditional Chinese, so change both. Two of them follow the code and are checked by `check-consistency.sh X.Y.Z` (step 5), which names what is left:
    - **[SCHEMA-MIGRATIONS](SCHEMA-MIGRATIONS.md) §3**: the last row is the highest version in the code (`SCHEMA_VERSION` in `sqlite/schema.rs`, the last entry of `MIGRATIONS` in `postgres/schema.rs`, `SCHEMA_VERSION` in `redis/migrate.rs` where Redis has a step), and every row that says `next` gets this version.
    - **UPGRADE**: the section for the next release gets its version number, in its heading, the contents and links to it. When this release adds a migration, its warning names the release being left: "Going back to X.Y.Z means restoring the backup".
 5. **Scan for secrets and private details** before anything is pushed: `.github/scripts/check-consistency.sh X.Y.Z` does steps 2 and 5 together. By hand, `git grep -nE 'sk-(ant|proj|mem)-[A-Za-z0-9_-]{16}|ghp_[A-Za-z0-9]{20}|BEGIN [A-Z ]*PRIVATE KEY'` should find nothing, and neither should a search for internal host names or home-directory paths.
@@ -76,10 +76,10 @@ Suggested shape:
 | msrv | `cargo check --workspace --all-targets --locked` on Rust 1.88 |
 | panel | Node 22: `npm ci`, typecheck, test, build |
 | scripts | shellcheck v0.10.0 on every script; the Hermes plugin compiles |
-| consistency | [`.github/scripts/check-consistency.sh`](../../.github/scripts/check-consistency.sh): every file in [section 2](#2-where-the-version-lives) carries the same version, and the secret and private-path scan from step 5 |
+| consistency | [`.github/scripts/check-consistency.sh`](../../.github/scripts/check-consistency.sh): every file in [section 2](#2-where-the-version-lives) carries the same version, the list of schema migrations ends at the version in the code, and the secret and private-path scan from step 5 |
 | docker | Build both images without pushing (core with `INSTALL_CLAUDE/ANTIGRAVITY/CODEX=false` to stay fast) |
 
-Run the consistency check locally before a release; with a version argument it also checks that every file says that version: `.github/scripts/check-consistency.sh 0.2.0`.
+Run the consistency check locally before a release; with a version argument it also checks that every file says that version, and that no migration in SCHEMA-MIGRATIONS and no UPGRADE section is still waiting for its release number: `.github/scripts/check-consistency.sh 0.2.0`.
 
 When `rust-version` in `Cargo.toml` changes, change the toolchain of the msrv job with it.
 
