@@ -177,6 +177,8 @@ amem login --server-url https://memory.example.com --team-id team-… --agent-id
 | 有人離開 team | 移除該成員（Panel，或 `team-member/remove`） | 他之後對該 team 的記憶請求會收到 `403`；過去的記憶仍會保留 |
 | key 外洩或筆電遺失 | 撤銷那把 key（Panel，或 `user-key/revoke`） | 用它的請求會收到 `401`；該使用者的其他 key 不受影響 |
 | 讓某人重新開始 | 替他建立新的 agent | 舊 agent 的場景和 persona 會留在原處 |
+| 暫停 agent | `agent/update` 帶 `"status": "inactive"`（agent 的 owner 或系統管理者；改回 `"active"` 即恢復） | 指定它的記憶與 skill 請求會收到 `403`，系統管理者除外；它的記憶仍會保留 |
+| 停用並清除 agent | `agent/archive`（agent 的 owner 或系統管理者） | 同樣回 `403`，並刪除所有使用者在這個 agent 上的對話、事實、場景和 persona；無法復原 |
 | 查看 team 成員 | Panel 的 **Teams**，或 `team-member/list` | — |
 
 每個部門的預設上限（`config/memory-core.example.yaml` 的 `metadata` 區段）：500 位使用者、100 個 team、每位使用者 20 把有效 key。
@@ -228,7 +230,7 @@ flowchart TD
 
 - **預設拒絕**：只有路徑最後一段是已知的讀取字尾（`query`、`search`、`count`、`read`、`recall`、`list` 等），才算讀取，其餘一律視為寫入。
 - **Handler 只會看到已授權的範圍**：middleware 會改寫請求，新的 handler 不需要額外程式碼就有隔離。
-- **私人與已封存的 agent**：已封存的 agent 一律拒絕（系統管理者除外）。私人 agent 只有 owner、team 的管理者和系統管理者能使用；它的 skills 也一樣，因為 skill 的呼叫同樣經過這個 middleware。
+- **私人與非使用中的 agent**：非使用中的 agent（暫停或已封存，見 §7）一律拒絕（系統管理者除外）。私人 agent 只有 owner、team 的管理者和系統管理者能使用；它的 skills 也一樣，因為 skill 的呼叫同樣經過這個 middleware。
 - **記憶 API 的角色是扁平的**：`role_allows` 讓每種角色都只能存取呼叫者自己的記憶，存取別人的記憶只保留給系統管理者。未來若要依角色細分，只需要改這一個函式。
 
 ## 10. 依範圍運作的管線與召回
@@ -297,7 +299,7 @@ ACL 的 `deny` 條目會被儲存，但目前不會被套用。
 ## 14. 限制與目前的不足
 
 - **記憶 API 的角色是扁平的**，team admin 目前也還沒有 Panel 介面（見第 4、9 節）。
-- **記憶 API 不會檢查 agent 的狀態**。被標成 inactive 的 agent 仍然可以收到請求；若要切斷存取，請移除成員或撤銷 key。
+- **暫停與封存 agent 只能透過 API**，Panel 目前還沒有對應的操作（見 §7）。
 - **共用的 agent 也共用輪廓**。場景和 persona 會混合所有使用這個 agent 的人的事實（第 2 節）。若不希望如此，請讓每個人使用自己的 agent。
 - **一份 client 設定只對應一組 team 和 agent**。請用各工具的覆寫方式，或使用不同的設定檔（第 6 節）。
 - **ACL 的 deny 條目目前不會被套用**（第 11 節）。
