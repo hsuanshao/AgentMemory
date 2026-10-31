@@ -237,6 +237,134 @@ impl SceneVersion {
     }
 }
 
+/// Whether an atom still belongs to a scene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemberState {
+    /// The scene the atom belongs to now; an atom has at most one.
+    Current,
+    /// L2 placed the atom in another scene, or the scene was removed. The
+    /// row stays so the scene's text can still be traced to it.
+    MovedOut,
+}
+
+impl MemberState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::MovedOut => "moved_out",
+        }
+    }
+
+    pub fn parse(s: &str) -> DomainResult<Self> {
+        Ok(match s {
+            "current" => Self::Current,
+            "moved_out" => Self::MovedOut,
+            other => {
+                return Err(DomainError::invalid(format!(
+                    "unknown member state: {other}"
+                )))
+            }
+        })
+    }
+}
+
+/// An atom an L2 run placed in a scene, as the run saw it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SceneMember {
+    pub atom_id: String,
+    /// The version L2 read, not the one stored when it writes: a rewrite
+    /// while the model ran then shows up as `changed_during_run`.
+    pub atom_version: u32,
+    pub user_id: String,
+    /// What L2 read, kept as the "before" text if the atom changed or was
+    /// deleted meanwhile.
+    pub content: String,
+}
+
+/// One membership row: atom `atom_id` in scene `scene_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SceneAtom {
+    pub scene_id: String,
+    pub atom_id: String,
+    pub atom_version: u32,
+    pub user_id: String,
+    pub state: MemberState,
+    /// The scene version written together with this row.
+    pub scene_version: u32,
+    pub assigned_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Why a scene may state something its atoms no longer say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StaleReason {
+    /// The atom was rewritten after L2 placed it.
+    Rewritten,
+    /// The atom was deleted.
+    Deleted,
+    /// L2 placed the atom in another scene.
+    MovedOut,
+    /// The atom was rewritten while the L2 run that placed it was running.
+    ChangedDuringRun,
+}
+
+impl StaleReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rewritten => "rewritten",
+            Self::Deleted => "deleted",
+            Self::MovedOut => "moved_out",
+            Self::ChangedDuringRun => "changed_during_run",
+        }
+    }
+
+    pub fn parse(s: &str) -> DomainResult<Self> {
+        Ok(match s {
+            "rewritten" => Self::Rewritten,
+            "deleted" => Self::Deleted,
+            "moved_out" => Self::MovedOut,
+            "changed_during_run" => Self::ChangedDuringRun,
+            other => {
+                return Err(DomainError::invalid(format!(
+                    "unknown stale reason: {other}"
+                )))
+            }
+        })
+    }
+
+    /// Settled by L2 placing the atom again at the version it now has.
+    pub fn settled_by_placement(self) -> bool {
+        matches!(self, Self::Rewritten | Self::ChangedDuringRun)
+    }
+}
+
+/// One recorded reason a scene is stale, until an L2 run or a person deals
+/// with it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaleMark {
+    pub id: i64,
+    pub scene_id: String,
+    pub atom_id: String,
+    pub reason: StaleReason,
+    /// The atom's version when marked; `None` once deleted.
+    pub atom_version: Option<u32>,
+    /// The atom's text before the change, for L2 to find in the scene.
+    pub before_content: Option<String>,
+    /// L2 runs that were given this reason and left it.
+    pub attempts: u32,
+    pub marked_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// What an L2 write records besides the scene versions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SceneWriteLinks {
+    /// Atoms placed in the first written version's scene.
+    pub members: Vec<SceneMember>,
+    /// Stale marks this write dealt with.
+    pub resolved: Vec<i64>,
+}
+
 /// How a persona version came to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

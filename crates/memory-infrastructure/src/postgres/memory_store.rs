@@ -17,11 +17,11 @@ use memory_application::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
     MovedRows, ProfileVersionStore, ScopeMigrationStore, Sequenced,
 };
-use memory_domain::error::DomainResult;
+use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{
-    NewPersonaVersion, NewSceneVersion, PersonaOp, PersonaVersion, ProfileScope, SceneOp,
-    SceneVersion,
+    NewPersonaVersion, NewSceneVersion, PersonaOp, PersonaVersion, ProfileScope, SceneAtom,
+    SceneOp, SceneVersion, SceneWriteLinks, StaleMark,
 };
 use memory_domain::scope::{DepartmentId, MemoryScope};
 use pgvector::Vector;
@@ -30,6 +30,7 @@ use sqlx::PgConnection;
 use tracing::warn;
 
 use super::db::{pg_err, xact_lock, PgDb, Schema};
+use super::scene_links;
 use super::sql::{
     args, count, doc, execute, fetch_all, fetch_optional, get, to_doc, tsquery_literal,
     tsvector_literal, Arg, Where,
@@ -448,6 +449,14 @@ impl AtomRepository for PostgresMemoryStore {
         }
         let mut tx = self.db.begin().await?;
         xact_lock(&mut tx, &format!("{s}.atoms")).await?;
+        let old = fetch_optional(
+            &mut tx,
+            &format!("SELECT version, content FROM {s}.atoms WHERE id = ?"),
+            &args![atom.id.as_str()],
+        )
+        .await?
+        .map(|r| Ok::<_, DomainError>((get::<i64>(&r, "version")?, get::<String>(&r, "content")?)))
+        .transpose()?;
         execute(
             &mut tx,
             &format!(
@@ -457,6 +466,17 @@ impl AtomRepository for PostgresMemoryStore {
             &params,
         )
         .await?;
+        if let Some((_, before)) = old.filter(|(v, _)| i64::from(atom.version) > *v) {
+            scene_links::mark_rewritten(
+                &mut tx,
+                &s,
+                &atom.id,
+                atom.version,
+                &before,
+                to_ms(Utc::now()),
+            )
+            .await?;
+        }
         tx.commit().await.map_err(pg_err)
     }
 
@@ -639,7 +659,27 @@ impl AtomRepository for PostgresMemoryStore {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("id", ids);
-        self.delete_from(department, "atoms", w).await
+        let s = self.db.schema(department).await?;
+        let mut tx = self.db.begin().await?;
+        xact_lock(&mut tx, &format!("{s}.atoms")).await?;
+        let doomed = fetch_all(
+            &mut tx,
+            &format!("SELECT id, content FROM {s}.atoms {}", w.sql()),
+            &w.params,
+        )
+        .await?
+        .iter()
+        .map(|r| Ok((get::<String>(r, "id")?, get::<String>(r, "content")?)))
+        .collect::<DomainResult<Vec<_>>>()?;
+        scene_links::mark_deleted(&mut tx, &s, &doomed, to_ms(Utc::now())).await?;
+        let n = execute(
+            &mut tx,
+            &format!("DELETE FROM {s}.atoms {}", w.sql()),
+            &w.params,
+        )
+        .await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(usize::try_from(n).unwrap_or(0))
     }
 
     async fn delete_profile(
@@ -649,6 +689,7 @@ impl AtomRepository for PostgresMemoryStore {
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         profile_where(&mut w, profile);
+        // Clearing a chat memory purges the scenes too: nothing to mark.
         self.delete_from(department, "atoms", w).await
     }
 
@@ -964,11 +1005,12 @@ impl ProfileVersionStore for PostgresMemoryStore {
         .transpose()
     }
 
-    async fn append_scenes(
+    async fn append_scenes_linked(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         versions: Vec<NewSceneVersion>,
+        links: SceneWriteLinks,
     ) -> DomainResult<Vec<SceneVersion>> {
         let s = self.db.schema(department).await?;
         let (team, agent) = profile_ids(profile);
@@ -977,12 +1019,50 @@ impl ProfileVersionStore for PostgresMemoryStore {
         // Concurrent writers of one profile would both derive `latest + 1`
         // and could both claim a free slug.
         xact_lock(&mut tx, &format!("{s}.scenes:{team}/{agent}")).await?;
+        // Atom writes mark the scenes their atoms belong to: they must see
+        // the memberships written here, and these the atoms they write.
+        xact_lock(&mut tx, &format!("{s}.atoms")).await?;
         let mut written = Vec::with_capacity(versions.len());
         for v in versions {
-            written.push(append_scene(&mut tx, &s, &team, &agent, v, now).await?);
+            let stored = append_scene(&mut tx, &s, &team, &agent, v.clone(), now).await?;
+            written.push((v, stored));
         }
+        scene_links::apply_links(&mut tx, &s, &team, &agent, &written, &links, now).await?;
         tx.commit().await.map_err(pg_err)?;
-        Ok(written)
+        Ok(written.into_iter().map(|(_, w)| w).collect())
+    }
+
+    async fn scene_atoms(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+    ) -> DomainResult<Vec<SceneAtom>> {
+        let s = self.db.schema(department).await?;
+        let (team, agent) = profile_ids(profile);
+        scene_links::scene_atoms(&mut *self.db.conn().await?, &s, &team, &agent, scene_id).await
+    }
+
+    async fn stale_marks(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_ids: Option<&[String]>,
+    ) -> DomainResult<Vec<StaleMark>> {
+        let s = self.db.schema(department).await?;
+        let (team, agent) = profile_ids(profile);
+        scene_links::stale_marks(&mut *self.db.conn().await?, &s, &team, &agent, scene_ids).await
+    }
+
+    async fn note_stale_attempt(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        ids: &[i64],
+    ) -> DomainResult<()> {
+        let s = self.db.schema(department).await?;
+        let (team, agent) = profile_ids(profile);
+        scene_links::note_attempt(&mut *self.db.conn().await?, &s, &team, &agent, ids).await
     }
 
     async fn count_scenes(
@@ -1203,6 +1283,12 @@ impl ScopeMigrationStore for PostgresMemoryStore {
             )
             .await?;
         }
+        // Scene membership names the atom's user.
+        run(
+            format!("UPDATE {s}.scene_atoms SET user_id = $1 WHERE user_id = $2 AND scene_id IN (SELECT id FROM {s}.scenes WHERE team_id = $3 AND agent_id = $4)"),
+            &[user, fu, team, agent],
+        )
+        .await?;
         let skill_versions = run(
             format!(
                 "UPDATE {s}.skills SET team_id = $1, owner_agent_id = $2, \

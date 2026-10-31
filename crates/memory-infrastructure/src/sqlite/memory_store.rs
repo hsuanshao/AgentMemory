@@ -13,8 +13,8 @@ use memory_application::ports::memory::{
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{
-    NewPersonaVersion, NewSceneVersion, PersonaOp, PersonaVersion, ProfileScope, SceneOp,
-    SceneVersion,
+    NewPersonaVersion, NewSceneVersion, PersonaOp, PersonaVersion, ProfileScope, SceneAtom,
+    SceneOp, SceneVersion, SceneWriteLinks, StaleMark,
 };
 use memory_domain::retrieval::cosine;
 use memory_domain::scope::{DepartmentId, MemoryScope};
@@ -22,6 +22,7 @@ use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
 use super::db::{db_err, DepartmentPool};
+use super::scene_links;
 use super::sql::{blob_to_embedding, embedding_to_blob, from_ms, like_prefix, to_ms, Where};
 use super::vec_index::{self, KnnFilter, VecIndex};
 use crate::profile_versions::{
@@ -427,6 +428,9 @@ impl AtomRepository for SqliteMemoryStore {
                     Some(_) => tx.query_row("SELECT seq FROM atoms WHERE id = ?", [&atom.id], |r| r.get(0)).optional()?,
                     None => None,
                 };
+                let old: Option<(u32, String)> = tx
+                    .query_row("SELECT version, content FROM atoms WHERE id = ?", [&atom.id], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .optional()?;
                 tx.execute(
                     &format!("INSERT OR REPLACE INTO atoms ({ATOM_COLUMNS}, embedding) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
                     params![
@@ -455,6 +459,10 @@ impl AtomRepository for SqliteMemoryStore {
                 tx.execute("DELETE FROM atoms_fts WHERE id = ?", [&atom.id])?;
                 let text = format!("{} {}", atom.content, atom.background.as_deref().unwrap_or(""));
                 tx.execute("INSERT INTO atoms_fts (tokens, id) VALUES (?, ?)", params![index_text(&text), atom.id])?;
+                if let Some((version, before)) = old.filter(|(v, _)| atom.version > *v) {
+                    let _ = version;
+                    scene_links::mark_rewritten(&tx, &atom.id, atom.version, &before, to_ms(Utc::now()))?;
+                }
                 tx.commit()
             })
             .await
@@ -632,7 +640,7 @@ impl AtomRepository for SqliteMemoryStore {
         let mut w = Where::default();
         scope_where(&mut w, scope);
         w.in_list("id", ids);
-        delete_atoms(&self.pool, self.vec, department, w).await
+        delete_atoms(&self.pool, self.vec, department, w, true).await
     }
 
     async fn delete_profile(
@@ -642,7 +650,8 @@ impl AtomRepository for SqliteMemoryStore {
     ) -> DomainResult<usize> {
         let mut w = Where::default();
         profile_where(&mut w, profile);
-        delete_atoms(&self.pool, self.vec, department, w).await
+        // Clearing a chat memory purges the scenes too: nothing to mark.
+        delete_atoms(&self.pool, self.vec, department, w, false).await
     }
 
     async fn departments(&self) -> DomainResult<Vec<DepartmentId>> {
@@ -784,16 +793,28 @@ fn load_hits(
         .collect())
 }
 
+/// Deletes the atoms `w` selects; with `mark_scenes`, the scenes they
+/// belong to are marked stale.
 async fn delete_atoms(
     pool: &DepartmentPool,
     vec: Option<VecIndex>,
     department: &DepartmentId,
     w: Where,
+    mark_scenes: bool,
 ) -> DomainResult<usize> {
     pool.get(department)?
         .call(move |conn| {
             let tx = conn.transaction()?;
             prepare_index(&tx, vec)?;
+            if mark_scenes {
+                let doomed = tx
+                    .prepare(&format!("SELECT id, content FROM atoms {}", w.sql()))?
+                    .query_map(params_from_iter(w.params.iter()), |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
+                scene_links::mark_deleted(&tx, &doomed, to_ms(Utc::now()))?;
+            }
             if let Some(v) = vec {
                 let seqs = tx
                     .prepare(&format!("SELECT seq FROM atoms {}", w.sql()))?
@@ -1048,11 +1069,12 @@ impl ProfileVersionStore for SqliteMemoryStore {
             .await
     }
 
-    async fn append_scenes(
+    async fn append_scenes_linked(
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
         versions: Vec<NewSceneVersion>,
+        links: SceneWriteLinks,
     ) -> DomainResult<Vec<SceneVersion>> {
         let (team, agent) = profile_ids(profile);
         let now = to_ms(Utc::now());
@@ -1062,11 +1084,55 @@ impl ProfileVersionStore for SqliteMemoryStore {
                 let tx = conn.transaction().map_err(db_err)?;
                 let written = versions
                     .into_iter()
-                    .map(|v| append_scene(&tx, &team, &agent, v, now))
+                    .map(|v| append_scene(&tx, &team, &agent, v.clone(), now).map(|w| (v, w)))
                     .collect::<DomainResult<Vec<_>>>()?;
+                scene_links::apply_links(&tx, &team, &agent, &written, &links, now)
+                    .map_err(db_err)?;
                 tx.commit().map_err(db_err)?;
-                Ok(written)
+                Ok(written.into_iter().map(|(_, w)| w).collect())
             })
+            .await
+    }
+
+    async fn scene_atoms(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+    ) -> DomainResult<Vec<SceneAtom>> {
+        let (team, agent) = profile_ids(profile);
+        let scene_id = scene_id.to_owned();
+        self.pool
+            .get(department)?
+            .call(move |conn| scene_links::scene_atoms(conn, &team, &agent, &scene_id))
+            .await
+    }
+
+    async fn stale_marks(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_ids: Option<&[String]>,
+    ) -> DomainResult<Vec<StaleMark>> {
+        let (team, agent) = profile_ids(profile);
+        let scene_ids = scene_ids.map(<[String]>::to_vec);
+        self.pool
+            .get(department)?
+            .call(move |conn| scene_links::stale_marks(conn, &team, &agent, scene_ids.as_deref()))
+            .await
+    }
+
+    async fn note_stale_attempt(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        ids: &[i64],
+    ) -> DomainResult<()> {
+        let (team, agent) = profile_ids(profile);
+        let ids = ids.to_vec();
+        self.pool
+            .get(department)?
+            .call(move |conn| scene_links::note_attempt(conn, &team, &agent, &ids))
             .await
     }
 
@@ -1257,6 +1323,11 @@ impl ScopeMigrationStore for SqliteMemoryStore {
                 )? + tx.execute(
                     "UPDATE persona_versions SET team_id = ?1, agent_id = ?2 WHERE team_id = ?3 AND agent_id = ?4",
                     params![team, agent, ft, fa],
+                )?;
+                // Scene membership names the atom's user.
+                tx.execute(
+                    "UPDATE scene_atoms SET user_id = ?1 WHERE user_id = ?2 AND scene_id IN (SELECT id FROM scenes WHERE team_id = ?3 AND agent_id = ?4)",
+                    params![user, fu, team, agent],
                 )?;
                 let skill_versions = tx.execute(
                     "UPDATE skills SET team_id = ?1, owner_agent_id = ?2, \

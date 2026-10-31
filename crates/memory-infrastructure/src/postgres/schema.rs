@@ -28,6 +28,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
         "user keys stored as SHA-256 digests; credential audit log",
     ),
     (7, "redaction rules for a team or a user"),
+    (8, "atoms of each scene and why a scene is out of date"),
 ];
 
 /// The latest schema version.
@@ -118,6 +119,26 @@ CREATE TABLE IF NOT EXISTS $S.persona_versions (
     body TEXT NOT NULL, attrs JSONB NOT NULL, author $K, created_at_ms BIGINT NOT NULL,
     PRIMARY KEY (team_id, agent_id, version)
 );
+-- Which atoms each scene was built from: an atom is current in at most one
+-- scene; rows of atoms moved out stay. atom_id has no foreign key, so a
+-- row outlives its atom.
+CREATE TABLE IF NOT EXISTS $S.scene_atoms (
+    scene_id $K NOT NULL REFERENCES $S.scenes(id) ON DELETE CASCADE, atom_id $K NOT NULL,
+    atom_version BIGINT NOT NULL, user_id $K NOT NULL, state $K NOT NULL,
+    scene_version BIGINT NOT NULL, assigned_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (scene_id, atom_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_scene_atoms_current ON $S.scene_atoms(atom_id) WHERE state = 'current';
+CREATE INDEX IF NOT EXISTS ix_scene_atoms_atom ON $S.scene_atoms(atom_id);
+-- Why a scene may be out of date, until L2 or a person deals with it.
+CREATE TABLE IF NOT EXISTS $S.scene_stale (
+    id BIGSERIAL PRIMARY KEY,
+    scene_id $K NOT NULL REFERENCES $S.scenes(id) ON DELETE CASCADE, atom_id $K NOT NULL,
+    reason $K NOT NULL, atom_version BIGINT, before_content TEXT,
+    attempts BIGINT NOT NULL DEFAULT 0, marked_at_ms BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_scene_stale_scene ON $S.scene_stale(scene_id);
+CREATE INDEX IF NOT EXISTS ix_scene_stale_atom ON $S.scene_stale(atom_id);
 
 CREATE TABLE IF NOT EXISTS $S.memory_prompts (
     id $K PRIMARY KEY, layer $K NOT NULL, status $K NOT NULL, created_at_ms BIGINT NOT NULL, doc JSONB NOT NULL

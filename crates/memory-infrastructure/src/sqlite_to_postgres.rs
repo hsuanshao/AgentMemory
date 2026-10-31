@@ -66,8 +66,9 @@ struct Table {
     derived: Derived,
     /// For tables the Postgres DDL seeds: the source row wins.
     upsert: Option<&'static str>,
-    /// A `BIGSERIAL seq` copied verbatim, whose sequence must move past it.
-    copies_seq: bool,
+    /// A `BIGSERIAL` column copied verbatim, whose sequence must move past
+    /// it.
+    serial: Option<&'static str>,
 }
 
 use Kind::{Bool, Int, Json, Text};
@@ -78,7 +79,7 @@ const fn table(name: &'static str, columns: &'static [(&'static str, Kind)]) -> 
         columns,
         derived: Derived::None,
         upsert: None,
-        copies_seq: false,
+        serial: None,
     }
 }
 
@@ -88,7 +89,7 @@ const fn table(name: &'static str, columns: &'static [(&'static str, Kind)]) -> 
 const TABLES: &[Table] = &[
     Table {
         derived: Derived::ConversationTokens,
-        copies_seq: true,
+        serial: Some("seq"),
         ..table(
             "conversations",
             &[
@@ -109,7 +110,7 @@ const TABLES: &[Table] = &[
     },
     Table {
         derived: Derived::AtomTokensAndEmbedding,
-        copies_seq: true,
+        serial: Some("seq"),
         ..table(
             "atoms",
             &[
@@ -169,6 +170,34 @@ const TABLES: &[Table] = &[
             ("created_at_ms", Int),
         ],
     ),
+    table(
+        "scene_atoms",
+        &[
+            ("scene_id", Text),
+            ("atom_id", Text),
+            ("atom_version", Int),
+            ("user_id", Text),
+            ("state", Text),
+            ("scene_version", Int),
+            ("assigned_at_ms", Int),
+        ],
+    ),
+    Table {
+        serial: Some("id"),
+        ..table(
+            "scene_stale",
+            &[
+                ("id", Int),
+                ("scene_id", Text),
+                ("atom_id", Text),
+                ("reason", Text),
+                ("atom_version", Int),
+                ("before_content", Text),
+                ("attempts", Int),
+                ("marked_at_ms", Int),
+            ],
+        )
+    },
     table(
         "persona_versions",
         &[
@@ -539,14 +568,14 @@ async fn migrate_department(
         let (copied, dropped) = copy_table(source, &mut tx, &s.to_string(), t, pg.dims()).await?;
         report.embeddings_copied += copied;
         report.embeddings_dropped += dropped;
-        if t.copies_seq {
+        if let Some(column) = t.serial {
             execute(
                 &mut tx,
                 &format!(
-                    "SELECT setval(pg_get_serial_sequence(?, 'seq'), COALESCE((SELECT max(seq) FROM {s}.{}), 0) + 1, false)",
+                    "SELECT setval(pg_get_serial_sequence(?, ?), COALESCE((SELECT max({column}) FROM {s}.{}), 0) + 1, false)",
                     t.name
                 ),
-                &args![format!("{s}.{}", t.name)],
+                &args![format!("{s}.{}", t.name), column],
             )
             .await?;
         }

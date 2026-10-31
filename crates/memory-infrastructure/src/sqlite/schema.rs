@@ -60,6 +60,26 @@ CREATE TABLE IF NOT EXISTS persona_versions (
     body TEXT NOT NULL, attrs TEXT NOT NULL, author TEXT, created_at_ms INTEGER NOT NULL,
     PRIMARY KEY (team_id, agent_id, version)
 );
+-- Which atoms each scene was built from: an atom is current in at most one
+-- scene; rows of atoms moved out stay. atom_id has no foreign key, so a
+-- row outlives its atom.
+CREATE TABLE IF NOT EXISTS scene_atoms (
+    scene_id TEXT NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, atom_id TEXT NOT NULL,
+    atom_version INTEGER NOT NULL, user_id TEXT NOT NULL, state TEXT NOT NULL,
+    scene_version INTEGER NOT NULL, assigned_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (scene_id, atom_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_scene_atoms_current ON scene_atoms(atom_id) WHERE state = 'current';
+CREATE INDEX IF NOT EXISTS ix_scene_atoms_atom ON scene_atoms(atom_id);
+-- Why a scene may be out of date, until L2 or a person deals with it.
+CREATE TABLE IF NOT EXISTS scene_stale (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scene_id TEXT NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, atom_id TEXT NOT NULL,
+    reason TEXT NOT NULL, atom_version INTEGER, before_content TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0, marked_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_scene_stale_scene ON scene_stale(scene_id);
+CREATE INDEX IF NOT EXISTS ix_scene_stale_atom ON scene_stale(atom_id);
 
 CREATE TABLE IF NOT EXISTS memory_prompts (
     id TEXT PRIMARY KEY, layer TEXT NOT NULL, status TEXT NOT NULL, created_at_ms INTEGER NOT NULL, doc TEXT NOT NULL
@@ -199,7 +219,11 @@ CREATE INDEX IF NOT EXISTS ix_profile_due ON profile_states(l2_due_ms) WHERE l2_
 ///    `meta_redaction_rules.doc`). Nothing to convert, but an older
 ///    memory-server must not run on it: it would apply them to every team
 ///    and drop their level when it saves one.
-pub const SCHEMA_VERSION: i64 = 7;
+/// 8. Which atoms each scene was built from (`scene_atoms`) and why a scene
+///    may be out of date (`scene_stale`). Nothing to convert, but an older
+///    memory-server must not run on it: its atom writes and deletes would
+///    leave scenes unmarked.
+pub const SCHEMA_VERSION: i64 = 8;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
