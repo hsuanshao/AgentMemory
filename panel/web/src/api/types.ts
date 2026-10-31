@@ -165,8 +165,12 @@ export interface AtomicUpdateResult {
 
 export interface ScenarioEntry {
   path: string;
+  scene_id?: string;
   summary?: string | null;
   version: number;
+  /** The scene may state something its memories no longer say. */
+  stale?: boolean;
+  stale_reasons?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -178,10 +182,39 @@ export interface ScenarioList {
 
 export interface ScenarioFile {
   path: string;
+  scene_id?: string | null;
   version?: number | null;
   content: string | null;
+  stale?: boolean;
+  stale_reasons?: number;
   created_at: string | null;
   updated_at: string | null;
+}
+
+/** Why a scene may be out of date because of one memory. */
+export type StaleReason = "rewritten" | "deleted" | "moved_out" | "changed_during_run";
+
+/** One of the caller's memories (L1 atoms) a scene was built from. */
+export interface ScenarioAtom {
+  atom_id: string;
+  state: "current" | "moved_out";
+  /** The version the scene was written from. */
+  atom_version: number;
+  /** The version stored now; null once deleted. */
+  current_version: number | null;
+  content: string | null;
+  type: string | null;
+  stale_reasons: StaleReason[];
+}
+
+export interface ScenarioAtoms {
+  scene_id: string;
+  path: string;
+  stale: boolean;
+  stale_reasons: number;
+  atoms: ScenarioAtom[];
+  /** Other members' memories in this shared scene, counted only. */
+  hidden: number;
 }
 
 export interface CoreMemory {

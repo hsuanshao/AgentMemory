@@ -187,7 +187,7 @@ Metadata 平面有自己更細的規則（`memory-domain/src/meta/access.rs`）�
 | --- | --- | --- | --- |
 | L0 對話 | 寫入時的原始回合（只有文字） | team / agent / user / session | `conversations` 資料列 |
 | L1 atom | 蒸餾出的事實：`episodic`、`persona`、`instruction` | team / agent / user | `atoms` 資料列 + 全文與向量索引 |
-| L2 場景 | 主題文件（`scene_blocks/*.md`），帶熱度與摘要 | team / agent | 只追加的 `scenes` + `scene_versions` |
+| L2 場景 | 主題文件（`scene_blocks/*.md`），帶熱度與摘要 | team / agent | 只追加的 `scenes` + `scene_versions`；`scene_atoms`（由哪些 atom、哪個版本寫成）+ `scene_stale`（可能過期的原因） |
 | L3 persona | 一份敘事式使用者輪廓（`persona.md`） | team / agent | 只追加的 `persona_versions` |
 | Skills | 從大量使用工具的回合蒸餾出的可重用流程 | team / agent | `skills` + 資源檔 |
 
@@ -206,6 +206,8 @@ flowchart LR
 ```
 
 **Skill 萃取只提案，由人決定。** 大量使用工具的回合裡有網頁、檔案和指令輸出，任何人都能在裡面寫指令。所以模型拿到的是一份 JSON 物件（它可以修改的該 agent 的 skill、主 agent 的 hint，以及封存的對話；裡面的內容無法結束資料區，也無法冒充指示），只能修改提供給它看的、該 agent 的 skill（最多 20 個：超過時，先挑搜尋結果中與這段對話最相關的，再補上最近的），而且它建立或修改的內容都會先成為提案（`skill/proposal/*`、Panel 的 Skills 頁），等對話的使用者本人（限於他能使用的 agent）、該 team 的 admin，或系統管理員核准後才生效。誰能審核依記憶的規則判斷（`authorize_proposal_review`，與 `authorize_memory_scope` 放在一起），因為提案是從某人的對話萃取出來的：能看營運狀態的 team leader 不是審核者，私人 agent 的提案只屬於它的擁有者與 team admin。規則依審核當下的 agent 狀態判斷，所以已封存的 agent 沒有人能決定。同一個 task 的決定會持有一把鎖（`skill-proposal:<部門>:<task>`），兩個決定同時進來也不會互相覆蓋。核准時會確認 skill 在提案之後沒有被改過。提案和其他寫入一樣，存下前會先遮罩；未決定的提案會在 `skill.extraction.proposalTtlDays`（預設 30 天，`AGENT_MEMORY_SKILL_PROPOSAL_TTL_DAYS`，0 表示永不過期）之後過期。`skill.extraction.requireApproval: false`（`AGENT_MEMORY_SKILL_REQUIRE_APPROVAL=false`）會像 0.4.2 之前一樣直接套用，另外兩項檢查仍然有效。
+
+**場景知道自己由哪些 atom 寫成，並會保持最新。** L2 把這一批 atom 以編號交給模型，每個場景操作回覆它現在寫進了哪些編號。超出這批範圍、或被兩個操作同時認領的編號會被丟棄，其餘的連同場景版本一起存下（`scene_atoms`），版本是 L2 讀到的那一版：一個 atom 同時最多屬於一個場景。之後，這類 atom 只要有變動，store 就在同一個交易裡標記它的場景（`scene_stale`）：被改寫（L1 去重或更正、`atomic/update`）、被刪除（L1 合併、`atomic/delete`）、被放到別的場景，或在放入它的那一輪等待模型回覆時被改寫。在 Postgres 上，場景寫入會取得 atom 的鎖，所以放入與改寫不會互相錯過。下一輪 L2 會拿到過期場景，以及每個 atom 變動前與現在的文字；即使沒有新 atom 也會執行。它改寫的場景、或回覆不需修改的場景，標記會被清掉；一直被留下的標記，過幾輪後就不再交給 L2，等人來處理（[DISTILLATION §9](ops/DISTILLATION.zh-tw.md#9-場景與它的-atom)）。`scenario/atoms` 只把場景的 atom 顯示給它所屬的使用者，其他使用者的只計數：即使場景是共用的，atom 仍是它所屬使用者的記憶。
 
 觸發參數來自 `config/memory-core.example.yaml`（`memory.pipeline.*`、`memory.persona.triggerEveryN`）。
 

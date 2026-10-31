@@ -1245,6 +1245,480 @@ async fn spawn_two_skill_llm() -> String {
     spawn_skill_llm(r###"{"actions":[{"action":"create","name":"deploy-steps","content":"---\nname: deploy-steps\ndescription: How to deploy\n---\n1. Build\n2. Ship"},{"action":"create","name":"rollback-steps","content":"---\nname: rollback-steps\ndescription: How to roll back\n---\n1. Restore"}],"summary":"two skills"}"###).await
 }
 
+/// What the scene fake LLM has seen and how it answers stale scenes.
+#[derive(Default)]
+struct SceneLlm {
+    /// Every L2 input, in order.
+    inputs: std::sync::Mutex<Vec<Value>>,
+    /// Answer stale scenes with nothing, so their marks run out of tries.
+    ignore_stale: std::sync::atomic::AtomicBool,
+    /// Answer stale-only runs with something that is not a scene plan.
+    garbage_stale: std::sync::atomic::AtomicBool,
+}
+
+/// L2 places every new memory in one scene; a stale scene is rewritten
+/// with the new memories in it, unless told to ignore stale scenes.
+async fn spawn_scene_llm(llm: Arc<SceneLlm>) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/v1/chat/completions",
+                post(move |Json(req): Json<Value>| {
+                    let llm = Arc::clone(&llm);
+                    async move {
+                        let system = req["messages"][0]["content"].as_str().unwrap_or_default();
+                        if !system.starts_with("You are a Memory Consolidation") {
+                            return fake_llm(Json(req)).await;
+                        }
+                        let text = req["messages"][1]["content"].as_str().unwrap_or_default();
+                        let start = text.find('{').unwrap();
+                        let end = text.rfind('}').unwrap();
+                        let input: Value = serde_json::from_str(&text[start..=end]).unwrap();
+                        llm.inputs.lock().unwrap().push(input.clone());
+                        let numbers: Vec<Value> = input["new_memories"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|m| m["n"].clone())
+                            .collect();
+                        let stale = input["stale_scenes"].as_array().unwrap();
+                        if !stale.is_empty()
+                            && llm.garbage_stale.load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            return Json(json!({"choices": [{"message": {"role": "assistant", "content": "I could not decide."}}]}));
+                        }
+                        let plan = if let Some(scene) = stale.first() {
+                            if llm.ignore_stale.load(std::sync::atomic::Ordering::SeqCst) {
+                                json!({"operations": []})
+                            } else {
+                                json!({"operations": [{"action": "update", "file": scene["file"], "summary": "How the user ships releases",
+                                    "content": "## Core narrative\nBrought up to date.", "atoms": numbers}]})
+                            }
+                        } else {
+                            json!({"operations": [{"action": "create", "file": "Release Planning", "summary": "How the user ships releases",
+                                "content": "## Core narrative\nRuns integration tests, then releases on Monday.", "atoms": numbers}]})
+                        };
+                        Json(json!({"choices": [{"message": {"role": "assistant", "content": plan.to_string()}}]}))
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap()
+    });
+    format!("http://{addr}/v1")
+}
+
+/// L2 records which memories a scene holds; rewriting or deleting one
+/// marks the scene stale, the next L2 run is told what changed and settles
+/// it (even with no new memories), and marks L2 keeps leaving stop being
+/// sent after `staleMaxAttempts` runs. Each user sees only their atoms.
+#[tokio::test(flavor = "multi_thread")]
+async fn scenes_record_their_memories_and_l2_brings_stale_ones_up_to_date() {
+    let llm = Arc::new(SceneLlm::default());
+    let base_url = spawn_scene_llm(Arc::clone(&llm)).await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.memory.pipeline.l2_max_interval_seconds = 0;
+    })
+    .await;
+    client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "We release v2 next Monday; I always run integration tests first."},
+                {"role": "assistant", "content": "Noted, I will remind you."}
+            ]})),
+        )
+        .await;
+    client
+        .wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1)
+        .await;
+    let view = || async {
+        client
+            .call(
+                "/v3/scenario/atoms",
+                client.scoped(json!({"path": "Release-Planning.md"})),
+            )
+            .await["data"]
+            .clone()
+    };
+    let placed = view().await;
+    assert_eq!(placed["stale"], false, "{placed}");
+    assert_eq!(placed["hidden"], 0, "{placed}");
+    let atoms = placed["atoms"].as_array().unwrap();
+    assert_eq!(atoms.len(), 2, "{placed}");
+    assert!(atoms
+        .iter()
+        .all(|a| a["state"] == "current" && a["atom_version"] == a["current_version"]));
+    // The admin is another user: the scene's atoms are counted, not shown.
+    let theirs = client
+        .call_as(
+            "/v3/scenario/atoms",
+            &client.admin_key,
+            json!({"team_id": client.team_id, "agent_id": client.agent_id, "path": "Release-Planning.md"}),
+        )
+        .await;
+    assert_eq!(theirs["data"]["atoms"], json!([]), "{theirs}");
+    assert_eq!(theirs["data"]["hidden"], 2, "{theirs}");
+    let ls = client
+        .call("/v3/scenario/ls", client.scoped(json!({})))
+        .await;
+    assert_eq!(ls["data"]["entries"][0]["stale"], false, "{ls}");
+
+    let monday = atoms
+        .iter()
+        .find(|a| a["content"].as_str().unwrap().contains("Monday"))
+        .unwrap()["atom_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let tests = atoms
+        .iter()
+        .find(|a| a["atom_id"] != monday.as_str())
+        .unwrap()["atom_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let l2_runs = || llm.inputs.lock().unwrap().len();
+    let settled = |id: &str| {
+        let id = id.to_owned();
+        async move {
+            for _ in 0..100 {
+                let v = view().await;
+                let a = v["atoms"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|a| a["atom_id"] == id.as_str())
+                    .cloned();
+                if let Some(a) = a.filter(|_| v["stale"] == false) {
+                    return (v, a);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            panic!("scene was not brought up to date");
+        }
+    };
+
+    // Rewriting an atom through the API: L2 is told before and after,
+    // rewrites the scene and places the atom at its new version.
+    let runs = l2_runs();
+    let updated = client
+        .call(
+            "/v3/atomic/update",
+            client.scoped(
+                json!({"id": monday, "content": "The user plans to release v2 next Wednesday"}),
+            ),
+        )
+        .await;
+    assert_eq!(updated["code"], 0, "{updated}");
+    let (_, atom) = settled(&monday).await;
+    assert_eq!(atom["atom_version"], 2, "{atom}");
+    assert_eq!(atom["current_version"], 2, "{atom}");
+    let inputs = llm.inputs.lock().unwrap()[runs..].to_vec();
+    let reason = inputs
+        .iter()
+        .flat_map(|i| i["stale_scenes"].as_array().unwrap().clone())
+        .flat_map(|s| s["reasons"].as_array().unwrap().clone())
+        .next()
+        .expect("L2 was told the scene is stale");
+    assert_eq!(reason["kind"], "rewritten", "{reason}");
+    assert_eq!(reason["before"], "The user plans to release v2 next Monday");
+    assert_eq!(
+        reason["after"],
+        "The user plans to release v2 next Wednesday"
+    );
+
+    // Deleting one: a run with no new memories still brings it up to date.
+    let runs = l2_runs();
+    let deleted = client
+        .call("/v3/atomic/delete", client.scoped(json!({"ids": [tests]})))
+        .await;
+    assert_eq!(deleted["data"]["deleted_count"], 1, "{deleted}");
+    let (_, gone) = settled(&tests).await;
+    assert_eq!(gone["current_version"], Value::Null, "{gone}");
+    let inputs = llm.inputs.lock().unwrap()[runs..].to_vec();
+    let stale_only = inputs
+        .iter()
+        .find(|i| i["stale_scenes"].as_array().is_some_and(|s| !s.is_empty()))
+        .expect("an L2 run for the deletion");
+    assert_eq!(stale_only["new_memories"], json!([]), "{stale_only}");
+    assert_eq!(
+        stale_only["stale_scenes"][0]["reasons"][0]["kind"],
+        "deleted"
+    );
+
+    // L2 that keeps leaving a stale scene is given it three times, then
+    // no more; the mark stays for a person.
+    llm.ignore_stale
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let runs = l2_runs();
+    client
+        .call(
+            "/v3/atomic/update",
+            client.scoped(
+                json!({"id": monday, "content": "The user plans to release v2 next Thursday"}),
+            ),
+        )
+        .await;
+    let department =
+        memory_domain::scope::SegmentId::parse("department", &client.department).unwrap();
+    let profile = memory_domain::profile::ProfileScope {
+        team_id: memory_domain::scope::SegmentId::parse("team_id", &client.team_id).unwrap(),
+        agent_id: memory_domain::scope::SegmentId::parse("agent_id", &client.agent_id).unwrap(),
+    };
+    let mut attempts = 0;
+    for _ in 0..100 {
+        let marks = client
+            .state
+            .services
+            .memory
+            .stale_marks(&department, &profile, None)
+            .await
+            .unwrap();
+        attempts = marks.first().map_or(0, |m| m.attempts);
+        if attempts >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(attempts, 3);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let given = llm.inputs.lock().unwrap()[runs..]
+        .iter()
+        .filter(|i| i["stale_scenes"].as_array().is_some_and(|s| !s.is_empty()))
+        .count();
+    assert_eq!(given, 3, "the mark is given three times, then no more");
+    assert_eq!(view().await["stale"], true);
+}
+
+/// What a scene's L2 run is told passes the atom owner's redaction as it
+/// is now: a rule added after the atom was written covers the old text
+/// kept for the scene. Removing a stale scene leaves L2 nothing to do, so
+/// no more runs are made for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_scenes_follow_current_redaction_and_removal_ends_them() {
+    let llm = Arc::new(SceneLlm::default());
+    let base_url = spawn_scene_llm(Arc::clone(&llm)).await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.memory.pipeline.l2_max_interval_seconds = 0;
+        // Marks stay eligible, so only the removal can end the runs.
+        config.memory.l2.stale_max_attempts = 1000;
+    })
+    .await;
+    let (monday, _) = placed_atoms(&client).await;
+    let l2_runs = || llm.inputs.lock().unwrap().len();
+    let stale_reasons = |from: usize| {
+        llm.inputs.lock().unwrap()[from..]
+            .iter()
+            .flat_map(|i| i["stale_scenes"].as_array().unwrap().clone())
+            .flat_map(|s| s["reasons"].as_array().unwrap().clone())
+            .collect::<Vec<Value>>()
+    };
+    let update = |content: &'static str| {
+        let client = &client;
+        let monday = monday.clone();
+        async move {
+            let updated = client
+                .call(
+                    "/v3/atomic/update",
+                    client.scoped(json!({"id": monday, "content": content})),
+                )
+                .await;
+            assert_eq!(updated["code"], 0, "{updated}");
+        }
+    };
+    let wait_reasons = |from: usize| async move {
+        for _ in 0..100 {
+            let r = stale_reasons(from);
+            if !r.is_empty() {
+                return r;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("L2 was not told the scene is stale");
+    };
+
+    // Stored before any rule: the atom says EMP-1234, and the scene is
+    // brought up to date.
+    let runs = l2_runs();
+    update("Employee EMP-1234 ships the release").await;
+    wait_reasons(runs).await;
+
+    // The user adds a rule, then rewrites the atom: the old text kept for
+    // the scene, and what L2 is told, follow the rule.
+    let rule = client
+        .call(
+            "/v3/meta/redaction-rule/create",
+            json!({"user_id": client.user_id, "kind": "emp-id", "pattern": r"\bEMP-\d{4}\b"}),
+        )
+        .await;
+    assert_eq!(rule["code"], 0, "{rule}");
+    llm.ignore_stale
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let runs = l2_runs();
+    update("Employee public replacement ships the release").await;
+    let reasons = wait_reasons(runs).await;
+    let told = serde_json::to_string(&reasons).unwrap();
+    assert!(!told.contains("EMP-1234"), "{told}");
+    assert_eq!(
+        reasons[0]["before"], "Employee [REDACTED:emp-id] ships the release",
+        "{told}"
+    );
+    let (department, profile) = profile_of(&client);
+    let marks = client
+        .state
+        .services
+        .memory
+        .stale_marks(&department, &profile, None)
+        .await
+        .unwrap();
+    assert!(
+        marks.iter().all(|m| !m
+            .before_content
+            .as_deref()
+            .unwrap_or_default()
+            .contains("EMP-1234")),
+        "the stored copy is redacted too: {marks:?}"
+    );
+
+    // Removing the stale scene: its marks go, and L2 is not run for it
+    // again (the mark would otherwise stay eligible for 1000 runs).
+    let removed = client
+        .call(
+            "/v3/scenario/rm",
+            client.scoped(json!({"path": "Release-Planning.md"})),
+        )
+        .await;
+    assert_eq!(removed["data"]["removed"], 1, "{removed}");
+    assert!(client
+        .state
+        .services
+        .memory
+        .stale_marks(&department, &profile, None)
+        .await
+        .unwrap()
+        .is_empty());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let runs = l2_runs();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(l2_runs(), runs, "no L2 run after the scene was removed");
+}
+
+/// A model call that answers something unusable counts toward
+/// `staleMaxAttempts`, like a run that leaves the scene: the mark is given
+/// three times, then no more.
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_l2_runs_use_up_a_stale_marks_tries() {
+    let llm = Arc::new(SceneLlm::default());
+    let base_url = spawn_scene_llm(Arc::clone(&llm)).await;
+    let (_data, client) = start_with(|config| {
+        config.llm.base_url = base_url;
+        config.llm.api_key = "fake".into();
+        config.memory.pipeline.l2_max_interval_seconds = 0;
+    })
+    .await;
+    let (monday, _) = placed_atoms(&client).await;
+    llm.garbage_stale
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let runs = llm.inputs.lock().unwrap().len();
+    let updated = client
+        .call(
+            "/v3/atomic/update",
+            client.scoped(
+                json!({"id": monday, "content": "The user plans to release v2 next Friday"}),
+            ),
+        )
+        .await;
+    assert_eq!(updated["code"], 0, "{updated}");
+    let (department, profile) = profile_of(&client);
+    // A failed job is retried after 5 s, then 15 s: the third try comes
+    // about 20 s in.
+    let mut attempts = 0;
+    let mut last = String::new();
+    for _ in 0..400 {
+        let marks = client
+            .state
+            .services
+            .memory
+            .stale_marks(&department, &profile, None)
+            .await
+            .unwrap();
+        attempts = marks.first().map_or(0, |m| m.attempts);
+        if attempts >= 3 {
+            break;
+        }
+        last = format!("{marks:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let seen: Vec<Value> = llm.inputs.lock().unwrap()[runs..].to_vec();
+    assert_eq!(attempts, 3, "marks: {last}\ninputs: {seen:?}");
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let given = llm.inputs.lock().unwrap()[runs..]
+        .iter()
+        .filter(|i| i["stale_scenes"].as_array().is_some_and(|s| !s.is_empty()))
+        .count();
+    assert_eq!(given, 3, "failed runs count: three, then no more");
+}
+
+/// Adds a turn, waits for L2 to place its two atoms in `Release-Planning.md`,
+/// and returns the ids of the Monday atom and the other one.
+async fn placed_atoms(client: &Client) -> (String, String) {
+    client
+        .call(
+            "/v3/conversation/add",
+            client.scoped(json!({"session_id": "s1", "messages": [
+                {"role": "user", "content": "We release v2 next Monday; I always run integration tests first."},
+                {"role": "assistant", "content": "Noted, I will remind you."}
+            ]})),
+        )
+        .await;
+    client
+        .wait_for(|s| s["l1"]["total"] == 2 && s["l2"] == 1)
+        .await;
+    let placed = client
+        .call(
+            "/v3/scenario/atoms",
+            client.scoped(json!({"path": "Release-Planning.md"})),
+        )
+        .await;
+    let atoms = placed["data"]["atoms"].as_array().unwrap();
+    assert_eq!(atoms.len(), 2, "{placed}");
+    let id = |monday: bool| {
+        atoms
+            .iter()
+            .find(|a| a["content"].as_str().unwrap().contains("Monday") == monday)
+            .unwrap()["atom_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    (id(true), id(false))
+}
+
+/// The department and profile of `client`'s team and agent.
+fn profile_of(
+    client: &Client,
+) -> (
+    memory_domain::scope::DepartmentId,
+    memory_domain::profile::ProfileScope,
+) {
+    (
+        memory_domain::scope::SegmentId::parse("department", &client.department).unwrap(),
+        memory_domain::profile::ProfileScope {
+            team_id: memory_domain::scope::SegmentId::parse("team_id", &client.team_id).unwrap(),
+            agent_id: memory_domain::scope::SegmentId::parse("agent_id", &client.agent_id).unwrap(),
+        },
+    )
+}
+
 /// A proposal is stored redacted, like any other write: a credential the
 /// model copied from the conversation never reaches the review list.
 #[tokio::test(flavor = "multi_thread")]

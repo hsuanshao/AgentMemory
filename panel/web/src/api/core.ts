@@ -31,6 +31,7 @@ import type {
   RedactionRule,
   RedactionRuleListing,
   RedactionTestResult,
+  ScenarioAtoms,
   ScenarioFile,
   ScenarioList,
   Scope,
@@ -98,6 +99,7 @@ export function createCoreApi(client: PanelClient) {
       read: (scope: Scope, path: string) => call<ScenarioFile>("scenario/read", { ...scope, path }),
       write: (scope: Scope, path: string, content: string, summary?: string) =>
         call<WriteResult & { path: string }>("scenario/write", { ...scope, path, content, summary }),
+      atoms: (scope: Scope, path: string) => call<ScenarioAtoms>("scenario/atoms", { ...scope, path }),
     },
 
     core: {

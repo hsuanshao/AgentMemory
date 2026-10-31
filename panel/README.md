@@ -25,7 +25,7 @@ browser ──► panel/server (Hono BFF, :8125) ──► MemoryCore (:8420)
 | --- | --- |
 | Login | `meta/auth/verify`: checks `data.valid`, because an invalid key still returns HTTP 200 |
 | Dashboard (auto-refresh every 5 s, can be paused) | `GET /health`, `pipeline/status`, `stats/overview`<br>Distillation card: `memory-generation-log/summary`, `memory-generation-log/list` (latest failures), `pipeline/dead-letter/list`; system admins: `pipeline/dead-letter/redrive` |
-| Memory browser (team/agent/user scope) | L0 `conversation/{query,search,delete}`<br>L1 `atomic/{query,search,update,delete}`<br>L2 `scenario/{ls,read,write}`<br>L3 `core/{read,write}`<br>Recall test: `recall` |
+| Memory browser (team/agent/user scope) | L0 `conversation/{query,search,delete}`<br>L1 `atomic/{query,search,update,delete}`<br>L2 `scenario/{ls,read,write,atoms}` (stale scenarios, the caller's atoms)<br>L3 `core/{read,write}`<br>Recall test: `recall` |
 | Generation logs (`#/logs?status=failed` opens filtered) | `memory-generation-log/{list,get}` |
 | Skills | `skill/{list,search,get,versions}` |
 | Redaction: all teams / team / user | `meta/redaction-rule/{list,create,update,disable,enable,test}` with no id, a `team_id` or a `user_id`; Core decides who may read and change each level |

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Scope } from "../../api";
+import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { cx } from "../../components/cx";
@@ -10,6 +11,7 @@ import { useIsAdmin } from "../auth/session";
 import { useAsync } from "../../hooks/useAsync";
 import { formatTime } from "../../lib/format";
 import { useT, withCount } from "../../i18n";
+import { atomStatus, reasonKey, sortAtoms } from "./sceneAtoms";
 import { buildScenarioTree, type TreeRow } from "./scenarioTree";
 
 export function L2Tab({ scope }: { scope: Scope }) {
@@ -50,16 +52,19 @@ export function L2Tab({ scope }: { scope: Scope }) {
         </ul>
       </Card>
       {selected || creating ? (
-        <ScenarioEditor
-          key={selected ?? "new"}
-          scope={scope}
-          path={selected}
-          onSaved={(path) => {
-            setCreating(false);
-            setSelected(path);
-            void listing.reload();
-          }}
-        />
+        <div className="space-y-4">
+          <ScenarioEditor
+            key={selected ?? "new"}
+            scope={scope}
+            path={selected}
+            onSaved={(path) => {
+              setCreating(false);
+              setSelected(path);
+              void listing.reload();
+            }}
+          />
+          {selected && <SceneAtoms key={selected} scope={scope} path={selected} stamp={listing.data} />}
+        </div>
       ) : (
         <Card>
           <EmptyState>{t("l2.selectHint")}</EmptyState>
@@ -70,6 +75,7 @@ export function L2Tab({ scope }: { scope: Scope }) {
 }
 
 function TreeItem({ row, active, onSelect }: { row: TreeRow; active: boolean; onSelect: () => void }) {
+  const t = useT();
   const indent = { paddingLeft: `${row.depth * 14 + 8}px` };
   if (row.isDir) {
     return (
@@ -88,6 +94,11 @@ function TreeItem({ row, active, onSelect }: { row: TreeRow; active: boolean; on
         title={row.entry?.summary ?? row.path}
       >
         <span className="mono">{row.name}</span>
+        {row.entry?.stale && (
+          <Badge tone="warn" className="ml-2">
+            {t("l2.stale")}
+          </Badge>
+        )}
         {row.entry?.summary && <span className="ml-2 text-xxs text-muted">{row.entry.summary}</span>}
       </button>
     </li>
@@ -109,6 +120,9 @@ function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string |
     const target = draftPath.trim();
     await api.scenario.write(scope, target, content, summary.trim() || undefined);
     setSaved(true);
+    // Saved under the same path, the editor is not remounted: read the file
+    // again so the version and the stale notice match what was just saved.
+    if (target === path) await file.reload();
     onSaved(target);
   });
 
@@ -136,6 +150,7 @@ function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string |
         <ErrorBanner error={file.error ?? save.error} />
         {saved && !save.busy && <Notice tone="ok">{t("l2.saved")}</Notice>}
         {missing && <Notice>{t("l2.missing")}</Notice>}
+        {file.data?.stale && <Notice tone="warn">{t("l2.staleNotice", { count: file.data.stale_reasons ?? 0 })}</Notice>}
         {file.data && (
           <div className="mono text-muted">
             {t("l2.meta", {
@@ -155,6 +170,48 @@ function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string |
         </Field>
         <TextArea rows={22} value={content} onChange={(e) => (setContent(e.target.value), setSaved(false))} />
       </div>
+    </Card>
+  );
+}
+
+/**
+ * The caller's atoms this scenario was built from. Others' atoms in the
+ * shared scenario are only counted. Reloads when the listing does, since a
+ * save settles the scenario's stale reasons.
+ */
+function SceneAtoms({ scope, path, stamp }: { scope: Scope; path: string; stamp: unknown }) {
+  const t = useT();
+  const view = useAsync(() => api.scenario.atoms(scope, path), [scope, path, stamp]);
+  const atoms = useMemo(() => sortAtoms(view.data?.atoms ?? []), [view.data]);
+  return (
+    <Card title={withCount(t("l2.atoms"), view.data?.atoms.length)}>
+      <ErrorBanner error={view.error} onRetry={view.reload} />
+      {view.loading && !view.data && <Spinner />}
+      {view.data && atoms.length === 0 && <EmptyState>{t("l2.atomsEmpty")}</EmptyState>}
+      <ul className="space-y-2">
+        {atoms.map((atom) => {
+          const status = atomStatus(atom);
+          return (
+            <li key={atom.atom_id} className="rounded-sm border border-line p-2">
+              <div className="flex flex-wrap items-center gap-2 text-xxs text-muted">
+                <Badge tone={status.tone}>{t(status.key)}</Badge>
+                {atom.type && <span className="mono">{atom.type}</span>}
+                {atom.current_version !== null && (
+                  <span className="mono">{t("l2.atomVersions", { seen: atom.atom_version, now: atom.current_version })}</span>
+                )}
+                {atom.stale_reasons.map((reason) => (
+                  <Badge key={reason} tone="warn">
+                    {t(reasonKey(reason))}
+                  </Badge>
+                ))}
+              </div>
+              {atom.content && <p className="mt-1 whitespace-pre-wrap">{atom.content}</p>}
+              <div className="mono mt-1 text-xxs text-muted">{atom.atom_id}</div>
+            </li>
+          );
+        })}
+      </ul>
+      {view.data && view.data.hidden > 0 && <p className="mt-2 text-xxs text-muted">{t("l2.atomsHidden", { count: view.data.hidden })}</p>}
     </Card>
   );
 }

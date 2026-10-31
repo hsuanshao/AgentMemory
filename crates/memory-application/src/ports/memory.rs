@@ -5,12 +5,25 @@ use chrono::{DateTime, Utc};
 use memory_domain::error::DomainResult;
 use memory_domain::memory::{AtomType, AtomicMemory, ConversationMessage};
 use memory_domain::profile::{
-    NewPersonaVersion, NewSceneVersion, PersonaVersion, ProfileScope, SceneVersion,
+    NewPersonaVersion, NewSceneVersion, PersonaVersion, ProfileScope, SceneAtom, SceneVersion,
+    SceneWriteLinks, StaleMark,
 };
 use memory_domain::scope::{DepartmentId, MemoryScope};
+use std::sync::Arc;
+
 use serde::Serialize;
 
 use crate::common::{Page, Scored, TimeRange};
+
+/// Applied to the text of an atom a store copies into a stale mark (the
+/// scene's "before"): the atom owner's redaction as it is now, so a rule
+/// added since the atom was written also covers the copy.
+pub type TextFilter = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
+/// A filter that keeps the text, for writes no redaction rule applies to.
+pub fn keep_text() -> TextFilter {
+    Arc::new(str::to_owned)
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ConversationFilter {
@@ -104,12 +117,27 @@ pub trait ConversationRepository: Send + Sync {
 /// L1 storage with keyword and optional vector search.
 #[async_trait]
 pub trait AtomRepository: Send + Sync {
+    /// Stores an atom. A higher version than the stored one marks the
+    /// scene the atom belongs to stale, keeping the old text through
+    /// `before`.
+    async fn upsert_filtered(
+        &self,
+        department: &DepartmentId,
+        atom: &AtomicMemory,
+        embedding: Option<&[f32]>,
+        before: TextFilter,
+    ) -> DomainResult<()>;
+    /// [`Self::upsert_filtered`] keeping the old text as it is. Writes
+    /// that may rewrite a member's atom use `upsert_filtered`.
     async fn upsert(
         &self,
         department: &DepartmentId,
         atom: &AtomicMemory,
         embedding: Option<&[f32]>,
-    ) -> DomainResult<()>;
+    ) -> DomainResult<()> {
+        self.upsert_filtered(department, atom, embedding, keep_text())
+            .await
+    }
     async fn get(&self, department: &DepartmentId, id: &str) -> DomainResult<Option<AtomicMemory>>;
     async fn query(
         &self,
@@ -149,12 +177,25 @@ pub trait AtomRepository: Send + Sync {
         scope: Option<&MemoryScope>,
         filter: &AtomFilter,
     ) -> DomainResult<usize>;
+    /// Deletes atoms of `scope`, marking their scenes stale with the text
+    /// passed through `before`.
+    async fn delete_filtered(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        ids: &[String],
+        before: TextFilter,
+    ) -> DomainResult<usize>;
+    /// [`Self::delete_filtered`] keeping the text as it is.
     async fn delete(
         &self,
         department: &DepartmentId,
         scope: &MemoryScope,
         ids: &[String],
-    ) -> DomainResult<usize>;
+    ) -> DomainResult<usize> {
+        self.delete_filtered(department, scope, ids, keep_text())
+            .await
+    }
     async fn delete_profile(
         &self,
         department: &DepartmentId,
@@ -226,7 +267,54 @@ pub trait ProfileVersionStore: Send + Sync {
         department: &DepartmentId,
         profile: &ProfileScope,
         versions: Vec<NewSceneVersion>,
+    ) -> DomainResult<Vec<SceneVersion>> {
+        self.append_scenes_linked(department, profile, versions, SceneWriteLinks::default())
+            .await
+    }
+    /// [`append_scenes`], and in the same transaction what the write says
+    /// about atoms:
+    /// - a merge (`parents`) moves the absorbed scenes' current atoms and
+    ///   open stale marks to the merged scene;
+    /// - removing a scene (a `retire` without `merged_into`) moves its atoms
+    ///   out;
+    /// - a `manual` version settles the scene's stale marks;
+    /// - `links.members` become the current atoms of the first version's
+    ///   scene: one current elsewhere is moved out (marking that scene
+    ///   `moved_out`), one deleted or rewritten since L2 read it marks this
+    ///   scene, and the rewrite marks it settled;
+    /// - `links.resolved` stale marks are settled.
+    ///
+    /// [`append_scenes`]: ProfileVersionStore::append_scenes
+    async fn append_scenes_linked(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        versions: Vec<NewSceneVersion>,
+        links: SceneWriteLinks,
     ) -> DomainResult<Vec<SceneVersion>>;
+    /// Atoms placed in scene `scene_id` of the profile, current and moved
+    /// out, of every user: callers filter by user.
+    async fn scene_atoms(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+    ) -> DomainResult<Vec<SceneAtom>>;
+    /// Open stale marks of the profile's scenes (of `scene_ids` only, when
+    /// given), oldest first.
+    async fn stale_marks(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_ids: Option<&[String]>,
+    ) -> DomainResult<Vec<StaleMark>>;
+    /// Counts one more L2 run that was given these marks and left them.
+    async fn note_stale_attempt(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        ids: &[i64],
+    ) -> DomainResult<()>;
     /// Live scenes whose slug starts with `prefix`.
     async fn count_scenes(
         &self,

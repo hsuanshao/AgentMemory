@@ -14,6 +14,7 @@ memory-core 會在背景蒸餾對話：L1 擷取記憶，L2 整理成 scene，L3
 - [6. 工具與蒸餾](#6-工具與蒸餾)
 - [7. 機密與遮罩](#7-機密與遮罩)
 - [8. Embedding 與負載](#8-embedding-與負載)
+- [9. 場景與它的 atom](#9-場景與它的-atom)
 
 ## 1. 會記錄哪些資訊
 
@@ -296,3 +297,27 @@ docker compose exec memory-core memory-server reembed --department default --lim
 embedding 伺服器規格小或與其他服務共用、負載高時會逾時：先調低 `maxConcurrency`，再調高 `timeoutMs`。自架的蒸餾模型產生長回答要好幾分鐘時（skill extraction 輸出最長），到了逾時會以 `LLM_UNAVAILABLE` 失敗並重試：調高 `AGENT_MEMORY_DISTILLATION_LLM_TIMEOUT_MS`，模型前面若有 proxy，它的逾時也不能比這個短。服務中斷後有大量 atom 沒有向量：等服務恢復後跑一次 `reembed`。
 
 數值型的環境變數無法解析時（例如 `AGENT_MEMORY_EMBEDDING_MAX_CONCURRENCY=abc`），memory-core 會在啟動時停止並指出是哪一個；`memory-server check-config` 也會回報。
+
+## 9. 場景與它的 atom
+
+L2 會記錄每個場景由哪些 atom 寫成，以及當時的 version。一個 atom 最多屬於一個場景，也可以不屬於任何場景（例如偏好只該放進 persona）。之後 atom 有變動時，場景可能還寫著舊的說法，所以會被標成**過期**，並記下原因：
+
+| 原因 | 什麼時候 |
+| --- | --- |
+| `rewritten` | atom 被改寫：L1 的去重或更正，或 `atomic/update` |
+| `deleted` | atom 被刪除：被 L1 合併掉，或 `atomic/delete` |
+| `moved_out` | L2 把 atom 放到別的場景 |
+| `changed_during_run` | 放入 atom 的那一輪 L2 在等模型回覆時，atom 被改寫了 |
+
+每筆標記都留著 atom 變動前的文字，讓 L2 能在場景裡找到它。被刪除的 atom，文字會留在標記裡直到標記被處理，就像它還留在場景內文裡一樣。
+
+**由 L2 處理。** 該 agent 的下一輪 L2 會拿到最多 `memory.l2.staleScenesPerRun` 個過期場景，附上場景可能還寫著什麼、現在正確的是什麼；即使沒有新的 atom 也會執行（沒有新對話的主題就不會有新 atom）。模型對每個過期場景擇一：改寫它，或回覆內容已經一致；兩者都會清掉這輪給它的標記。透過 API 改寫或刪除 atom，會像 L1 一樣排程這一輪。這兩段文字都會套用 atom 擁有者「當下」的遮罩規則，所以 atom 寫入之後才新增的規則也涵蓋它們。同一筆標記最多交給 L2 `memory.l2.staleMaxAttempts` 次，模型呼叫失敗或回覆無法使用的那幾輪也算在內；之後就不再交給 L2，等人來處理。儲存場景（`scenario/write`、Panel 的 L2 頁）會清掉它所有的標記，刪除場景也會。
+
+**在哪裡查看。** `scenario/ls` 和 `scenario/read` 會說明場景是否 `stale`，以及有幾個原因；`scenario/atoms` 列出呼叫者自己在這個場景裡的 atom 與原因，其他成員的只計數（`hidden`）。Panel 的 L2 頁顯示同樣的內容。每筆 L2 generation log 會把這輪拿到的標記列為 `stale` 輸入。
+
+| 設定 | 預設 | |
+| --- | --- | --- |
+| `memory.l2.staleScenesPerRun` | 10 | 每一輪 L2 拿到的過期場景數（不是場景數量上限） |
+| `memory.l2.staleMaxAttempts` | 3 | 標記交給 L2 幾輪（失敗的也算）後，就不再交給 L2 |
+
+schema migration 8 之前寫成的場景沒有 atom 的紀錄；L2 之後把 atom 放進去時才會有，不會回頭補齊過去的資料。

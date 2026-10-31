@@ -157,6 +157,8 @@ cd panel && npm install && npm run dev # Panel (Vite + Hono)
         │  delay 90s and ≥ 900s since last L2; then a sweep every 3600s
         ▼
    L2 scenes (shared per team+agent; UPDATE > MERGE > CREATE, heat, max 15, META header)
+   └─ records which facts each scene holds; a scene whose facts were rewritten, deleted or moved
+      is marked stale, and the next L2 run is told what changed (even with no new facts)
         │  cold start / every 50 new memories / when a scene requests an update
         ▼
    L3 Persona (persona.md + auto-appended Scene Navigation)

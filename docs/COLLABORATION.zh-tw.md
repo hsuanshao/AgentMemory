@@ -72,7 +72,7 @@ flowchart TD
 | L3 persona | team + agent | 使用這個 agent 的所有 team 成員 |
 | Skills | team（由某個 agent 擁有） | team 的所有成員；只有擁有它的 agent 能修改 |
 
-最重要的影響是：**一個 agent 的場景和 persona，是用所有使用這個 agent 的人的事實蒸餾出來的。** 如果 alice 和 bob 都跟同一個 agent 對話，它的場景和 persona 會同時描述他們兩人，而兩人在召回時都會看到這個結果。不過他們的原始對話和個人事實仍然是私有的。
+最重要的影響是：**一個 agent 的場景和 persona，是用所有使用這個 agent 的人的事實蒸餾出來的。** 如果 alice 和 bob 都跟同一個 agent 對話，它的場景和 persona 會同時描述他們兩人，而兩人在召回時都會看到這個結果。不過他們的原始對話和個人事實仍然是私有的。場景會記錄自己由哪些事實寫成，但 `scenario/atoms`（以及 Panel 的 L2 頁）只讓每個人看到自己的部分：alice 看得到場景背後她自己的事實，其他人的只看到數量，看不到 bob 的事實。
 
 **不同 agent 之間不共用任何東西**，即使在同一個 team 裡也一樣：每個 agent 有自己的場景和 persona，召回也只看你指定的那個 agent。
 

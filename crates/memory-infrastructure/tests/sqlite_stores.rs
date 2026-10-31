@@ -6,6 +6,8 @@ mod embedding_backfill;
 mod profile_versions;
 #[path = "support/redaction_rules.rs"]
 mod redaction_rules;
+#[path = "support/scene_links.rs"]
+mod scene_links;
 
 use chrono::{Duration, Utc};
 use memory_application::common::Page;
@@ -223,6 +225,22 @@ async fn scene_and_persona_versions_are_append_only() {
         &ProfileScope::from(
             &MemoryScope::from_optional(Some("team-2"), Some("agt-2"), Some("bob"), None).unwrap(),
         ),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn scenes_record_their_atoms_and_why_they_are_stale() {
+    let (_dir, pool, department) = setup();
+    let store = SqliteMemoryStore::new(pool, None);
+    scene_links::exercise(
+        &store,
+        &department,
+        &scope("alice"),
+        &ProfileScope::from(
+            &MemoryScope::from_optional(Some("team-2"), Some("agt-2"), Some("bob"), None).unwrap(),
+        ),
+        |id, content| atom(id, content, "alice"),
     )
     .await;
 }

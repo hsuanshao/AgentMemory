@@ -54,7 +54,9 @@ flowchart LR
 | 3 | 0.4.1 | 場景和 persona 改成只追加的版本：`profile_files` 的每一列都匯入 `scenes`／`scene_versions`／`persona_versions`（保留版本號；場景 id 由 team、agent 和路徑推導；只更新了導覽的 persona 版本略過）。`profile_files` 保留但不再寫入（SQLite 和 Postgres；Redis 沒有第 3 步） |
 | 4 | 0.4.2 | 新增「沒有向量的 atom」的 partial index `ix_atoms_missing_embedding`，作為補向量的佇列。SQLite 和部門的資料表一起建立；Postgres 和 embedding 欄位一起建立，所以只在開啟 embedding 時才有，並在升級後每個部門第一次被使用時建立。建立方式是交易內的一般 `CREATE INDEX`：`atoms` 很大的部門，第一個請求要等索引建完，期間對它的寫入也會被擋住（Redis 沒有第 4 步） |
 | 5 | 0.4.2 | 管理者的遮罩規則：每個部門新增 `meta_redaction_rules` 表（SQLite 和 Postgres；Redis 沒有第 5 步）。沒有要轉換的資料，但記成新版本可以擋住舊版 memory-server：舊版不認得這些規則，會把它們要遮的內容照樣存下來 |
-| 6 | 下一版 | User key 改存 SHA-256 雜湊：`key_value` 變成 `sha256:<hex>`，文件加上 `key_hint`（最後四個字元），已轉換的列會跳過。Postgres 在 memory-core 啟動時轉換所有部門；SQLite 在每個部門的資料庫第一次開啟時轉換。Postgres 也在登記表 schema 新增憑證稽核紀錄 `agent_memory.audit_events`（SQLite 放在 `<data>/audit.db`，不屬於有版本的資料庫；Redis 沒有第 6 步）。現有的 key 照常可用；舊版 memory-server 無法比對它們 |
+| 6 | 0.4.3 | User key 改存 SHA-256 雜湊：`key_value` 變成 `sha256:<hex>`，文件加上 `key_hint`（最後四個字元），已轉換的列會跳過。Postgres 在 memory-core 啟動時轉換所有部門；SQLite 在每個部門的資料庫第一次開啟時轉換。Postgres 也在登記表 schema 新增憑證稽核紀錄 `agent_memory.audit_events`（SQLite 放在 `<data>/audit.db`，不屬於有版本的資料庫；Redis 沒有第 6 步）。現有的 key 照常可用；舊版 memory-server 無法比對它們 |
+| 7 | 0.5.0 | 團隊或使用者層級的遮罩規則（`meta_redaction_rules.doc` 裡的 `team_id`、`user_id`）。不轉換任何資料，但舊版 memory-server 不能在這份資料上執行：它會把這些規則套用到所有團隊，並在儲存時丟掉它們的層級（SQLite 與 Postgres；Redis 沒有第 7 步） |
+| 8 | 下一版 | 記錄每個場景由哪些 atom 寫成（`scene_atoms`：一個 atom 同時最多屬於一個場景，以部分唯一索引 `ux_scene_atoms_current` 保證），以及場景可能過期的原因（`scene_stale`），兩張表都在各部門內，隨場景一起刪除。不轉換任何資料：之前寫成的場景沒有 atom 的紀錄，要等 L2 再把 atom 放進去才會有。舊版 memory-server 不能在這份資料上執行：它寫入或刪除 atom 時不會標記場景（SQLite 與 Postgres；Redis 沒有第 8 步） |
 
 ## 4. 新增遷移
 
@@ -65,5 +67,6 @@ flowchart LR
    - **Redis**：調高 `redis/migrate.rs` 的 `SCHEMA_VERSION`，加上 `if from < N` 步驟。
 3. **每個步驟都要能安全地重複執行。** 改動之前先檢查（`has_column`、`to_regclass`、key 是否存在），因為步驟可能只做了一部分就中斷。
 4. **從舊結構開始測試。** 用目前的程式碼寫入資料，再把它改回舊結構，遷移兩次，然後用一般的 adapter 讀回來。參考 `sqlite/schema.rs` 的測試和 `tests/storage_migrations.rs`（Postgres 與 Redis，執行方式見 [TESTING.zh-tw.md 第 2 節](TESTING.zh-tw.md#2-postgres-與-redis-整合測試)）。
-5. 在第 3 節加一列。如果維運人員除了重新啟動之外還需要做別的事，也要在 [UPGRADE.zh-tw.md](../UPGRADE.zh-tw.md) 加一節升級說明。
-6. 如果 `memory-core.yaml` 有設定改名，把它加進 `memory-server/src/config.rs` 的 `RENAMED_KEYS`。如果 `.env` 有設定改名，加進 `upgrade.sh` 的 `RENAMED_SETTINGS`。
+5. **在同一個 PR 裡於第 3 節加一列**，兩種語言都要，發行版欄位寫「下一版」（英文版寫 `next`）；發版 PR 再把它換成版本號。CI 的 [`check-consistency.sh`](../../.github/scripts/check-consistency.sh) 會在任一語言的最後一列不是程式碼裡的版本時失敗；發版時只要還有列寫著「下一版」，也會失敗。
+6. 如果維運人員除了重新啟動之外還需要做別的事，**在 [UPGRADE.zh-tw.md](../UPGRADE.zh-tw.md)（和 UPGRADE.md）加一節升級說明**；遷移後的資料會被上一個正式版拒絕時，一定要加。警告要寫出那個版本：「**升級後要回到 0.5.1，必須還原備份**」，不要寫「退回舊版」。維運者才知道要留哪一份備份：`upgrade.sh` 在升級到這一版之前做的那份。
+7. 如果 `memory-core.yaml` 有設定改名，把它加進 `memory-server/src/config.rs` 的 `RENAMED_KEYS`。如果 `.env` 有設定改名，加進 `upgrade.sh` 的 `RENAMED_SETTINGS`。

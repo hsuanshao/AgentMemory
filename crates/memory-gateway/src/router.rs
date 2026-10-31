@@ -214,6 +214,7 @@ fn data_plane() -> Router<SharedState> {
         .route("/scenario/write", post(memory::scenario_write))
         .route("/scenario/rm", post(memory::scenario_rm))
         .route("/scenario/count", post(memory::scenario_count))
+        .route("/scenario/atoms", post(memory::scenario_atoms))
         .route("/core/read", post(memory::core_read))
         .route("/core/write", post(memory::core_write))
         .route("/core/count", post(memory::core_count))

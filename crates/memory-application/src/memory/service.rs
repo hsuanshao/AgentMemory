@@ -1,5 +1,6 @@
 //! L0–L3 data-plane use cases.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -8,11 +9,13 @@ use memory_domain::error::{DomainError, DomainResult};
 use memory_domain::memory::{without_nul, AtomicMemory, ConversationMessage, Role};
 use memory_domain::profile::{
     compose_persona, parse_scene, render_navigation, strip_scene_navigation,
-    validate_relative_path, NavigationEntry, NewPersonaVersion, NewSceneVersion, PersonaOp,
-    PersonaVersion, ProfileFile, ProfileScope, SceneMeta, SceneOp, SceneVersion, PERSONA_PATH,
+    validate_relative_path, MemberState, NavigationEntry, NewPersonaVersion, NewSceneVersion,
+    PersonaOp, PersonaVersion, ProfileFile, ProfileScope, SceneAtom, SceneMeta, SceneOp,
+    SceneVersion, SceneWriteLinks, StaleMark, StaleReason, PERSONA_PATH,
 };
 use memory_domain::retrieval::SearchMode;
 use memory_domain::scope::{DepartmentId, MemoryScope};
+use serde::Serialize;
 use tracing::warn;
 
 use crate::redaction::{RedactionService, WriteScope};
@@ -21,7 +24,7 @@ use super::search::AtomSearcher;
 use crate::common::{Page, Scored};
 use crate::ports::memory::{
     AtomFilter, AtomRepository, AtomSelector, ConversationFilter, ConversationRepository,
-    ProfileVersionStore,
+    ProfileVersionStore, TextFilter,
 };
 use crate::ports::system::{Clock, EmbeddingProvider, IdGenerator};
 
@@ -37,6 +40,9 @@ pub trait ConversationObserver: Send + Sync {
         session_id: &str,
         user_rounds: u32,
     );
+    /// Atoms of the profile were rewritten or deleted outside L1 (through
+    /// the API): scenes holding them are stale and need an L2 run.
+    async fn on_atoms_changed(&self, department: &DepartmentId, profile: &ProfileScope);
 }
 
 pub struct NewMessage {
@@ -47,6 +53,34 @@ pub struct NewMessage {
 }
 
 /// A current scene with its file and META views.
+/// One of the caller's atoms in a scene (`scenario/atoms`).
+#[derive(Debug, Clone, Serialize)]
+pub struct SceneAtomView {
+    pub atom_id: String,
+    pub state: MemberState,
+    /// The version the scene was written from.
+    pub atom_version: u32,
+    /// The version stored now; `None` once deleted.
+    pub current_version: Option<u32>,
+    /// `None` once deleted.
+    pub content: Option<String>,
+    #[serde(rename = "type")]
+    pub atom_type: Option<String>,
+    pub stale_reasons: Vec<StaleReason>,
+}
+
+/// The atoms a scene was built from, as one user may see them: their own,
+/// and how many belong to others.
+#[derive(Debug, Clone, Serialize)]
+pub struct SceneAtomsView {
+    pub scene_id: String,
+    pub stale: bool,
+    pub stale_reasons: usize,
+    pub atoms: Vec<SceneAtomView>,
+    /// Atoms of other users in this scene, counted but not shown.
+    pub hidden: usize,
+}
+
 pub struct SceneEntry {
     pub scene: SceneVersion,
     pub file: ProfileFile,
@@ -256,9 +290,15 @@ impl MemoryService {
             self.clock.now(),
         )?;
         let embedding = self.embed_one(&atom.content).await;
+        // The scene keeps the old text as its "before": redacted by the
+        // rules in force now, not those of when it was written.
+        let before: TextFilter = Arc::new(move |text: &str| redactor.redact(text));
         self.atoms
-            .upsert(department, &atom, embedding.as_deref())
+            .upsert_filtered(department, &atom, embedding.as_deref(), before)
             .await?;
+        self.observer
+            .on_atoms_changed(department, &ProfileScope::from(scope))
+            .await;
         Ok(atom)
     }
 
@@ -299,7 +339,20 @@ impl MemoryService {
         if ids.is_empty() {
             return Err(DomainError::invalid("ids is required"));
         }
-        self.atoms.delete(department, scope, ids).await
+        let before = self
+            .redaction
+            .member_filter(department, scope.team_id.as_str(), scope.user_id.as_str())
+            .await?;
+        let deleted = self
+            .atoms
+            .delete_filtered(department, scope, ids, before)
+            .await?;
+        if deleted > 0 {
+            self.observer
+                .on_atoms_changed(department, &ProfileScope::from(scope))
+                .await;
+        }
+        Ok(deleted)
     }
 
     pub async fn count_atoms(
@@ -385,7 +438,22 @@ impl MemoryService {
         &self,
         department: &DepartmentId,
         profile: &ProfileScope,
+        versions: Vec<NewSceneVersion>,
+    ) -> DomainResult<Vec<SceneVersion>> {
+        self.append_scenes_linked(department, profile, versions, SceneWriteLinks::default())
+            .await
+    }
+
+    /// [`append_scenes`], with the atoms an L2 write placed and the stale
+    /// marks it dealt with (see `ProfileVersionStore::append_scenes_linked`).
+    ///
+    /// [`append_scenes`]: MemoryService::append_scenes
+    pub async fn append_scenes_linked(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
         mut versions: Vec<NewSceneVersion>,
+        links: SceneWriteLinks,
     ) -> DomainResult<Vec<SceneVersion>> {
         let redactor = self
             .redaction
@@ -396,8 +464,132 @@ impl MemoryService {
             v.body = redactor.redact(&v.body);
         }
         self.profiles
-            .append_scenes(department, profile, versions)
+            .append_scenes_linked(department, profile, versions, links)
             .await
+    }
+
+    /// A member's redaction, for text of their atoms used outside the
+    /// write it came with (a scene's "before" and "after").
+    pub async fn member_filter(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        user_id: &str,
+    ) -> DomainResult<TextFilter> {
+        self.redaction
+            .member_filter(department, profile.team_id.as_str(), user_id)
+            .await
+    }
+
+    /// Atoms placed in a scene, current and moved out, of every user.
+    pub async fn scene_atoms(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_id: &str,
+    ) -> DomainResult<Vec<SceneAtom>> {
+        self.profiles
+            .scene_atoms(department, profile, scene_id)
+            .await
+    }
+
+    /// Open stale marks of the profile's scenes, oldest first.
+    pub async fn stale_marks(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_ids: Option<&[String]>,
+    ) -> DomainResult<Vec<StaleMark>> {
+        self.profiles
+            .stale_marks(department, profile, scene_ids)
+            .await
+    }
+
+    /// Open stale marks per scene, for the scenes listed.
+    pub async fn stale_counts(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        scene_ids: &[String],
+    ) -> DomainResult<HashMap<String, usize>> {
+        let mut counts = HashMap::new();
+        for mark in self
+            .profiles
+            .stale_marks(department, profile, Some(scene_ids))
+            .await?
+        {
+            *counts.entry(mark.scene_id).or_default() += 1;
+        }
+        Ok(counts)
+    }
+
+    /// The atoms of scene `scene_id` that belong to `scope`'s user, and how
+    /// many belong to others. A scene is shared by the agent's users, but
+    /// an atom is its user's memory: others' are only counted.
+    pub async fn scene_atom_view(
+        &self,
+        department: &DepartmentId,
+        scope: &MemoryScope,
+        scene_id: &str,
+    ) -> DomainResult<SceneAtomsView> {
+        let profile = ProfileScope::from(scope);
+        let rows = self
+            .profiles
+            .scene_atoms(department, &profile, scene_id)
+            .await?;
+        let marks = self
+            .profiles
+            .stale_marks(department, &profile, Some(&[scene_id.to_owned()]))
+            .await?;
+        let user = scope.user_id.as_str();
+        let hidden = rows.iter().filter(|r| r.user_id != user).count();
+        let mut atoms = Vec::new();
+        for row in rows.into_iter().filter(|r| r.user_id == user) {
+            let stored = self.atoms.get(department, &row.atom_id).await?.filter(|a| {
+                ProfileScope::from(&a.scope) == profile && a.scope.user_id.as_str() == user
+            });
+            atoms.push(SceneAtomView {
+                stale_reasons: marks
+                    .iter()
+                    .filter(|m| m.atom_id == row.atom_id)
+                    .map(|m| m.reason)
+                    .collect(),
+                atom_id: row.atom_id,
+                state: row.state,
+                atom_version: row.atom_version,
+                current_version: stored.as_ref().map(|a| a.version),
+                content: stored.as_ref().map(|a| a.content.clone()),
+                atom_type: stored.as_ref().map(|a| a.atom_type.as_str().to_owned()),
+            });
+        }
+        Ok(SceneAtomsView {
+            scene_id: scene_id.to_owned(),
+            stale: !marks.is_empty(),
+            stale_reasons: marks.len(),
+            atoms,
+            hidden,
+        })
+    }
+
+    pub async fn note_stale_attempt(
+        &self,
+        department: &DepartmentId,
+        profile: &ProfileScope,
+        ids: &[i64],
+    ) -> DomainResult<()> {
+        self.profiles
+            .note_stale_attempt(department, profile, ids)
+            .await
+    }
+
+    /// One atom by id, whatever its scope: for the pipeline, which works
+    /// across a profile's users.
+    pub async fn atom(
+        &self,
+        department: &DepartmentId,
+        id: &str,
+    ) -> DomainResult<Option<AtomicMemory>> {
+        self.atoms.get(department, id).await
     }
 
     /// Writes a scene through the API as a new version: the body comes from

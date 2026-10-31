@@ -104,7 +104,7 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 
 `/v3/conversation/{add,query,search,delete,count}`、
 `/v3/atomic/{update,query,search,delete,count}`、
-`/v3/scenario/{ls,read,write,rm,count}`、
+`/v3/scenario/{ls,read,write,rm,count,atoms}`、
 `/v3/core/{read,write,count}`、`/v3/session/add`。
 
 * `conversation/add` `{session_id, messages: [{role: user|assistant, content, timestamp?}]}`：寫入 L0 並驅動蒸餾管線。
@@ -112,6 +112,8 @@ curl -sS -X POST https://memory.example.com/v3/skill/conversation/add "${H[@]}" 
 * L0/L1 以 team + agent + user 劃分範圍；L2（`scenario/*`）與 L3（`core/*`）只以 team + agent 劃分。
 * 場景和 persona 只追加版本。`scenario/write`、`core/write` 會新增一個以呼叫者為作者的版本；內容與最新版本完全相同時不會新增，直接回傳最新版本。`scenario/rm` 會讓場景退役：它不再出現在 `ls`、`count` 和不帶 `version` 的 `read`，但帶 `version` 的 `read` 仍能取得它的任何版本；被合併掉的場景也一樣。
 * 每個場景都有固定的 `scene_id`（出現在 `ls`、`read`、`write` 的回應中）。用 `path` 的 `read` 找的是「現在」叫這個名稱的場景；名稱被另一個場景用掉之後，要用 `scenario/read {scene_id, version?}` 讀舊場景，這個方式也會回傳已退役的場景。`read` 另外回傳該版本的 `op`（`create`、`update`、`merge`、`retire`、`manual`、`import`）、`parents`（合併時併入的版本）和 `author`。
+* `ls` 的每一項與 `read` 也會說明場景是否 `stale`，以及有幾個 `stale_reasons`：場景可能還寫著它的 atom 已經不再成立的內容（寫成它的某個 atom 被改寫、刪除，或被移到別的場景）。L2 會拿到過期的場景並處理；`scenario/write` 會清掉該場景的所有原因（[DISTILLATION §9](ops/DISTILLATION.zh-tw.md#9-場景與它的-atom)）。
+* `scenario/atoms` `{scene_id | path}` → `{scene_id, path, stale, stale_reasons, atoms: [{atom_id, state, atom_version, current_version, content, type, stale_reasons}], hidden}`：寫成這個場景的 atom。場景由 agent 的使用者共用，但 atom 是它所屬使用者的記憶，所以只列出解析後範圍內使用者的 atom（呼叫者自己的；系統管理員可以指定 `user_id`），其他使用者的只計入 `hidden`。`state` 是 `current`，或在 L2 把 atom 放到別處、場景被刪除後成為 `moved_out`；`atom_version` 是場景寫成時依據的版本，`current_version` 是目前儲存的版本（刪除後為 `null`，也不再有 `content`、`type`）；`stale_reasons` 是 `rewritten`、`deleted`、`moved_out` 或 `changed_during_run`。場景不存在時回 404。
 * `core/read` 不帶 `version` 時，回傳最新的 persona，後面附上依目前場景產生的場景導覽。帶 `version` 時（即使是最新版的號碼），只回傳該版本的內文：導覽不屬於儲存的版本。
 
 ### Skills
