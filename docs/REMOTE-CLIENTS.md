@@ -87,12 +87,12 @@ Users who are not admins can sign in to the Panel with their own key and browse 
 
 ## 4. Install `amem` on each client machine
 
-`amem` is a single binary (`crates/memory-client`). Each [release](https://github.com/hsuanshao/AgentMemory/releases) from 0.2.0 on ships it prebuilt for Linux (x86_64 and arm64, statically linked) and macOS (Apple silicon and Intel):
+`amem` is a single binary (`crates/memory-client`). Each [release](https://github.com/hsuanshao/TeamAgentMemory/releases) from 0.2.0 on ships it prebuilt for Linux (x86_64 and arm64, statically linked) and macOS (Apple silicon and Intel):
 
 ```bash
 VERSION=0.5.1
 PLATFORM=linux-x86_64   # or linux-arm64, macos-arm64, macos-x86_64
-BASE=https://github.com/hsuanshao/AgentMemory/releases/download/v$VERSION
+BASE=https://github.com/hsuanshao/TeamAgentMemory/releases/download/v$VERSION
 curl -fsSLO "$BASE/amem-$VERSION-$PLATFORM.tar.gz"
 curl -fsSL "$BASE/SHA256SUMS" | grep " amem-$VERSION-$PLATFORM.tar.gz$" | shasum -a 256 -c
 tar -xzf "amem-$VERSION-$PLATFORM.tar.gz"
@@ -109,7 +109,7 @@ Or build it with a Rust toolchain:
 cargo install --path crates/memory-client
 
 # or straight from git
-cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.5.1 memory-client
+cargo install --git https://github.com/hsuanshao/TeamAgentMemory --tag v0.5.1 memory-client
 ```
 
 Make sure the directory holding `amem` (`~/.local/bin` above, `~/.cargo/bin` for `cargo install`) is on the `PATH` that your agent tools see. Desktop apps sometimes start with a shorter `PATH` than your shell. On macOS, a file downloaded with a browser rather than `curl` is quarantined; clear it with `xattr -d com.apple.quarantine ~/.local/bin/amem`.
@@ -141,11 +141,11 @@ Recall returns two blocks: the memories that match the prompt, and the persona w
 The plugin lives in `clients/claude-code` and is published through this repository's marketplace (`.claude-plugin/marketplace.json`).
 
 ```bash
-claude plugin marketplace add hsuanshao/AgentMemory
+claude plugin marketplace add hsuanshao/TeamAgentMemory
 claude plugin install agent-memory@agent-memory
 ```
 
-From a local checkout you can instead run `claude plugin marketplace add /path/to/AgentMemory`.
+From a local checkout you can instead run `claude plugin marketplace add /path/to/TeamAgentMemory`.
 
 When the plugin is enabled, Claude Code offers its settings: server URL, user key (stored in the system keychain), team ID, agent ID, department ID and prompt prefixes to skip. **Leave them empty to use `amem login`**, or fill them in to override it for Claude Code only. A typical use is a separate `agent_id`.
 
@@ -165,7 +165,7 @@ A failing server never blocks Claude Code. The hooks exit silently and log to `~
 The plugin lives in `clients/antigravity` (`plugin.json`, `hooks.json`, `mcp_config.json`). Install it from a checkout:
 
 ```bash
-agy plugin install /path/to/AgentMemory/clients/antigravity
+agy plugin install /path/to/TeamAgentMemory/clients/antigravity
 agy plugin list
 ```
 
@@ -189,7 +189,7 @@ Notes:
 The plugin lives in `clients/codex` (`.codex-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json`) and is published through this repository's Codex marketplace (`.agents/plugins/marketplace.json`).
 
 ```bash
-codex plugin marketplace add hsuanshao/AgentMemory      # or a local checkout: /path/to/AgentMemory
+codex plugin marketplace add hsuanshao/TeamAgentMemory      # or a local checkout: /path/to/TeamAgentMemory
 codex plugin add agent-memory@agent-memory
 ```
 
@@ -221,7 +221,7 @@ rm -rf ~/.hermes/hermes-agent/plugins/memory/agentmemory
 
 # 2. install the provider as a user plugin (survives Hermes updates)
 mkdir -p ~/.hermes/plugins
-cp -r /path/to/AgentMemory/clients/hermes/agentmemory ~/.hermes/plugins/
+cp -r /path/to/TeamAgentMemory/clients/hermes/agentmemory ~/.hermes/plugins/
 
 # 3. select it (skip if already set)
 hermes config set memory.provider agentmemory

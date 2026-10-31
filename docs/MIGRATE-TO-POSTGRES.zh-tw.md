@@ -45,7 +45,7 @@ SQLite 是預設的儲存後端：不用另外安裝，每個部門一個檔案�
 - 先把程式碼更新到包含 `migrate-to-postgres.sh` 的版本：
 
   ```bash
-  cd /path/to/AgentMemory          # 有 .env 的目錄
+  cd /path/to/TeamAgentMemory          # 有 .env 的目錄
   git pull
   ```
 

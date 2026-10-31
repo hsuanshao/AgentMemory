@@ -47,7 +47,7 @@ Agent Memory 分成兩部分，要分開移除：**client** 裝在每台跑 agen
 注意事項：
 
 - **尚未送出的資料**：如果離線佇列裡還有對話（例如伺服器連不上時累積的），腳本刪除前會先警告。請先執行 `amem flush` 把它們送出。
-- **裝在個別專案的 plugin**：只會在你執行腳本時所在的目錄尋找，包括 Claude Code 的 `local` 與 `project` scope，以及 Antigravity 的 `.agents/plugins/agent-memory`。請到每個這樣的專案裡執行，例如 `cd ~/my-project && /path/to/AgentMemory/uninstall.sh client`，或手動移除。
+- **裝在個別專案的 plugin**：只會在你執行腳本時所在的目錄尋找，包括 Claude Code 的 `local` 與 `project` scope，以及 Antigravity 的 `.agents/plugins/agent-memory`。請到每個這樣的專案裡執行，例如 `cd ~/my-project && /path/to/TeamAgentMemory/uninstall.sh client`，或手動移除。
 - **Hermes**：腳本只會移除會呼叫 `amem` 的 provider。同名的舊版 provider（例如放在 Hermes 原始碼目錄裡的那份）不會被動到。移除後，如果 `memory.provider` 仍是 `agentmemory`，請改成別的 provider：`hermes config set memory.provider <name>`。
 - **自訂路徑**：和安裝時一樣，會依照 `AMEM_CONFIG`、`AMEM_DATA_DIR`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`CODEX_HOME`、`HERMES_HOME` 的設定。
 - **不會動到伺服器上的資料**：這台機器送出的記憶仍留在伺服器上。若也要刪除，請在 Panel 刪除該使用者的資料，或照 B 節移除伺服器。

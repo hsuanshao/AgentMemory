@@ -2,7 +2,7 @@
 
 [English](CHANGELOG.md)
 
-各版本的重要變更。細節與升級步驟見 [release notes](https://github.com/hsuanshao/AgentMemory/releases)；跨版本升級見 [UPGRADE.zh-tw.md](docs/UPGRADE.zh-tw.md)。格式依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版號依照[語意化版本](https://semver.org/lang/zh-TW/)（1.0 之前，次版本可能改變資料或 API，並會在說明中註明）。
+各版本的重要變更。細節與升級步驟見 [release notes](https://github.com/hsuanshao/TeamAgentMemory/releases)；跨版本升級見 [UPGRADE.zh-tw.md](docs/UPGRADE.zh-tw.md)。格式依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版號依照[語意化版本](https://semver.org/lang/zh-TW/)（1.0 之前，次版本可能改變資料或 API，並會在說明中註明）。
 
 ## [未發布]
 
@@ -181,18 +181,18 @@
 
 第一個公開版本：memory-core、L0→L3 蒸餾管線、混合召回、metadata 平面、Monitor Panel、`amem` 以及 Claude Code、Codex、Antigravity、Hermes 的 plugin，還有 `install.sh`。client 使用每位使用者各自的 key 驗證。
 
-[未發布]: https://github.com/hsuanshao/AgentMemory/compare/v0.5.1...HEAD
-[0.5.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.5.1
-[0.5.0]: https://github.com/hsuanshao/AgentMemory/tree/87079c7
-[0.4.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.3
-[0.4.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.2
-[0.4.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.1
-[0.4.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.4.0
-[0.3.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.2
-[0.3.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.1
-[0.3.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.3.0
-[0.2.3]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.2.3
-[0.2.2]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.2.2
-[0.2.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.2.1
-[0.2.0]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.2.0
-[0.1.1]: https://github.com/hsuanshao/AgentMemory/releases/tag/v0.1.1
+[未發布]: https://github.com/hsuanshao/TeamAgentMemory/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.5.1
+[0.5.0]: https://github.com/hsuanshao/TeamAgentMemory/tree/87079c7
+[0.4.3]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.4.3
+[0.4.2]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.4.2
+[0.4.1]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.4.1
+[0.4.0]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.4.0
+[0.3.2]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.3.2
+[0.3.1]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.3.1
+[0.3.0]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.3.0
+[0.2.3]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.2.3
+[0.2.2]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.2.2
+[0.2.1]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.2.1
+[0.2.0]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.2.0
+[0.1.1]: https://github.com/hsuanshao/TeamAgentMemory/releases/tag/v0.1.1

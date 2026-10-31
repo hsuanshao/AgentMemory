@@ -5,15 +5,15 @@
   </picture>
 </h1>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/hsuanshao/AgentMemory/ci.yml?branch=main&label=CI)](https://github.com/hsuanshao/AgentMemory/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/hsuanshao/TeamAgentMemory/ci.yml?branch=main&label=CI)](https://github.com/hsuanshao/TeamAgentMemory/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/hsuanshao/TeamAgentMemory)](https://github.com/hsuanshao/TeamAgentMemory/releases/latest)
 [![License: BUSL-1.1](https://img.shields.io/badge/license-BUSL--1.1-blue)](COMMERCIAL.md)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-orange?logo=rust)](Cargo.toml)
-[![Docker image](https://img.shields.io/badge/ghcr.io-agentmemory--core-2496ED?logo=docker&logoColor=white)](https://github.com/hsuanshao/AgentMemory/pkgs/container/agentmemory-core)
+[![Docker image](https://img.shields.io/badge/ghcr.io-agentmemory--core-2496ED?logo=docker&logoColor=white)](https://github.com/hsuanshao/TeamAgentMemory/pkgs/container/agentmemory-core)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
-[![Last commit](https://img.shields.io/github/last-commit/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/commits/main)
+[![Last commit](https://img.shields.io/github/last-commit/hsuanshao/TeamAgentMemory)](https://github.com/hsuanshao/TeamAgentMemory/commits/main)
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/AgentMemory?color=ee8449)](#contributors)
+[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/TeamAgentMemory?color=ee8449)](#contributors)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 English | [繁體中文](./README.zh-tw.md)
@@ -40,7 +40,7 @@ Written in Rust (memory-core, `amem`) and TypeScript (Panel), following Clean Ar
 ## Quick Start
 
 ```bash
-git clone https://github.com/hsuanshao/AgentMemory.git && cd AgentMemory
+git clone https://github.com/hsuanshao/TeamAgentMemory.git && cd TeamAgentMemory
 ./install.sh
 ```
 
@@ -279,8 +279,8 @@ Thanks to everyone who has contributed ([emoji key](https://allcontributors.org/
 <table>
   <tbody>
     <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/hsuan-shao-chang-59412894/"><img src="https://avatars.githubusercontent.com/u/5172404?v=4?s=100" width="100px;" alt="William Chang"/><br /><sub><b>William Chang</b></sub></a><br /><a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Code">💻</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Documentation">📖</a> <a href="#maintenance-hsuanshao" title="Maintenance">🚧</a> <a href="#infra-hsuanshao" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#security-hsuanshao" title="Security">🛡️</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/AgentMemory/pulls?q=is%3Apr+reviewed-by%3Ahsuanshao" title="Reviewed Pull Requests">👀</a> <a href="#projectManagement-hsuanshao" title="Project Management">📆</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://blog.seancheng.space"><img src="https://avatars.githubusercontent.com/u/29519438?v=4?s=100" width="100px;" alt="Sean Zheng"/><br /><sub><b>Sean Zheng</b></sub></a><br /><a href="https://github.com/hsuanshao/AgentMemory/commits?author=blackhorseya" title="Code">💻</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=blackhorseya" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/AgentMemory/pulls?q=is%3Apr+reviewed-by%3Ablackhorseya" title="Reviewed Pull Requests">👀</a> <a href="https://github.com/hsuanshao/AgentMemory/issues?q=author%3Ablackhorseya" title="Bug reports">🐛</a> <a href="#ideas-blackhorseya" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/hsuan-shao-chang-59412894/"><img src="https://avatars.githubusercontent.com/u/5172404?v=4?s=100" width="100px;" alt="William Chang"/><br /><sub><b>William Chang</b></sub></a><br /><a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=hsuanshao" title="Code">💻</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=hsuanshao" title="Documentation">📖</a> <a href="#maintenance-hsuanshao" title="Maintenance">🚧</a> <a href="#infra-hsuanshao" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#security-hsuanshao" title="Security">🛡️</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=hsuanshao" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/pulls?q=is%3Apr+reviewed-by%3Ahsuanshao" title="Reviewed Pull Requests">👀</a> <a href="#projectManagement-hsuanshao" title="Project Management">📆</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://blog.seancheng.space"><img src="https://avatars.githubusercontent.com/u/29519438?v=4?s=100" width="100px;" alt="Sean Zheng"/><br /><sub><b>Sean Zheng</b></sub></a><br /><a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=blackhorseya" title="Code">💻</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=blackhorseya" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/pulls?q=is%3Apr+reviewed-by%3Ablackhorseya" title="Reviewed Pull Requests">👀</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/issues?q=author%3Ablackhorseya" title="Bug reports">🐛</a> <a href="#ideas-blackhorseya" title="Ideas, Planning, & Feedback">🤔</a></td>
     </tr>
   </tbody>
 </table>
