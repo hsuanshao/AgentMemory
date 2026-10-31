@@ -39,7 +39,9 @@
 1. 從最新的 `main` **開分支**（先 `git pull`；貢獻者會在 GitHub 上合併 PR）。
 2. **更新**[第 2 節](#2-版本號出現在哪些檔案)列出的每個檔案。
 3. **跑完** [TESTING.zh-tw.md](TESTING.zh-tw.md) 的每一層測試：格式、clippy、含 Postgres 和 Redis 的完整測試、Panel、shellcheck。如果這次發版改了 `install.sh`、`upgrade.sh`、`migrate-to-postgres.sh` 或 Compose 檔，也要跑整套 stack 煙霧測試。
-4. **檢查可能受影響的文件**：`CHANGELOG.md` 和 `CHANGELOG.zh-tw.md`（把「未發布」的內容移到新版本下）、README（兩種語言）、需要維運者動手時的 UPGRADE 指南、端點有變動時的 API.md。所有給使用者看的文件都有英文和繁體中文版，兩邊都要改。
+4. **檢查可能受影響的文件**：`CHANGELOG.md` 和 `CHANGELOG.zh-tw.md`（把「未發布」的內容移到新版本下）、README（兩種語言）、需要維運者動手時的 UPGRADE 指南、端點有變動時的 API.md。所有給使用者看的文件都有英文和繁體中文版，兩邊都要改。其中兩份只能靠人工保持同步：
+   - **[SCHEMA-MIGRATIONS](SCHEMA-MIGRATIONS.zh-tw.md) 第 3 節**：最後一列是程式碼裡最高的版本（`sqlite/schema.rs` 的 `SCHEMA_VERSION`、`postgres/schema.rs` 的 `MIGRATIONS` 最後一項、Redis 有步驟時是 `redis/migrate.rs` 的 `SCHEMA_VERSION`），而且每個寫著「下一版」的列都換成這次的版本號。
+   - **UPGRADE**：「升級到下一版」那一節換上版本號，標題、目錄和連到它的連結都要改。這一版有新增遷移時，警告要寫出被取代的那個版本：「升級後要回到 X.Y.Z，必須還原備份」。
 5. 推送之前**掃描金鑰和私人資訊**：`.github/scripts/check-consistency.sh X.Y.Z` 會一次做完步驟 2 和 5 的檢查。手動的話，`git grep -nE 'sk-(ant|proj|mem)-[A-Za-z0-9_-]{16}|ghp_[A-Za-z0-9]{20}|BEGIN [A-Z ]*PRIVATE KEY'` 應該找不到任何東西，搜尋內部主機名稱或家目錄路徑也一樣。
 6. **開 PR**，經過 review 後合併。
 7. 在 `main` 的合併 commit 上**打 tag** 並推送：

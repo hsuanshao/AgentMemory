@@ -67,5 +67,6 @@ flowchart LR
    - **Redis**：調高 `redis/migrate.rs` 的 `SCHEMA_VERSION`，加上 `if from < N` 步驟。
 3. **每個步驟都要能安全地重複執行。** 改動之前先檢查（`has_column`、`to_regclass`、key 是否存在），因為步驟可能只做了一部分就中斷。
 4. **從舊結構開始測試。** 用目前的程式碼寫入資料，再把它改回舊結構，遷移兩次，然後用一般的 adapter 讀回來。參考 `sqlite/schema.rs` 的測試和 `tests/storage_migrations.rs`（Postgres 與 Redis，執行方式見 [TESTING.zh-tw.md 第 2 節](TESTING.zh-tw.md#2-postgres-與-redis-整合測試)）。
-5. 在第 3 節加一列。如果維運人員除了重新啟動之外還需要做別的事，也要在 [UPGRADE.zh-tw.md](../UPGRADE.zh-tw.md) 加一節升級說明。
-6. 如果 `memory-core.yaml` 有設定改名，把它加進 `memory-server/src/config.rs` 的 `RENAMED_KEYS`。如果 `.env` 有設定改名，加進 `upgrade.sh` 的 `RENAMED_SETTINGS`。
+5. **在同一個 PR 裡於第 3 節加一列**，兩種語言都要，發行版欄位寫「下一版」（英文版寫 `next`）；發版 PR 再把它換成版本號。沒有任何檢查會比對這張表和程式碼，漏列的遷移只能靠人讀出來。
+6. 如果維運人員除了重新啟動之外還需要做別的事，**在 [UPGRADE.zh-tw.md](../UPGRADE.zh-tw.md)（和 UPGRADE.md）加一節升級說明**；遷移後的資料會被上一個正式版拒絕時，一定要加。警告要寫出那個版本：「**升級後要回到 0.5.1，必須還原備份**」，不要寫「退回舊版」。維運者才知道要留哪一份備份：`upgrade.sh` 在升級到這一版之前做的那份。
+7. 如果 `memory-core.yaml` 有設定改名，把它加進 `memory-server/src/config.rs` 的 `RENAMED_KEYS`。如果 `.env` 有設定改名，加進 `upgrade.sh` 的 `RENAMED_SETTINGS`。
