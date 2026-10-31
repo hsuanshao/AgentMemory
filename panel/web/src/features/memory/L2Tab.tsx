@@ -120,6 +120,9 @@ function ScenarioEditor({ scope, path, onSaved }: { scope: Scope; path: string |
     const target = draftPath.trim();
     await api.scenario.write(scope, target, content, summary.trim() || undefined);
     setSaved(true);
+    // Saved under the same path, the editor is not remounted: read the file
+    // again so the version and the stale notice match what was just saved.
+    if (target === path) await file.reload();
     onSaved(target);
   });
 
