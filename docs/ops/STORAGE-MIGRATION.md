@@ -37,7 +37,7 @@ For each `<data>/departments/<id>/memory.db`, sorted by department id:
 
    `meta_config_params` is left out of this decision: the Postgres DDL seeds it with defaults.
 3. **Copy** (unless dry run): create the schema through `PgDb::schema()` (the same path the server uses, embedding column included), then copy every table inside **one transaction**.
-4. **Advance sequences** for tables whose `seq` was copied verbatim.
+4. **Advance sequences** for tables whose `BIGSERIAL` column was copied verbatim (`seq`, or the `id` of `scene_stale`).
 5. **Verify**: count every table again inside the transaction; any mismatch returns an error, and the transaction rolls back.
 6. **Commit.**
 
@@ -58,7 +58,7 @@ A value of the wrong type is an error, not a silent conversion.
 
 Rows are read in `rowid` order, 1,000 at a time, and inserted with multi-row `INSERT`s kept under 30,000 bound parameters (Postgres allows 65,535).
 
-**Sequence numbers are kept.** `conversations.seq` and `atoms.seq` are copied as they are, and afterwards each `BIGSERIAL` sequence is set past the copied maximum (`setval(pg_get_serial_sequence(…), max(seq) + 1, false)`). This matters because the pipeline's cursors (`l1_cursor` in the session state over `conversations.seq`, `l2_cursor` in the profile state over `atoms.seq`) are these numbers. Renumbering would make the pipeline re-distil or skip turns. `generation_refs.seq` exists only in Postgres; those rows get new numbers in `rowid` order.
+**Sequence numbers are kept.** `conversations.seq` and `atoms.seq` are copied as they are, and afterwards each `BIGSERIAL` sequence is set past the copied maximum (`setval(pg_get_serial_sequence(…), max(seq) + 1, false)`). This matters because the pipeline's cursors (`l1_cursor` in the session state over `conversations.seq`, `l2_cursor` in the profile state over `atoms.seq`) are these numbers. Renumbering would make the pipeline re-distil or skip turns. `generation_refs.seq` exists only in Postgres; those rows get new numbers in `rowid` order. `scene_stale.id` is copied and advanced the same way, so the stale marks an L2 run settles by id keep their ids.
 
 `meta_config_params` uses `ON CONFLICT … DO UPDATE`, so a value changed in SQLite replaces the seeded default.
 
@@ -95,7 +95,7 @@ The SQLite and Postgres DDL mirror each other table for table (`sqlite/schema.rs
 | New, renamed or removed column | Its entry in `TABLES` (name and kind, in DDL order) |
 | New derived column in Postgres (tokens, vectors, …) | A `Derived` case computing it with the adapter's own function |
 | Different token text in an adapter | The matching `Derived` case. Prefer sharing the function, as `index_source` is shared |
-| New column with a `BIGSERIAL` copied from SQLite | `copies_seq: true` |
+| New column with a `BIGSERIAL` copied from SQLite | `serial: Some("<column>")` |
 | Postgres DDL seeds a new table | `upsert` with its conflict target |
 
 The unit test `covers_every_sqlite_table_and_column` fails when `TABLES` no longer lists every SQLite table and column in order, so the first two rows can't be forgotten silently. The rest are caught by the live-Postgres test (search, vectors, versions, sequences): extend it when you add a derived column.

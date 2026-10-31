@@ -128,6 +128,8 @@ cd panel && npm install && npm run dev # Panel（Vite + Hono）
         │  delay 90s，且距上次 L2 ≥ 900s；之後每 3600s 掃一次
         ▼
    L2 場景（team+agent 共享；UPDATE > MERGE > CREATE、heat、上限 15 個、META 檔頭）
+   └─ 記錄每個場景由哪些事實寫成；事實被改寫、刪除或移走的場景會被標成過期，
+      下一輪 L2 會被告知哪裡變了（即使沒有新的事實）
         │  冷啟動 / 每 50 條新記憶 / 場景要求更新
         ▼
    L3 Persona（persona.md + 自動附加 Scene Navigation）

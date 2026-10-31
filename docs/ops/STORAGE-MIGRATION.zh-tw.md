@@ -37,7 +37,7 @@
 
    `meta_config_params` 不列入這個判斷，因為 Postgres 的 DDL 會先寫入預設值。
 3. **搬移**（dry run 時不執行）：透過 `PgDb::schema()` 建立 schema（和伺服器同一條路徑，包含 embedding 欄位），然後在**單一交易**內複製所有資料表。
-4. **推進 sequence**：對原樣複製了 `seq` 的資料表。
+4. **推進 sequence**：對原樣複製了 `BIGSERIAL` 欄位的資料表（`seq`，或 `scene_stale` 的 `id`）。
 5. **驗證**：在交易內再數一次每張表；只要有一張對不上就回傳錯誤，整個交易 rollback。
 6. **提交。**
 
@@ -58,7 +58,7 @@
 
 資料列依 `rowid` 順序讀取，每次 1,000 筆，用多列 `INSERT` 寫入，每次綁定的參數控制在 30,000 個以內（Postgres 上限是 65,535）。
 
-**序號原樣保留。** `conversations.seq` 和 `atoms.seq` 原封不動複製，之後再把各自的 `BIGSERIAL` sequence 設到複製過來的最大值之後（`setval(pg_get_serial_sequence(…), max(seq) + 1, false)`）。這很重要，因為管線的游標就是這些數字：session state 的 `l1_cursor` 對應 `conversations.seq`，profile state 的 `l2_cursor` 對應 `atoms.seq`。重新編號的話，管線會重複蒸餾或漏掉對話。`generation_refs.seq` 只存在於 Postgres，這些資料列會依 `rowid` 順序取得新的編號。
+**序號原樣保留。** `conversations.seq` 和 `atoms.seq` 原封不動複製，之後再把各自的 `BIGSERIAL` sequence 設到複製過來的最大值之後（`setval(pg_get_serial_sequence(…), max(seq) + 1, false)`）。這很重要，因為管線的游標就是這些數字：session state 的 `l1_cursor` 對應 `conversations.seq`，profile state 的 `l2_cursor` 對應 `atoms.seq`。重新編號的話，管線會重複蒸餾或漏掉對話。`generation_refs.seq` 只存在於 Postgres，這些資料列會依 `rowid` 順序取得新的編號。`scene_stale.id` 也以同樣方式複製並推進，L2 依 id 清除的過期標記因此保留原本的 id。
 
 `meta_config_params` 使用 `ON CONFLICT … DO UPDATE`，所以 SQLite 裡改過的值會取代預設值。
 
@@ -95,7 +95,7 @@ SQLite 和 Postgres 的 DDL 是一張表對一張表的對應（`sqlite/schema.r
 | 新增、改名或刪除欄位 | `TABLES` 裡對應的項目（名稱和類型，依 DDL 順序） |
 | Postgres 新增衍生欄位（token、向量……） | 新增一個 `Derived` case，用 adapter 自己的函式計算 |
 | adapter 改了 token 的來源文字 | 對應的 `Derived` case。盡量共用同一個函式，就像 `index_source` 那樣 |
-| 新的資料表有從 SQLite 原樣複製的 `BIGSERIAL` | 設定 `copies_seq: true` |
+| 新的資料表有從 SQLite 原樣複製的 `BIGSERIAL` | 設定 `serial: Some("<欄位>")` |
 | Postgres DDL 會預先寫入資料的新資料表 | 設定 `upsert` 及其衝突條件 |
 
 如果 `TABLES` 沒有依序列出 SQLite 的每張表和每個欄位，單元測試 `covers_every_sqlite_table_and_column` 就會失敗，所以前兩項不會被默默漏掉。其餘的由真實 Postgres 的測試把關（搜尋、向量、版本、序號）；新增衍生欄位時，請一併擴充那個測試。

@@ -70,7 +70,7 @@ Memory is stored in layers (see [ARCHITECTURE.md §4](ARCHITECTURE.md#4-memory-m
 | L3 persona | team + agent | Every member of the team who uses that agent |
 | Skills | team (owned by an agent) | Every member of the team; only the owning agent changes them |
 
-The important consequence: **scenes and the persona of an agent are built from the facts of everyone who uses that agent.** If alice and bob both talk to the same agent, its scenes and persona describe both of them, and each of them sees the result in recall. Their raw conversations and individual facts stay private.
+The important consequence: **scenes and the persona of an agent are built from the facts of everyone who uses that agent.** If alice and bob both talk to the same agent, its scenes and persona describe both of them, and each of them sees the result in recall. Their raw conversations and individual facts stay private. A scene records which facts it was built from, but `scenario/atoms` (and the Panel's L2 tab) shows each person only their own: alice sees her facts behind a scene and a count of the others, never bob's facts.
 
 Nothing is shared **between agents**, not even inside one team: every agent has its own scenes and persona, and recall only looks at the agent you name.
 
