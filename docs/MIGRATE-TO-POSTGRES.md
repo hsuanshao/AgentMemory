@@ -45,7 +45,7 @@ Every department under `/data/departments` is copied. Each one is copied in a si
 - Update the code to a version that has `migrate-to-postgres.sh`:
 
   ```bash
-  cd /path/to/AgentMemory          # the directory with .env
+  cd /path/to/TeamAgentMemory          # the directory with .env
   git pull
   ```
 

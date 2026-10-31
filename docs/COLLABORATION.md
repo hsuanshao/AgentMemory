@@ -175,6 +175,8 @@ To work in **two teams** from one machine, keep one settings file per team and s
 | Someone leaves a team | Remove the member (Panel, or `team-member/remove`) | Their next memory request to that team gets `403`. Their past memories stay. |
 | A key leaks or a laptop is lost | Revoke that key (Panel, or `user-key/revoke`) | Requests with it get `401`; the user's other keys keep working. |
 | Give someone a fresh start | Create a new agent for them | The old agent's scenes and persona are left behind. |
+| Pause an agent | `agent/update` with `"status": "inactive"` (its owner or a system admin; `"active"` resumes it) | Memory and skill requests naming it get `403`, except from system admins. Its memory stays. |
+| Retire an agent | `agent/archive` (its owner or a system admin) | The same `403`, and its conversations, facts, scenes and persona are deleted for every user. This cannot be undone. |
 | Check who is in a team | Panel **Teams**, or `team-member/list` | — |
 
 Default limits per department (`config/memory-core.example.yaml`, section `metadata`): 500 users, 100 teams, 20 active keys per user.
@@ -226,7 +228,7 @@ Properties to rely on when extending the API:
 
 - **Fail closed.** A route counts as a read only if its last path segment is a known read suffix (`query`, `search`, `count`, `read`, `recall`, `list`, …). Anything else is a write.
 - **Handlers only see an authorized scope.** The middleware rewrites the request, so a new handler is isolated without extra code.
-- **Private and archived agents.** An archived agent is refused (system admins excepted). A private agent is usable by its owner, the team's admins and system admins only; its skills follow the same rule, since skill calls go through this middleware too.
+- **Private and inactive agents.** An inactive agent (paused or archived, §7) is refused (system admins excepted). A private agent is usable by its owner, the team's admins and system admins only; its skills follow the same rule, since skill calls go through this middleware too.
 - **Roles are flat in the memory API.** `role_allows` grants every role access to the caller's own memory only. Reaching another user's memory is reserved for system admins. Finer per-role rules would go into that one function.
 
 ## 10. Pipeline and recall per scope
@@ -295,7 +297,7 @@ Pipeline state (`/v3/pipeline/status`), generation logs (`/v3/memory-generation-
 ## 14. Limits and current gaps
 
 - **Roles are flat in the memory API**, and team admins have no Panel UI yet (see §4 and §9).
-- **The agent status is not checked** by the memory API. An agent marked inactive still accepts requests; remove members or revoke keys to cut access.
+- **Pausing and archiving agents is API only.** The Panel has no control for it yet (§7).
 - **Shared agents share their profile.** Scenes and the persona mix the facts of everyone who uses an agent (§2). Give people their own agents if that is not wanted.
 - **One team and agent per client configuration.** Use per-tool overrides or separate settings files (§6).
 - **ACL deny entries are not applied** yet (§11).

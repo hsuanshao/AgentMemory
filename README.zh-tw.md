@@ -5,29 +5,58 @@
   </picture>
 </h1>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/hsuanshao/AgentMemory/ci.yml?branch=main&label=CI)](https://github.com/hsuanshao/AgentMemory/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/hsuanshao/TeamAgentMemory/ci.yml?branch=main&label=CI)](https://github.com/hsuanshao/TeamAgentMemory/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/hsuanshao/TeamAgentMemory)](https://github.com/hsuanshao/TeamAgentMemory/releases/latest)
 [![License: BUSL-1.1](https://img.shields.io/badge/license-BUSL--1.1-blue)](COMMERCIAL.md)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-orange?logo=rust)](Cargo.toml)
-[![Docker image](https://img.shields.io/badge/ghcr.io-agentmemory--core-2496ED?logo=docker&logoColor=white)](https://github.com/hsuanshao/AgentMemory/pkgs/container/agentmemory-core)
+[![Docker image](https://img.shields.io/badge/ghcr.io-agentmemory--core-2496ED?logo=docker&logoColor=white)](https://github.com/hsuanshao/TeamAgentMemory/pkgs/container/agentmemory-core)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
-[![Last commit](https://img.shields.io/github/last-commit/hsuanshao/AgentMemory)](https://github.com/hsuanshao/AgentMemory/commits/main)
+[![Last commit](https://img.shields.io/github/last-commit/hsuanshao/TeamAgentMemory)](https://github.com/hsuanshao/TeamAgentMemory/commits/main)
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/AgentMemory?color=ee8449)](#contributors)
+[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/TeamAgentMemory?color=ee8449)](#contributors)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 [English](./README.md) | 繁體中文
 
-**自架、為團隊設計的 AI agent 長期記憶。** AgentMemory 讓 Claude Code、Codex、Antigravity、Hermes 以及任何 MCP client 擁有跨 session 的記憶：擷取每一次對話，在背景蒸餾成事實、場景與 persona，並在每次輸入 prompt 前召回相關內容。全部都在你自己的伺服器上執行。
+**自架、為「和 AI agent 一起工作的團隊」設計的長期記憶。** AgentMemory 讓 Claude Code、Codex、Antigravity、Hermes 以及任何 MCP client 擁有跨 session 的記憶：擷取每一次對話，在背景蒸餾成事實、場景與 persona，並在每次輸入 prompt 前召回相關內容。全部都在你自己的伺服器上執行。
+
+## 為團隊協作而設計
+
+多數 agent 的記憶是個人的：每個人的助理各自學習，某位隊友的 agent 昨天才弄清楚的事，下一個人來問時完全看不到。AgentMemory 則從團隊出發：團隊一起使用的 agent，會逐步累積對團隊工作的共同理解（專案、慣例、決策、反覆出現的問題），而每個人自己的對話仍然只屬於自己。
+
+```mermaid
+flowchart LR
+  subgraph private["每位成員私有"]
+    A["alice：對話 → 事實"]
+    B["bob：對話 → 事實"]
+  end
+  subgraph shared["使用同一個 agent 的人共用"]
+    S["場景（L2）"] --> P["Persona（L3）"]
+  end
+  A --> S
+  B --> S
+  S -- 召回 --> R["每位成員的下一個 prompt"]
+  P -- 召回 --> R
+```
+
+- **該共用的共用，該私有的私有。** 每位成員的對話（L0）和事實（L1）只屬於該成員。agent 的場景（L2）和 persona（L3）由所有使用者的事實蒸餾而成，所以召回時每位成員拿到的是團隊累積下來的脈絡，而不是隊友的對話原文。
+- **技能在團隊內流通。** 從某位成員的工作中萃取出的作法，經人確認後就成為團隊每位成員都找得到的技能；私有 agent 的技能則只屬於該 agent。
+- **共用多少由團隊決定。** 讓所有人用同一個 agent，就能匯集團隊學到的東西；替每個人建立私有 agent，則能讓個人輪廓分開，同時仍以同一個團隊管理。
+- **邊界明確。** 資料不會跨團隊、不會跨 agent；部門之間更是什麼都不共用，包括使用者、金鑰和資料。這由每次記憶呼叫前的同一層授權強制執行，不仰賴 client 自律。
+- **看得到運作，看不到內容。** 團隊 leader 看得到每位成員的蒸餾是否正常，但無法打開任何人的對話或事實。
+
+| 你想要 | 設定方式 |
+| --- | --- |
+| 團隊匯集彼此學到的東西 | 所有成員使用同一個 agent，例如 `team-assistant` |
+| 同一個團隊，但個人輪廓分開 | 每人一個私有 agent（`"visibility": "private"`） |
+| 彼此不能共用任何東西的群組 | 分成不同團隊，或不同部門 |
+
+共用 agent 的場景和 persona 會混合所有人的事實，請在成員都能接受時才使用。部門、角色、配置方式，以及隔離如何實作，詳見 [COLLABORATION.zh-tw.md](docs/COLLABORATION.zh-tw.md)。
 
 ## 為什麼選擇 AgentMemory
 
 - **資料留在你手上。** 記憶、資料庫，甚至蒸餾用的模型，都可以全部在內網執行。不依賴任何廠商的雲端服務：可以使用任何 OpenAI 相容端點（包括自架模型），也可以直接使用本機的 `claude`、`codex`、`agy` 等 CLI。
-- **為團隊而設計，不只給單一使用者。** 一台伺服器容納多個部門，部門裡有團隊，團隊裡有成員和他們的 agent。
-  - 每位成員的對話和事實都是私有的。
-  - 同一個 agent 的場景和 persona，由使用它的人共用。
-  - 團隊 leader 看得到蒸餾的運作狀況，但讀不到任何人的記憶。
-  - 詳見 [COLLABORATION.zh-tw.md](docs/COLLABORATION.zh-tw.md)。
+- **為團隊而設計，不只給單一使用者。** 一台伺服器容納多個部門，部門裡有團隊，團隊裡有成員和他們的 agent。個人記憶保持私有，agent 學到的東西由使用它的人共用。見[為團隊協作而設計](#為團隊協作而設計)。
 - **記憶會累積。** 原始對話（L0）蒸餾成事實（L1），再整合成場景（L2），最後歸納成 persona（L3）。召回時結合 BM25 與向量搜尋，再做排名融合。見[記憶如何運作](#記憶如何運作)。
 - **為維運而設計。**
   - Monitor Panel 顯示蒸餾健康度、生成紀錄，以及會自動到期與重試的 dead letter。
@@ -40,7 +69,7 @@
 ## 快速開始
 
 ```bash
-git clone https://github.com/hsuanshao/AgentMemory.git && cd AgentMemory
+git clone https://github.com/hsuanshao/TeamAgentMemory.git && cd TeamAgentMemory
 ./install.sh
 ```
 
@@ -282,8 +311,8 @@ llm:
 <table>
   <tbody>
     <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/hsuan-shao-chang-59412894/"><img src="https://avatars.githubusercontent.com/u/5172404?v=4?s=100" width="100px;" alt="William Chang"/><br /><sub><b>William Chang</b></sub></a><br /><a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Code">💻</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Documentation">📖</a> <a href="#maintenance-hsuanshao" title="Maintenance">🚧</a> <a href="#infra-hsuanshao" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#security-hsuanshao" title="Security">🛡️</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=hsuanshao" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/AgentMemory/pulls?q=is%3Apr+reviewed-by%3Ahsuanshao" title="Reviewed Pull Requests">👀</a> <a href="#projectManagement-hsuanshao" title="Project Management">📆</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://blog.seancheng.space"><img src="https://avatars.githubusercontent.com/u/29519438?v=4?s=100" width="100px;" alt="Sean Zheng"/><br /><sub><b>Sean Zheng</b></sub></a><br /><a href="https://github.com/hsuanshao/AgentMemory/commits?author=blackhorseya" title="Code">💻</a> <a href="https://github.com/hsuanshao/AgentMemory/commits?author=blackhorseya" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/AgentMemory/pulls?q=is%3Apr+reviewed-by%3Ablackhorseya" title="Reviewed Pull Requests">👀</a> <a href="https://github.com/hsuanshao/AgentMemory/issues?q=author%3Ablackhorseya" title="Bug reports">🐛</a> <a href="#ideas-blackhorseya" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/hsuan-shao-chang-59412894/"><img src="https://avatars.githubusercontent.com/u/5172404?v=4?s=100" width="100px;" alt="William Chang"/><br /><sub><b>William Chang</b></sub></a><br /><a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=hsuanshao" title="Code">💻</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=hsuanshao" title="Documentation">📖</a> <a href="#maintenance-hsuanshao" title="Maintenance">🚧</a> <a href="#infra-hsuanshao" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#security-hsuanshao" title="Security">🛡️</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=hsuanshao" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/pulls?q=is%3Apr+reviewed-by%3Ahsuanshao" title="Reviewed Pull Requests">👀</a> <a href="#projectManagement-hsuanshao" title="Project Management">📆</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://blog.seancheng.space"><img src="https://avatars.githubusercontent.com/u/29519438?v=4?s=100" width="100px;" alt="Sean Zheng"/><br /><sub><b>Sean Zheng</b></sub></a><br /><a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=blackhorseya" title="Code">💻</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/commits?author=blackhorseya" title="Tests">⚠️</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/pulls?q=is%3Apr+reviewed-by%3Ablackhorseya" title="Reviewed Pull Requests">👀</a> <a href="https://github.com/hsuanshao/TeamAgentMemory/issues?q=author%3Ablackhorseya" title="Bug reports">🐛</a> <a href="#ideas-blackhorseya" title="Ideas, Planning, & Feedback">🤔</a></td>
     </tr>
   </tbody>
 </table>

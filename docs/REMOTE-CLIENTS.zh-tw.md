@@ -87,12 +87,12 @@ client 和部門管理員都不需要伺服器 API key；它只留在架設伺�
 
 ## 4. 在每台 client 機器安裝 `amem`
 
-`amem` 是單一執行檔（`crates/memory-client`）。從 0.2.0 起，每個 [release](https://github.com/hsuanshao/AgentMemory/releases) 都附有預先編譯好的版本，支援 Linux（x86_64 和 arm64，靜態連結）和 macOS（Apple silicon 和 Intel）：
+`amem` 是單一執行檔（`crates/memory-client`）。從 0.2.0 起，每個 [release](https://github.com/hsuanshao/TeamAgentMemory/releases) 都附有預先編譯好的版本，支援 Linux（x86_64 和 arm64，靜態連結）和 macOS（Apple silicon 和 Intel）：
 
 ```bash
 VERSION=0.5.1
 PLATFORM=linux-x86_64   # 或 linux-arm64、macos-arm64、macos-x86_64
-BASE=https://github.com/hsuanshao/AgentMemory/releases/download/v$VERSION
+BASE=https://github.com/hsuanshao/TeamAgentMemory/releases/download/v$VERSION
 curl -fsSLO "$BASE/amem-$VERSION-$PLATFORM.tar.gz"
 curl -fsSL "$BASE/SHA256SUMS" | grep " amem-$VERSION-$PLATFORM.tar.gz$" | shasum -a 256 -c
 tar -xzf "amem-$VERSION-$PLATFORM.tar.gz"
@@ -109,7 +109,7 @@ amem --version
 cargo install --path crates/memory-client
 
 # 或直接從 git 安裝
-cargo install --git https://github.com/hsuanshao/AgentMemory --tag v0.5.1 memory-client
+cargo install --git https://github.com/hsuanshao/TeamAgentMemory --tag v0.5.1 memory-client
 ```
 
 請確認 agent 工具看得到的 `PATH` 包含 `amem` 所在的目錄（上面的 `~/.local/bin`，或 `cargo install` 用的 `~/.cargo/bin`）。桌面應用程式啟動時的 `PATH` 有時比 shell 短。在 macOS 上，用瀏覽器而不是 `curl` 下載的檔案會被隔離，用 `xattr -d com.apple.quarantine ~/.local/bin/amem` 解除。
@@ -141,11 +141,11 @@ Recall 會回兩段：和 prompt 相關的記憶，以及 persona 和 scene 導�
 Plugin 位於 `clients/claude-code`，透過本 repo 的 marketplace（`.claude-plugin/marketplace.json`）發佈。
 
 ```bash
-claude plugin marketplace add hsuanshao/AgentMemory
+claude plugin marketplace add hsuanshao/TeamAgentMemory
 claude plugin install agent-memory@agent-memory
 ```
 
-若有本機 checkout，也可以改用 `claude plugin marketplace add /path/to/AgentMemory`。
+若有本機 checkout，也可以改用 `claude plugin marketplace add /path/to/TeamAgentMemory`。
 
 啟用 plugin 時，Claude Code 會詢問設定：Server URL、User key（存在系統金鑰圈）、Team ID、Agent ID、Department ID、要略過的 prompt 前綴。**全部留空就會沿用 `amem login` 的設定**；填寫的話只對 Claude Code 生效，常見用法是另外指定 `agent_id`。
 
@@ -165,7 +165,7 @@ Plugin 的行為：
 Plugin 位於 `clients/antigravity`（`plugin.json`、`hooks.json`、`mcp_config.json`）。從 checkout 安裝：
 
 ```bash
-agy plugin install /path/to/AgentMemory/clients/antigravity
+agy plugin install /path/to/TeamAgentMemory/clients/antigravity
 agy plugin list
 ```
 
@@ -189,7 +189,7 @@ agy plugin list
 Plugin 位於 `clients/codex`（`.codex-plugin/plugin.json`、`hooks/hooks.json`、`.mcp.json`），透過本 repository 的 Codex marketplace（`.agents/plugins/marketplace.json`）發布。
 
 ```bash
-codex plugin marketplace add hsuanshao/AgentMemory      # 或本機 checkout：/path/to/AgentMemory
+codex plugin marketplace add hsuanshao/TeamAgentMemory      # 或本機 checkout：/path/to/TeamAgentMemory
 codex plugin add agent-memory@agent-memory
 ```
 
@@ -221,7 +221,7 @@ rm -rf ~/.hermes/hermes-agent/plugins/memory/agentmemory
 
 # 2. 以使用者 plugin 安裝（Hermes 更新後仍會保留）
 mkdir -p ~/.hermes/plugins
-cp -r /path/to/AgentMemory/clients/hermes/agentmemory ~/.hermes/plugins/
+cp -r /path/to/TeamAgentMemory/clients/hermes/agentmemory ~/.hermes/plugins/
 
 # 3. 選用它（已設定過可略過）
 hermes config set memory.provider agentmemory

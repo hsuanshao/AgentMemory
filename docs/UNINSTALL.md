@@ -47,7 +47,7 @@ It removes the following:
 Notes:
 
 - **Unsent captures.** If the offline queue still holds turns, for example because the server was unreachable, the script warns before deleting them. Run `amem flush` first to send them.
-- **Per-project installs** are found only in the directory you start the script from: Claude Code's `local` and `project` scopes, and Antigravity's `.agents/plugins/agent-memory`. Run the script from each such project, for example `cd ~/my-project && /path/to/AgentMemory/uninstall.sh client`, or remove them by hand.
+- **Per-project installs** are found only in the directory you start the script from: Claude Code's `local` and `project` scopes, and Antigravity's `.agents/plugins/agent-memory`. Run the script from each such project, for example `cd ~/my-project && /path/to/TeamAgentMemory/uninstall.sh client`, or remove them by hand.
 - **Hermes.** The script only removes a provider that runs `amem`. An older provider with the same name, for example one inside the Hermes source tree, is left in place. Afterwards, choose another memory provider if `memory.provider` is still `agentmemory`: `hermes config set memory.provider <name>`.
 - **Custom paths.** `AMEM_CONFIG`, `AMEM_DATA_DIR`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `CODEX_HOME` and `HERMES_HOME` are honoured, just as when the client is installed.
 - **Server data is not touched.** The memories this machine sent stay on the server. To delete them, remove the user's data in the Panel, or remove the server (B).

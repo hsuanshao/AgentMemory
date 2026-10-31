@@ -12,7 +12,7 @@
   "commitConvention": "angular",
   "contributorsPerLine": 7,
   "linkToUsage": false,
-  "badgeTemplate": "[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/AgentMemory?color=ee8449)](#contributors)",
+  "badgeTemplate": "[![All Contributors](https://img.shields.io/github/all-contributors/hsuanshao/TeamAgentMemory?color=ee8449)](#contributors)",
   "contributors": [
     {
       "login": "hsuanshao",
